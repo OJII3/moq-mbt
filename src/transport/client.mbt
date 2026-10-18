@@ -1,12 +1,4 @@
 ///|
-#external
-priv type RawClient
-
-///|
-#external
-priv type RawStream
-
-///|
 let max_bytes : Int32 = 1024 * 1024
 
 ///|
@@ -16,14 +8,6 @@ let max_events : Int32 = 256
 let max_streams : Int32 = 16
 
 ///|
-pub(all) suberror TransportError {
-  TransportError(String)
-} derive(Debug)
-
-///|
-pub extend TransportError with @moonbitlang/core/debug.Debug::{to_repr}
-
-///|
 /// Native QUIC client. Call `close` when finished; methods run on the calling thread.
 pub struct Client {
   priv mut raw : RawClient?
@@ -31,86 +15,6 @@ pub struct Client {
   priv send_sizes : Array[(Int64, Int32)]
   priv mut pending_send_bytes : Int32
 }
-
-///|
-pub(all) enum Event {
-  Connected
-  StreamStarted(Int64)
-  Data(Int64, Bytes)
-  StreamFinished(Int64)
-  StreamReset(Int64, Int64)
-  SendStopped(Int64, Int64)
-  SendComplete(Int64, Bool)
-  Closed(Int64)
-  TransportClosed(Int32)
-  QueueOverflow
-  Timeout
-} derive(Debug)
-
-///|
-pub extend Event with @moonbitlang/core/debug.Debug::{to_repr}
-
-///|
-#borrow(host, alpn)
-extern "C" fn native_connect(
-  host : Bytes,
-  port : Int32,
-  alpn : Bytes,
-  alpn_len : Int32,
-  insecure : Bool,
-) -> RawClient = "moq_client_connect"
-
-///|
-extern "C" fn native_valid(client : RawClient) -> Bool = "moq_client_valid"
-
-///|
-extern "C" fn native_open_uni(client : RawClient) -> RawStream = "moq_client_open_uni"
-
-///|
-extern "C" fn native_open_bidi(client : RawClient) -> RawStream = "moq_client_open_bidi"
-
-///|
-extern "C" fn native_stream_id(client : RawClient, stream : RawStream) -> Int64 = "moq_client_stream_id"
-
-///|
-extern "C" fn native_stream_close(
-  client : RawClient,
-  stream : RawStream,
-) -> Unit = "moq_client_stream_close"
-
-///|
-#borrow(data)
-extern "C" fn native_send(
-  client : RawClient,
-  stream : RawStream,
-  data : Bytes,
-  length : Int32,
-  fin : Bool,
-) -> Int32 = "moq_client_send"
-
-///|
-extern "C" fn native_pop(client : RawClient) -> Int32 = "moq_client_pop"
-
-///|
-extern "C" fn native_event_id(client : RawClient) -> Int64 = "moq_client_event_id"
-
-///|
-extern "C" fn native_event_code(client : RawClient) -> Int64 = "moq_client_event_code"
-
-///|
-extern "C" fn native_event_data(client : RawClient) -> Bytes = "moq_client_event_data"
-
-///|
-extern "C" fn native_event_stream(client : RawClient) -> RawStream = "moq_client_event_stream"
-
-///|
-extern "C" fn native_shutdown(client : RawClient, error_code : Int64) -> Unit = "moq_client_shutdown"
-
-///|
-extern "C" fn native_free(client : RawClient) -> Unit = "moq_client_free"
-
-///|
-extern "C" fn native_sleep_ms(ms : Int32) -> Unit = "moq_sleep_ms"
 
 ///|
 /// Start a QUIC connection using ALPN `moqt-18`. Wait for `Connected` before sending.
