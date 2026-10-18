@@ -1,0 +1,15 @@
+supported_targets = "native"
+
+import {
+  "ojii3/moq-mbt/session",
+  "ojii3/moq-mbt/transport",
+  "moonbitlang/core/encoding/utf8",
+  "moonbitlang/core/env",
+  "moonbitlang/core/string",
+}
+
+pkgtype(kind: "executable")
+
+options(
+  link: { "native": { "cc-link-flags": "-lmsquic -lpthread" } },
+)

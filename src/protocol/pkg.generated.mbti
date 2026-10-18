@@ -1,0 +1,67 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "ojii3/moq-mbt/protocol"
+
+import {
+  "moonbitlang/core/debug",
+}
+
+// Values
+pub fn decode_setup(Bytes) -> DecodeResult[Setup]
+
+pub fn decode_vi64(Bytes) -> DecodeResult[UInt64]
+
+pub fn encode_setup(Setup) -> Result[Bytes, CodecError]
+
+pub fn encode_vi64(UInt64) -> Bytes
+
+// Errors
+
+// Types and methods
+pub(all) enum CodecError {
+  UnexpectedMessageType(UInt64)
+  MalformedOptions
+  OptionTypeOverflow
+  DuplicateOption(UInt64)
+  InvalidOptionValue(UInt64)
+  OptionsOutOfOrder
+  MessageTooLarge
+} derive(Eq, @debug.Debug)
+pub fn CodecError::equal(Self, Self) -> Bool
+pub fn CodecError::not_equal(Self, Self) -> Bool
+pub fn CodecError::to_repr(Self) -> @debug.Repr
+
+pub(all) enum DecodeResult[T] {
+  Complete(T, Int)
+  Incomplete
+  Invalid(CodecError)
+} derive(Eq, @debug.Debug)
+pub fn[T : Eq] DecodeResult::equal(Self[T], Self[T]) -> Bool
+pub fn[T : Eq] DecodeResult::not_equal(Self[T], Self[T]) -> Bool
+pub fn[T : @debug.Debug] DecodeResult::to_repr(Self[T]) -> @debug.Repr
+
+pub(all) enum OptionValue {
+  Integer(UInt64)
+  Data(Bytes)
+} derive(Eq, @debug.Debug)
+pub fn OptionValue::equal(Self, Self) -> Bool
+pub fn OptionValue::not_equal(Self, Self) -> Bool
+pub fn OptionValue::to_repr(Self) -> @debug.Repr
+
+pub(all) struct Setup {
+  options : Array[SetupOption]
+} derive(Eq, @debug.Debug)
+pub fn Setup::equal(Self, Self) -> Bool
+pub fn Setup::not_equal(Self, Self) -> Bool
+pub fn Setup::to_repr(Self) -> @debug.Repr
+
+pub(all) struct SetupOption {
+  kind : UInt64
+  value : OptionValue
+} derive(Eq, @debug.Debug)
+pub fn SetupOption::equal(Self, Self) -> Bool
+pub fn SetupOption::not_equal(Self, Self) -> Bool
+pub fn SetupOption::to_repr(Self) -> @debug.Repr
+
+// Type aliases
+
+// Traits

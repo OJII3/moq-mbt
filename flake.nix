@@ -15,16 +15,21 @@
         "aarch64-darwin"
       ];
 
-      perSystem = { pkgs, system, ... }: {
+      perSystem = { pkgs, system, self', ... }: {
         _module.args.pkgs = import inputs.nixpkgs {
           inherit system;
           overlays = [ inputs.moonbit-overlay.overlays.default ];
         };
 
+        packages.moq5-relay = pkgs.callPackage ./nix/moq5-relay.nix { };
+
         devShells.default = pkgs.mkShell {
           packages = [
             pkgs.libmsquic
             pkgs.moonbit-bin.latest
+            pkgs.nodejs
+            self'.packages.moq5-relay
+            pkgs.openssl
           ];
         };
       };

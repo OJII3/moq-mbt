@@ -1,0 +1,53 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "ojii3/moq-mbt/session"
+
+import {
+  "moonbitlang/core/debug",
+  "ojii3/moq-mbt/protocol",
+}
+
+// Values
+
+// Errors
+
+// Types and methods
+pub struct ClientHandshake {
+  // private fields
+}
+pub fn ClientHandshake::control_closed(Self) -> HandshakeError
+pub fn ClientHandshake::new(Version, @protocol.Setup) -> Result[Self, @protocol.CodecError]
+pub fn ClientHandshake::outbound_setup(Self) -> Bytes
+pub fn ClientHandshake::receive(Self, Int64, Bytes) -> Result[HandshakeProgress, HandshakeError]
+pub fn ClientHandshake::version(Self) -> Version
+
+pub(all) enum HandshakeError {
+  InvalidSetup(@protocol.CodecError)
+  DuplicateControlStream
+  ControlStreamClosed
+  InvalidServerPath
+  InvalidServerAuthority
+  AlreadyCompleted
+} derive(Eq, @debug.Debug)
+pub fn HandshakeError::close_code(Self) -> UInt64
+pub fn HandshakeError::equal(Self, Self) -> Bool
+pub fn HandshakeError::not_equal(Self, Self) -> Bool
+pub fn HandshakeError::to_repr(Self) -> @debug.Repr
+
+pub(all) enum HandshakeProgress {
+  Pending
+  Ready(@protocol.Setup, Bytes)
+} derive(Eq, @debug.Debug)
+pub fn HandshakeProgress::equal(Self, Self) -> Bool
+pub fn HandshakeProgress::not_equal(Self, Self) -> Bool
+pub fn HandshakeProgress::to_repr(Self) -> @debug.Repr
+
+pub(all) enum Version {
+  Draft18
+} derive(Eq, @debug.Debug)
+pub fn Version::equal(Self, Self) -> Bool
+pub fn Version::not_equal(Self, Self) -> Bool
+pub fn Version::to_repr(Self) -> @debug.Repr
+
+// Type aliases
+
+// Traits
