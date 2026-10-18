@@ -24,6 +24,16 @@ You can browse and install extra skills here:
 - Try to keep deprecated blocks in file called `deprecated.mbt` in each
   directory.
 
+## Native and C stub policy
+
+- Keep C native-stub code such as `msquic.c` minimal and primitive to avoid future changes in C.
+
+- Restrict the C layer to essential low-level operations across language boundaries, including MsQuic API calls, callbacks, mutex locks, memory ownership management, and event forwarding.
+
+- Implement protocol parsing, session states, business logic, and error handling decisions on the MoonBit side.
+
+- Avoid hardcoding operational policies and configuration values such as timeouts, queue limits, and buffer sizes in C, and pass them from MoonBit instead.
+
 ## Tooling
 
 - `moon fmt` is used to format your code properly.
