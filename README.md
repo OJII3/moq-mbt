@@ -23,6 +23,7 @@ This project is currently under early and active development.
 
 ## References
 
+- [Architecture notes](docs/architecture.md)
 - [MoQ Transport Draft 18](https://datatracker.ietf.org/doc/draft-ietf-moq-transport/18/)
 - [openmoq/moq5](https://github.com/openmoq/moq5)
 - [libmsquic (Microsoft MsQuic)](https://github.com/microsoft/msquic)
