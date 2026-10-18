@@ -1,0 +1,42 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "ojii3/moq-mbt/transport"
+
+import {
+  "moonbitlang/core/debug",
+}
+
+// Values
+
+// Errors
+pub(all) suberror TransportError {
+  TransportError(String)
+} derive(@debug.Debug)
+pub fn TransportError::to_repr(Self) -> @debug.Repr
+
+// Types and methods
+pub struct Client {
+  // private fields
+}
+pub fn Client::close(Self, error_code? : Int64) -> Unit
+pub fn Client::connect(String, Int, insecure? : Bool) -> Self raise TransportError
+pub fn Client::next_event(Self, Int) -> Event raise TransportError
+pub fn Client::open_uni(Self) -> Int64 raise TransportError
+pub fn Client::send(Self, Int64, Bytes, fin? : Bool) -> Unit raise TransportError
+
+pub(all) enum Event {
+  Connected
+  Data(Int64, Bytes)
+  StreamFinished(Int64)
+  StreamReset(Int64, Int64)
+  SendStopped(Int64, Int64)
+  SendComplete(Int64, Bool)
+  Closed(Int64)
+  TransportClosed(Int)
+  QueueOverflow
+  Timeout
+} derive(@debug.Debug)
+pub fn Event::to_repr(Self) -> @debug.Repr
+
+// Type aliases
+
+// Traits

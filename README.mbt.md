@@ -21,6 +21,29 @@ MoQ (Media over QUIC Transport) implementation in [MoonBit](https://www.moonbitl
 
 This project is currently under early and active development.
 
+The first implementation milestone is the Draft 18 SETUP exchange:
+
+- `protocol`: vi64 integers, SETUP framing and options.
+- `session`: incremental, transport-independent client handshake.
+- `transport`: native MsQuic client using the `moqt-18` ALPN.
+- `cmd/setup_probe`: a client that exchanges SETUP with an external relay.
+
+Publish/subscribe and object delivery are the next milestone. The JavaScript
+WebTransport adapter is not implemented yet.
+
+## Development
+
+The Nix devShell includes MoonBit, Node.js, MsQuic, OpenSSL and a pinned moq5 relay.
+Run the local Draft 18 interoperability check with:
+
+```sh
+nix develop -c bash scripts/check-setup-interop.sh
+```
+
+The check starts a relay on `127.0.0.1:4443`, exchanges SETUP, checks the relay's
+acceptance trace, and cleans up the relay and temporary certificates.
+See [interop notes](docs/interop.md) for details and connecting to another relay.
+
 ## References
 
 - [Architecture notes](docs/architecture.md)

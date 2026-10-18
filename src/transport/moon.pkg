@@ -1,0 +1,10 @@
+supported_targets = "native"
+
+options(
+  "native-stub": [ "msquic.c" ],
+)
+
+import {
+  "moonbitlang/core/encoding/utf8",
+  "moonbitlang/core/debug",
+}
