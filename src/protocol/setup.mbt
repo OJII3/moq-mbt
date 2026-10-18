@@ -8,6 +8,11 @@ pub(all) enum CodecError {
   InvalidOptionValue(UInt64)
   OptionsOutOfOrder
   MessageTooLarge
+  MalformedControlMessage
+  UnsupportedControlMessage(UInt64)
+  UnsupportedParameter(UInt64)
+  InvalidTrackName
+  InvalidSubgroup
 } derive(Debug, Eq)
 
 ///|

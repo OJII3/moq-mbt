@@ -20,11 +20,13 @@ pub struct Client {
 pub fn Client::close(Self, error_code? : Int64) -> Unit
 pub fn Client::connect(String, Int, insecure? : Bool) -> Self raise TransportError
 pub fn Client::next_event(Self, Int) -> Event raise TransportError
+pub fn Client::open_bidi(Self) -> Int64 raise TransportError
 pub fn Client::open_uni(Self) -> Int64 raise TransportError
 pub fn Client::send(Self, Int64, Bytes, fin? : Bool) -> Unit raise TransportError
 
 pub(all) enum Event {
   Connected
+  StreamStarted(Int64)
   Data(Int64, Bytes)
   StreamFinished(Int64)
   StreamReset(Int64, Int64)
