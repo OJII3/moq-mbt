@@ -3,6 +3,19 @@
 priv type RawClient
 
 ///|
+#external
+priv type RawStream
+
+///|
+let max_bytes : Int32 = 1024 * 1024
+
+///|
+let max_events : Int32 = 256
+
+///|
+let max_streams : Int32 = 16
+
+///|
 pub(all) suberror TransportError {
   TransportError(String)
 } derive(Debug)
@@ -14,6 +27,9 @@ pub extend TransportError with @moonbitlang/core/debug.Debug::{to_repr}
 /// Native QUIC client. Call `close` when finished; methods run on the calling thread.
 pub struct Client {
   priv mut raw : RawClient?
+  priv streams : Map[Int64, RawStream]
+  priv send_sizes : Array[(Int64, Int32)]
+  priv mut pending_send_bytes : Int32
 }
 
 ///|
@@ -34,11 +50,12 @@ pub(all) enum Event {
 pub extend Event with @moonbitlang/core/debug.Debug::{to_repr}
 
 ///|
-#borrow(host)
+#borrow(host, alpn)
 extern "C" fn native_connect(
   host : Bytes,
-  length : Int32,
   port : Int32,
+  alpn : Bytes,
+  alpn_len : Int32,
   insecure : Bool,
 ) -> RawClient = "moq_client_connect"
 
@@ -46,20 +63,29 @@ extern "C" fn native_connect(
 extern "C" fn native_valid(client : RawClient) -> Bool = "moq_client_valid"
 
 ///|
-extern "C" fn native_open_uni(client : RawClient) -> Int64 = "moq_client_open_uni"
+extern "C" fn native_open_uni(client : RawClient) -> RawStream = "moq_client_open_uni"
+
+///|
+extern "C" fn native_stream_id(client : RawClient, stream : RawStream) -> Int64 = "moq_client_stream_id"
+
+///|
+extern "C" fn native_stream_close(
+  client : RawClient,
+  stream : RawStream,
+) -> Unit = "moq_client_stream_close"
 
 ///|
 #borrow(data)
 extern "C" fn native_send(
   client : RawClient,
-  stream : Int64,
+  stream : RawStream,
   data : Bytes,
   length : Int32,
   fin : Bool,
 ) -> Int32 = "moq_client_send"
 
 ///|
-extern "C" fn native_next(client : RawClient, timeout : Int32) -> Int32 = "moq_client_next"
+extern "C" fn native_pop(client : RawClient) -> Int32 = "moq_client_pop"
 
 ///|
 extern "C" fn native_event_id(client : RawClient) -> Int64 = "moq_client_event_id"
@@ -71,7 +97,13 @@ extern "C" fn native_event_code(client : RawClient) -> Int64 = "moq_client_event
 extern "C" fn native_event_data(client : RawClient) -> Bytes = "moq_client_event_data"
 
 ///|
-extern "C" fn native_close(client : RawClient, error_code : Int64) -> Unit = "moq_client_close"
+extern "C" fn native_shutdown(client : RawClient, error_code : Int64) -> Unit = "moq_client_shutdown"
+
+///|
+extern "C" fn native_free(client : RawClient) -> Unit = "moq_client_free"
+
+///|
+extern "C" fn native_sleep_ms(ms : Int32) -> Unit = "moq_sleep_ms"
 
 ///|
 /// Start a QUIC connection using ALPN `moqt-18`. Wait for `Connected` before sending.
@@ -81,15 +113,20 @@ pub fn Client::connect(
   port : Int32,
   insecure~ : Bool = false,
 ) -> Client raise TransportError {
-  if port <= 0 || port > 65535 || host.is_empty() {
+  if port <= 0 ||
+    port > 65535 ||
+    host.is_empty() ||
+    host.length() > 65535 ||
+    host.contains("\u0000") {
     raise TransportError("invalid host or port")
   }
-  let host = @utf8.encode(host)
-  let raw = native_connect(host, host.length(), port, insecure)
+  let host_cstr = @utf8.encode(host) + b"\x00"
+  let alpn = b"moqt-18"
+  let raw = native_connect(host_cstr, port, alpn, alpn.length(), insecure)
   if !native_valid(raw) {
     raise TransportError("MsQuic connection initialization failed")
   }
-  { raw: Some(raw), }
+  { raw: Some(raw), streams: {}, send_sizes: [], pending_send_bytes: 0, }
 }
 
 ///|
@@ -103,11 +140,18 @@ fn Client::handle(self : Client) -> RawClient raise TransportError {
 ///|
 /// Open a unidirectional stream. The returned value is the QUIC stream ID.
 pub fn Client::open_uni(self : Client) -> Int64 raise TransportError {
-  let stream = native_open_uni(self.handle())
-  if stream < 0 {
+  let raw = self.handle()
+  if self.streams.length() >= max_streams {
     raise TransportError("cannot open unidirectional stream")
   }
-  stream
+  let stream = native_open_uni(raw)
+  let id = native_stream_id(raw, stream)
+  if id < 0L {
+    native_stream_close(raw, stream)
+    raise TransportError("cannot open unidirectional stream")
+  }
+  self.streams[id] = stream
+  id
 }
 
 ///|
@@ -120,10 +164,21 @@ pub fn Client::send(
   data : Bytes,
   fin~ : Bool = false,
 ) -> Unit raise TransportError {
-  let status = native_send(self.handle(), stream, data, data.length(), fin)
+  let raw = self.handle()
+  let length = data.length()
+  if length > max_bytes - self.pending_send_bytes ||
+    self.send_sizes.length() >= max_events {
+    raise TransportError("send buffer overflow")
+  }
+  guard self.streams.get(stream) is Some(handle) else {
+    raise TransportError("unknown stream \{stream}")
+  }
+  let status = native_send(raw, handle, data, length, fin)
   if status != 0 {
     raise TransportError("stream send failed (status \{status})")
   }
+  self.pending_send_bytes += length
+  self.send_sizes.push((stream, length))
 }
 
 ///|
@@ -137,18 +192,51 @@ pub fn Client::next_event(
     raise TransportError("negative event timeout")
   }
   let raw = self.handle()
-  match native_next(raw, timeout_ms) {
-    0 => Timeout
-    1 => Connected
-    2 => Data(native_event_id(raw), native_event_data(raw))
-    3 => StreamFinished(native_event_id(raw))
-    4 => Closed(native_event_id(raw))
-    5 => TransportClosed(native_event_id(raw).to_int())
-    6 => QueueOverflow
-    7 => StreamReset(native_event_id(raw), native_event_code(raw))
-    8 => SendComplete(native_event_id(raw), native_event_code(raw) != 0)
-    9 => SendStopped(native_event_id(raw), native_event_code(raw))
-    _ => raise TransportError("event queue failed")
+  let mut remaining = timeout_ms
+  for ;; {
+    match native_pop(raw) {
+      0 => {
+        if remaining <= 0 {
+          return Timeout
+        }
+        let step = if remaining < 5 { remaining } else { 5 }
+        native_sleep_ms(step)
+        remaining -= step
+      }
+      1 =>
+        if native_event_code(raw) != 0L {
+          return Connected
+        } else {
+          native_shutdown(raw, 3L)
+          return TransportClosed(-1)
+        }
+      2 => return Data(native_event_id(raw), native_event_data(raw))
+      3 => return StreamFinished(native_event_id(raw))
+      4 => return Closed(native_event_code(raw))
+      5 => return TransportClosed(native_event_code(raw).to_int())
+      6 => return QueueOverflow
+      7 => return StreamReset(native_event_id(raw), native_event_code(raw))
+      8 => {
+        let id = native_event_id(raw)
+        for i in 0..<self.send_sizes.length() {
+          if self.send_sizes[i].0 == id {
+            self.pending_send_bytes -= self.send_sizes[i].1
+            ignore(self.send_sizes.remove(i))
+            break
+          }
+        }
+        return SendComplete(id, native_event_code(raw) != 0L)
+      }
+      9 => return SendStopped(native_event_id(raw), native_event_code(raw))
+      10 => {
+        let id = native_event_id(raw)
+        if self.streams.get(id) is Some(stream) {
+          self.streams.remove(id)
+          native_stream_close(raw, stream)
+        }
+      }
+      _ => raise TransportError("event queue failed")
+    }
   }
 }
 
@@ -158,6 +246,17 @@ pub fn Client::next_event(
 pub fn Client::close(self : Client, error_code~ : Int64 = 0) -> Unit {
   if self.raw is Some(raw) {
     self.raw = None
-    native_close(raw, error_code)
+    native_shutdown(raw, error_code)
+    for _ in 0..<600 {
+      if native_pop(raw) == 4 {
+        break
+      }
+      native_sleep_ms(5)
+    }
+    for _, stream in self.streams {
+      native_stream_close(raw, stream)
+    }
+    self.streams.clear()
+    native_free(raw)
   }
 }
