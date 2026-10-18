@@ -9,6 +9,7 @@ typedef struct event {
     struct event *next;
     int type;
     uint64_t id, code;
+    HQUIC stream;
     size_t size;
     uint8_t data[];
 } event;
@@ -23,7 +24,7 @@ typedef struct client {
     int failed, closed;
 } client;
 
-static void push(client *c, int type, uint64_t id, uint64_t code, const uint8_t *data, size_t size) {
+static void push(client *c, int type, uint64_t id, uint64_t code, HQUIC stream, const uint8_t *data, size_t size) {
     pthread_mutex_lock(&c->mutex);
     event *e = (c->failed || size > (1024 * 1024) - c->queued_bytes || c->queued_events >= 256)
         ? NULL : malloc(sizeof(*e) + size);
@@ -33,7 +34,7 @@ static void push(client *c, int type, uint64_t id, uint64_t code, const uint8_t 
         c->api->ConnectionShutdown(c->connection, QUIC_CONNECTION_SHUTDOWN_FLAG_NONE, 1);
         return;
     }
-    *e = (event){ .type = type, .id = id, .code = code, .size = size };
+    *e = (event){ .type = type, .id = id, .code = code, .stream = stream, .size = size };
     if (size) memcpy(e->data, data, size);
     if (c->tail) c->tail->next = e; else c->head = e;
     c->tail = e;
@@ -50,24 +51,23 @@ static QUIC_STATUS QUIC_API stream_cb(HQUIC s, void *ctx, QUIC_STREAM_EVENT *e) 
     switch (e->Type) {
     case QUIC_STREAM_EVENT_RECEIVE:
         for (uint32_t i = 0; i < e->RECEIVE.BufferCount; i++)
-            push(c, 2, id, 0, e->RECEIVE.Buffers[i].Buffer, e->RECEIVE.Buffers[i].Length);
+            push(c, 2, id, 0, NULL, e->RECEIVE.Buffers[i].Buffer, e->RECEIVE.Buffers[i].Length);
         break;
     case QUIC_STREAM_EVENT_PEER_SEND_SHUTDOWN:
-        push(c, 3, id, 0, NULL, 0);
+        push(c, 3, id, 0, NULL, NULL, 0);
         break;
     case QUIC_STREAM_EVENT_PEER_SEND_ABORTED:
-        push(c, 7, id, e->PEER_SEND_ABORTED.ErrorCode, NULL, 0);
+        push(c, 7, id, e->PEER_SEND_ABORTED.ErrorCode, NULL, NULL, 0);
         break;
     case QUIC_STREAM_EVENT_PEER_RECEIVE_ABORTED:
-        push(c, 9, id, e->PEER_RECEIVE_ABORTED.ErrorCode, NULL, 0);
+        push(c, 9, id, e->PEER_RECEIVE_ABORTED.ErrorCode, NULL, NULL, 0);
         break;
     case QUIC_STREAM_EVENT_SEND_COMPLETE:
         free(e->SEND_COMPLETE.ClientContext);
-        push(c, 8, id, e->SEND_COMPLETE.Canceled ? 1 : 0, NULL, 0);
+        push(c, 8, id, e->SEND_COMPLETE.Canceled ? 1 : 0, NULL, NULL, 0);
         break;
     case QUIC_STREAM_EVENT_SHUTDOWN_COMPLETE:
-        if (id & 1) c->api->StreamClose(s);
-        else push(c, 10, id, 0, NULL, 0);
+        push(c, 10, id, 0, NULL, NULL, 0);
         break;
     default:
         break;
@@ -82,23 +82,29 @@ static QUIC_STATUS QUIC_API conn_cb(HQUIC conn, void *ctx, QUIC_CONNECTION_EVENT
         BOOLEAN dgram = FALSE;
         uint32_t len = sizeof(dgram);
         c->api->GetParam(conn, QUIC_PARAM_CONN_DATAGRAM_SEND_ENABLED, &len, &dgram);
-        push(c, 1, 0, dgram ? 1 : 0, NULL, 0);
+        push(c, 1, 0, dgram ? 1 : 0, NULL, NULL, 0);
         break;
     }
     case QUIC_CONNECTION_EVENT_SHUTDOWN_INITIATED_BY_TRANSPORT:
-        push(c, 5, 0, (uint32_t)e->SHUTDOWN_INITIATED_BY_TRANSPORT.Status, NULL, 0);
+        push(c, 5, 0, (uint32_t)e->SHUTDOWN_INITIATED_BY_TRANSPORT.Status, NULL, NULL, 0);
         break;
     case QUIC_CONNECTION_EVENT_SHUTDOWN_INITIATED_BY_PEER:
-        push(c, 4, 0, e->SHUTDOWN_INITIATED_BY_PEER.ErrorCode, NULL, 0);
+        push(c, 4, 0, e->SHUTDOWN_INITIATED_BY_PEER.ErrorCode, NULL, NULL, 0);
         break;
     case QUIC_CONNECTION_EVENT_SHUTDOWN_COMPLETE:
         pthread_mutex_lock(&c->mutex);
         c->closed = 1;
         pthread_mutex_unlock(&c->mutex);
         break;
-    case QUIC_CONNECTION_EVENT_PEER_STREAM_STARTED:
-        c->api->SetCallbackHandler(e->PEER_STREAM_STARTED.Stream, (void *)stream_cb, c);
+    case QUIC_CONNECTION_EVENT_PEER_STREAM_STARTED: {
+        HQUIC stream = e->PEER_STREAM_STARTED.Stream;
+        uint64_t id = 0;
+        uint32_t len = sizeof(id);
+        c->api->SetCallbackHandler(stream, (void *)stream_cb, c);
+        c->api->GetParam(stream, QUIC_PARAM_STREAM_ID, &len, &id);
+        push(c, 11, id, 0, stream, NULL, 0);
         break;
+    }
     default:
         break;
     }
@@ -133,8 +139,8 @@ client *moq_client_connect(moonbit_bytes_t host, int32_t port, moonbit_bytes_t a
     QUIC_REGISTRATION_CONFIG reg = { "moq-mbt", QUIC_EXECUTION_PROFILE_LOW_LATENCY };
     QUIC_BUFFER alpn_buf = { (uint32_t)alpn_len, alpn };
     QUIC_SETTINGS settings = {
-        .IsSet = { .SendBufferingEnabled = 1, .DatagramReceiveEnabled = 1, .PeerUnidiStreamCount = 1, .HandshakeIdleTimeoutMs = 1, .IdleTimeoutMs = 1 },
-        .SendBufferingEnabled = FALSE, .DatagramReceiveEnabled = TRUE, .PeerUnidiStreamCount = 16, .HandshakeIdleTimeoutMs = 10000, .IdleTimeoutMs = 30000,
+        .IsSet = { .SendBufferingEnabled = 1, .DatagramReceiveEnabled = 1, .PeerBidiStreamCount = 1, .PeerUnidiStreamCount = 1, .HandshakeIdleTimeoutMs = 1, .IdleTimeoutMs = 1 },
+        .SendBufferingEnabled = FALSE, .DatagramReceiveEnabled = TRUE, .PeerBidiStreamCount = 16, .PeerUnidiStreamCount = 16, .HandshakeIdleTimeoutMs = 10000, .IdleTimeoutMs = 30000,
     };
     QUIC_CREDENTIAL_CONFIG cred = { .Type = QUIC_CREDENTIAL_TYPE_NONE, .Flags = QUIC_CREDENTIAL_FLAG_CLIENT | (insecure ? QUIC_CREDENTIAL_FLAG_NO_CERTIFICATE_VALIDATION : 0) };
     if (QUIC_FAILED(MsQuicOpen2(&c->api)) ||
@@ -152,6 +158,13 @@ client *moq_client_connect(moonbit_bytes_t host, int32_t port, moonbit_bytes_t a
 HQUIC moq_client_open_uni(client *c) {
     HQUIC s = NULL;
     if (QUIC_FAILED(c->api->StreamOpen(c->connection, QUIC_STREAM_OPEN_FLAG_UNIDIRECTIONAL, stream_cb, c, &s))) return NULL;
+    if (QUIC_FAILED(c->api->StreamStart(s, QUIC_STREAM_START_FLAG_IMMEDIATE))) { c->api->StreamClose(s); return NULL; }
+    return s;
+}
+
+HQUIC moq_client_open_bidi(client *c) {
+    HQUIC s = NULL;
+    if (QUIC_FAILED(c->api->StreamOpen(c->connection, QUIC_STREAM_OPEN_FLAG_NONE, stream_cb, c, &s))) return NULL;
     if (QUIC_FAILED(c->api->StreamStart(s, QUIC_STREAM_START_FLAG_IMMEDIATE))) { c->api->StreamClose(s); return NULL; }
     return s;
 }
@@ -192,6 +205,7 @@ int32_t moq_client_pop(client *c) {
 
 int64_t moq_client_event_id(client *c) { return c->current ? (int64_t)c->current->id : 0; }
 int64_t moq_client_event_code(client *c) { return c->current ? (int64_t)c->current->code : 0; }
+HQUIC moq_client_event_stream(client *c) { return c->current ? c->current->stream : NULL; }
 moonbit_bytes_t moq_client_event_data(client *c) {
     event *e = c->current;
     moonbit_bytes_t data = moonbit_make_bytes_raw((int32_t)e->size);

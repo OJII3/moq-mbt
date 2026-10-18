@@ -35,6 +35,7 @@ pub struct Client {
 ///|
 pub(all) enum Event {
   Connected
+  StreamStarted(Int64)
   Data(Int64, Bytes)
   StreamFinished(Int64)
   StreamReset(Int64, Int64)
@@ -66,6 +67,9 @@ extern "C" fn native_valid(client : RawClient) -> Bool = "moq_client_valid"
 extern "C" fn native_open_uni(client : RawClient) -> RawStream = "moq_client_open_uni"
 
 ///|
+extern "C" fn native_open_bidi(client : RawClient) -> RawStream = "moq_client_open_bidi"
+
+///|
 extern "C" fn native_stream_id(client : RawClient, stream : RawStream) -> Int64 = "moq_client_stream_id"
 
 ///|
@@ -95,6 +99,9 @@ extern "C" fn native_event_code(client : RawClient) -> Int64 = "moq_client_event
 
 ///|
 extern "C" fn native_event_data(client : RawClient) -> Bytes = "moq_client_event_data"
+
+///|
+extern "C" fn native_event_stream(client : RawClient) -> RawStream = "moq_client_event_stream"
 
 ///|
 extern "C" fn native_shutdown(client : RawClient, error_code : Int64) -> Unit = "moq_client_shutdown"
@@ -149,6 +156,23 @@ pub fn Client::open_uni(self : Client) -> Int64 raise TransportError {
   if id < 0L {
     native_stream_close(raw, stream)
     raise TransportError("cannot open unidirectional stream")
+  }
+  self.streams[id] = stream
+  id
+}
+
+///|
+/// Open a bidirectional request stream. The returned value is the QUIC stream ID.
+pub fn Client::open_bidi(self : Client) -> Int64 raise TransportError {
+  let raw = self.handle()
+  if self.streams.length() >= max_streams {
+    raise TransportError("cannot open bidirectional stream")
+  }
+  let stream = native_open_bidi(raw)
+  let id = native_stream_id(raw, stream)
+  if id < 0L {
+    native_stream_close(raw, stream)
+    raise TransportError("cannot open bidirectional stream")
   }
   self.streams[id] = stream
   id
@@ -235,6 +259,15 @@ pub fn Client::next_event(
           native_stream_close(raw, stream)
         }
       }
+      11 => {
+        let id = native_event_id(raw)
+        self.streams[id] = native_event_stream(raw)
+        if self.streams.length() > max_streams {
+          native_shutdown(raw, 3L)
+          return QueueOverflow
+        }
+        return StreamStarted(id)
+      }
       _ => raise TransportError("event queue failed")
     }
   }
@@ -248,8 +281,19 @@ pub fn Client::close(self : Client, error_code~ : Int64 = 0) -> Unit {
     self.raw = None
     native_shutdown(raw, error_code)
     for _ in 0..<600 {
-      if native_pop(raw) == 4 {
+      let event = native_pop(raw)
+      if event == 4 {
         break
+      }
+      if event == 11 {
+        let id = native_event_id(raw)
+        self.streams[id] = native_event_stream(raw)
+      } else if event == 10 {
+        let id = native_event_id(raw)
+        if self.streams.get(id) is Some(stream) {
+          self.streams.remove(id)
+          native_stream_close(raw, stream)
+        }
       }
       native_sleep_ms(5)
     }
