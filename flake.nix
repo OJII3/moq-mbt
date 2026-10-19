@@ -6,6 +6,10 @@
     flake-parts.url = "github:hercules-ci/flake-parts";
     moonbit-overlay.url = "github:moonbit-community/moonbit-overlay";
     moonbit-overlay.inputs.nixpkgs.follows = "nixpkgs";
+    moq-rs-src = {
+      url = "github:cloudflare/moq-rs/8779758892d921bcfccbb6e4d9319c149db28c91";
+      flake = false;
+    };
   };
 
   outputs = inputs@{ flake-parts, ... }:
@@ -22,6 +26,9 @@
         };
 
         packages.moq5-relay = pkgs.callPackage ./nix/moq5-relay.nix { };
+        packages.moq-rs-relay = pkgs.callPackage ./nix/moq-rs-relay.nix {
+          src = inputs.moq-rs-src;
+        };
 
         devShells.default = pkgs.mkShell {
           packages = [
@@ -29,6 +36,7 @@
             pkgs.moonbit-bin.latest
             pkgs.nodejs
             self'.packages.moq5-relay
+            self'.packages.moq-rs-relay
             pkgs.openssl
           ];
         };

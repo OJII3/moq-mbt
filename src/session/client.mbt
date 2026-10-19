@@ -637,7 +637,7 @@ fn ClientSession::stream_opened(
         Ok(value) => value
         Err(error) => return Err(Encoding(error))
       }
-      Ok([Send(stream, bytes, false)])
+      Ok([Send(stream, bytes, request.kind == Subscribing)])
     }
     Object(token) => {
       let pending = match self.pending_object_streams.get(token) {
