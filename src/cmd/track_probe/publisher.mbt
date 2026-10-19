@@ -1,4 +1,109 @@
 ///|
+priv struct PublisherProbeState {
+  mut subscription_stream : Int64?
+  mut object_stream : Int64?
+  mut done_stream : Int64?
+}
+
+///|
+fn handle_publisher_notices(
+  client : @transport.Client,
+  session : @session.ClientSession,
+  notices : Array[@session.ClientSessionNotice],
+  payload : Bytes,
+  send_counts : Map[Int64, UInt64],
+  state : PublisherProbeState,
+) -> Unit raise {
+  let mut pending = notices
+  let mut index = 0
+  while index < pending.length() {
+    let notice = pending[index]
+    index += 1
+    match notice {
+      @session.PublishAccepted(_) => {
+        eprintln("PUBLISH request accepted")
+        println("Track publication accepted; waiting for a subscriber")
+      }
+      @session.PublishRejected(_, error) =>
+        fail("PUBLISH rejected (\{error.code})")
+      @session.SubscriptionRequested(request_id, stream, _) => {
+        eprintln("SUBSCRIBE request \{request_id} received")
+        let (more, _) = drive_session_result(
+          client,
+          session,
+          session.accept_subscription(stream),
+          send_counts,
+        )
+        pending = pending + more
+      }
+      @session.SubscriptionAccepted(_, stream, track_alias) => {
+        state.subscription_stream = Some(stream)
+        let header : @protocol.SubgroupHeader = {
+          track_alias,
+          group_id: 0,
+          subgroup_id_mode: @protocol.Zero,
+          publisher_priority: None,
+          end_of_group: true,
+          first_object: true,
+          has_properties: false,
+        }
+        let (more, opened) = drive_session_result(
+          client,
+          session,
+          session.open_object_stream(stream, header),
+          send_counts,
+        )
+        pending = pending + more
+        let mut object_stream : Int64? = None
+        for (purpose, opened_stream) in opened {
+          match purpose {
+            @session.Object(_) => object_stream = Some(opened_stream)
+            _ => ()
+          }
+        }
+        let object_stream = object_stream.unwrap()
+        state.object_stream = Some(object_stream)
+        let frame : @protocol.SubgroupFrame = {
+          object_id: 0,
+          status: @protocol.Normal,
+          properties: b"",
+          payload,
+        }
+        let (object_notices, _) = drive_session_result(
+          client,
+          session,
+          session.send_object(object_stream, frame),
+          send_counts,
+        )
+        pending = pending + object_notices
+        let (finish_notices, _) = drive_session_result(
+          client,
+          session,
+          session.finish_object_stream(object_stream),
+          send_counts,
+        )
+        pending = pending + finish_notices
+        println("Sent one Object")
+      }
+      @session.ObjectStreamFinished(stream) if state.object_stream ==
+        Some(stream) => {
+        let subscription_stream = state.subscription_stream.unwrap()
+        let (more, _) = drive_session_result(
+          client,
+          session,
+          session.publish_done(subscription_stream, 3, b""),
+          send_counts,
+        )
+        pending = pending + more
+        state.done_stream = Some(subscription_stream)
+      }
+      @session.PublishDone(_, _) => println("Subscription finished")
+      _ => ()
+    }
+  }
+}
+
+///|
 fn run_publisher(
   host : String,
   port : Int32,
@@ -12,129 +117,133 @@ fn run_publisher(
     namespace_fields: [@utf8.encode(namespace_field)],
     name: @utf8.encode(track_name),
   }
-  let publisher = @session.SingleTrackPublisher::new(track, 1)
-  let client = setup_client(host, port, path, insecure)
+  let (client, session, control_stream) = setup_client(
+    host, port, path, insecure,
+  )
   defer client.close()
-
-  let publish_stream = client.open_bidi()
-  client.send(publish_stream, publisher.publish_request().unwrap())
-  let mut publish_sent = false
-  let mut publish_buffer = b""
-  let mut publish_accepted = false
-  let mut subscribe_stream : Int64? = None
-  let mut object_stream : Int64? = None
-  let mut object_request_stream : Int64? = None
-  let mut done_stream : Int64? = None
+  let send_counts : Map[Int64, UInt64] = Map([])
+  let (request_id, actions) = session.publish_track(track, 1).unwrap()
+  let (notices, _) = drive_session_actions(
+    client, session, actions, send_counts,
+  )
+  let state : PublisherProbeState = {
+    subscription_stream: None,
+    object_stream: None,
+    done_stream: None,
+  }
+  handle_publisher_notices(
+    client,
+    session,
+    notices,
+    @utf8.encode(payload),
+    send_counts,
+    state,
+  )
   let deadline = @env.now() + 60000
   while @env.now() < deadline {
     match client.next_event(100) {
-      Connected | StreamStarted(_) => ()
-      Data(stream, bytes) if stream == publish_stream =>
-        if !publish_accepted {
-          publish_buffer = publish_buffer + bytes
-          match @protocol.decode_control(publish_buffer) {
-            @protocol.Incomplete => ()
-            @protocol.Invalid(error) =>
-              fail("invalid PUBLISH response: \{error.to_repr()}")
-            @protocol.Complete(@protocol.RequestOk(_), _) => {
-              publish_accepted = true
-              publisher.publish_accepted(stream).unwrap()
-              eprintln("PUBLISH_OK received")
-              println("Track publication accepted")
-              if object_stream is None {
-                let data_stream = client.open_uni()
-                let header : @protocol.SubgroupHeader = {
-                  track_alias: 1,
-                  group_id: 0,
-                  subgroup_id_mode: @protocol.Zero,
-                  publisher_priority: None,
-                  end_of_group: true,
-                  first_object: true,
-                  has_properties: false,
-                }
-                let data = publisher
-                  .open_object_stream(stream, data_stream, header)
-                  .unwrap() +
-                  publisher
-                  .object_stream(data_stream, {
-                    object_id: 0,
-                    status: @protocol.Normal,
-                    properties: b"",
-                    payload: @utf8.encode(payload),
-                  })
-                  .unwrap()
-                object_stream = Some(data_stream)
-                object_request_stream = Some(publish_stream)
-                client.send(data_stream, data, fin=true)
-                println("Sent one Object")
-              }
-            }
-            @protocol.Complete(@protocol.RequestError(error), _) =>
-              fail("PUBLISH rejected (\{error.code})")
-            @protocol.Complete(_, _) => fail("unexpected PUBLISH response")
-          }
+      Connected => ()
+      StreamStarted(stream) => {
+        let (notices, _) = drive_session_result(
+          client,
+          session,
+          session.receive(@session.RequestStreamStarted(stream)),
+          send_counts,
+        )
+        handle_publisher_notices(
+          client,
+          session,
+          notices,
+          @utf8.encode(payload),
+          send_counts,
+          state,
+        )
+      }
+      Data(stream, bytes) => {
+        let event = if stream == control_stream {
+          @session.ControlData(stream, bytes)
+        } else {
+          @session.RequestData(stream, bytes)
         }
-      Data(stream, bytes) =>
-        match publisher.receive_subscribe(stream, bytes) {
-          Ok(@session.Pending) => ()
-          Ok(@session.SubscribeRequested(request_stream, _, _trailing)) => {
-            let response = publisher.accept_subscribe(request_stream).unwrap()
-            subscribe_stream = Some(request_stream)
-            client.send(request_stream, response)
-          }
-          Err(error) => fail("invalid SUBSCRIBE: \{error.to_repr()}")
-        }
+        let (notices, _) = drive_session_result(
+          client,
+          session,
+          session.receive(event),
+          send_counts,
+        )
+        handle_publisher_notices(
+          client,
+          session,
+          notices,
+          @utf8.encode(payload),
+          send_counts,
+          state,
+        )
+      }
       SendComplete(stream, canceled) => {
+        note_send_complete(send_counts, stream)
         if canceled {
           fail("publisher send was canceled")
         }
-        if stream == publish_stream && !publish_sent {
-          publish_sent = true
-          eprintln("PUBLISH request sent")
-        } else if subscribe_stream == Some(stream) && object_stream is None {
-          let data_stream = client.open_uni()
-          let header : @protocol.SubgroupHeader = {
-            track_alias: 1,
-            group_id: 0,
-            subgroup_id_mode: @protocol.Zero,
-            publisher_priority: None,
-            end_of_group: true,
-            first_object: true,
-            has_properties: false,
-          }
-          let data = publisher
-            .open_object_stream(stream, data_stream, header)
-            .unwrap() +
-            publisher
-            .object_stream(data_stream, {
-              object_id: 0,
-              status: @protocol.Normal,
-              properties: b"",
-              payload: @utf8.encode(payload),
-            })
-            .unwrap()
-          object_stream = Some(data_stream)
-          object_request_stream = Some(stream)
-          client.send(data_stream, data, fin=true)
-          println("Sent one Object")
-        } else if object_stream == Some(stream) {
-          let request_stream = object_request_stream.unwrap()
-          publisher.finish_object_stream(stream).unwrap()
-          let done = publisher.publish_done(request_stream, 3, b"").unwrap()
-          done_stream = Some(request_stream)
-          client.send(request_stream, done, fin=true)
-        } else if done_stream == Some(stream) {
+        let (notices, _) = drive_session_result(
+          client,
+          session,
+          session.receive(@session.SendComplete(stream, canceled)),
+          send_counts,
+        )
+        handle_publisher_notices(
+          client,
+          session,
+          notices,
+          @utf8.encode(payload),
+          send_counts,
+          state,
+        )
+        if state.done_stream == Some(stream) && send_counts.get(stream) is None {
           println("Subscription finished")
           return
         }
       }
-      StreamFinished(_) | StreamReset(_, _) | SendStopped(_, _) =>
-        fail("publisher stream ended before object delivery")
+      StreamFinished(stream) => {
+        let (notices, _) = drive_session_result(
+          client,
+          session,
+          session.receive(@session.StreamFinished(stream)),
+          send_counts,
+        )
+        handle_publisher_notices(
+          client,
+          session,
+          notices,
+          @utf8.encode(payload),
+          send_counts,
+          state,
+        )
+      }
+      StreamReset(stream, code) => {
+        let (notices, _) = drive_session_result(
+          client,
+          session,
+          session.receive(
+            @session.StreamReset(stream, code.reinterpret_as_uint64()),
+          ),
+          send_counts,
+        )
+        handle_publisher_notices(
+          client,
+          session,
+          notices,
+          @utf8.encode(payload),
+          send_counts,
+          state,
+        )
+      }
+      SendStopped(_, _) => fail("publisher send was stopped")
       Closed(code) => fail("peer closed (application code \{code})")
       TransportClosed(status) => fail("QUIC failed (MsQuic status \{status})")
       QueueOverflow => fail("transport event buffer overflow")
       Timeout => ()
     }
   }
-  fail("timed out waiting for a subscriber")
+  fail("timed out waiting for a subscriber (PUBLISH request \{request_id})")
 }
