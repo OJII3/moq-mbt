@@ -46,7 +46,7 @@ test "single-track publish, subscribe, and one object" {
   assert_eq(publisher.accept_subscribe(11).unwrap(), b"\x04\x00\x02\x01\x00")
   assert_eq(
     publisher.object_stream(0, 0, b"payload").unwrap(),
-    @protocol.encode_one_object(1, 0, 0, b"payload"),
+    b"\x78\x01\x00\x00\x07payload",
   )
   assert_true(publisher.object_stream(0, 1, b"second") is Err(_))
 }
@@ -60,7 +60,7 @@ test "publisher sends one object after PUBLISH is accepted" {
   publisher.publish_accepted()
   assert_eq(
     publisher.object_stream(0, 0, b"payload").unwrap(),
-    @protocol.encode_one_object(1, 0, 0, b"payload"),
+    b"\x78\x01\x00\x00\x07payload",
   )
   assert_true(publisher.object_stream(0, 1, b"second") is Err(_))
 }

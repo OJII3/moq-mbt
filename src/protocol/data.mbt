@@ -38,16 +38,6 @@ pub(all) struct SubgroupFrame {
 } derive(Debug, Eq)
 
 ///|
-/// Compatibility shape for the original one-Object API.
-pub(all) struct SubgroupObject {
-  track_alias : UInt64
-  group_id : UInt64
-  object_id : UInt64
-  end_of_group : Bool
-  payload : Bytes
-} derive(Debug, Eq)
-
-///|
 /// Encode a Subgroup stream header according to Draft 18.
 pub fn encode_subgroup_header(header : SubgroupHeader) -> Bytes {
   let mode = match header.subgroup_id_mode {
@@ -307,63 +297,6 @@ pub fn encode_subgroup_stream(
 }
 
 ///|
-/// Encode one reliable Subgroup stream carrying a single normal Object.
-/// This compatibility helper uses subgroup ID 0, inherited priority, and
-/// marks the first Object as the first published Object in the subgroup.
-pub fn encode_one_object(
-  track_alias : UInt64,
-  group_id : UInt64,
-  object_id : UInt64,
-  payload : Bytes,
-  end_of_group~ : Bool = true,
-) -> Bytes {
-  encode_subgroup_stream(
-    {
-      track_alias,
-      group_id,
-      subgroup_id_mode: Zero,
-      publisher_priority: None,
-      end_of_group,
-      first_object: true,
-      has_properties: false,
-    },
-    [{ object_id, status: Normal, properties: b"", payload, }],
-  ).unwrap()
-}
-
-///|
-/// Decode the first Object from a Subgroup stream using the compatibility
-/// object shape. Use decode_subgroup_header and SubgroupDecoder to preserve
-/// Properties and Object Status values or to decode later Objects.
-pub fn decode_subgroup_object(input : Bytes) -> DecodeResult[SubgroupObject] {
-  let (header, after_header) = match decode_subgroup_header(input) {
-    Complete(value, consumed) => (value, consumed)
-    Incomplete => return Incomplete
-    Invalid(error) => return Invalid(error)
-  }
-  let decoder = SubgroupDecoder::new(header)
-  match decoder.decode_next(input[after_header:].to_owned()) {
-    Complete(frame, consumed) =>
-      if frame.status != Normal {
-        Invalid(InvalidSubgroup)
-      } else {
-        Complete(
-          {
-            track_alias: header.track_alias,
-            group_id: header.group_id,
-            object_id: frame.object_id,
-            end_of_group: header.end_of_group,
-            payload: frame.payload,
-          },
-          after_header + consumed,
-        )
-      }
-    Incomplete => Incomplete
-    Invalid(error) => Invalid(error)
-  }
-}
-
-///|
 pub extend SubgroupIdMode with Debug::{to_repr}
 
 ///|
@@ -386,9 +319,3 @@ pub extend SubgroupFrame with Debug::{to_repr}
 
 ///|
 pub extend SubgroupFrame with Eq::{equal, not_equal}
-
-///|
-pub extend SubgroupObject with Debug::{to_repr}
-
-///|
-pub extend SubgroupObject with Eq::{equal, not_equal}

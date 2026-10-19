@@ -9,7 +9,7 @@ pub(all) enum SubscriberProgress {
 ///|
 pub(all) enum ObjectProgress {
   Pending
-  Received(@protocol.SubgroupObject, Bytes)
+  Received(@protocol.SubgroupHeader, @protocol.SubgroupFrame, Bytes)
 } derive(Debug, Eq)
 
 ///|
@@ -112,17 +112,25 @@ pub fn SingleTrackSubscriber::receive_object(
     return Err(BufferLimitExceeded)
   }
   self.object_buffer = self.object_buffer + bytes
-  match @protocol.decode_subgroup_object(self.object_buffer) {
+  match @protocol.decode_subgroup_header(self.object_buffer) {
     @protocol.Incomplete => Ok(Pending)
     @protocol.Invalid(_) => Err(InvalidControlMessage)
-    @protocol.Complete(object, consumed) => {
-      if object.track_alias != track_alias {
+    @protocol.Complete(header, header_length) => {
+      if header.track_alias != track_alias {
         return Err(AliasMismatch)
       }
-      self.object_received = true
-      let trailing = self.object_buffer[consumed:].to_owned()
-      self.object_buffer = b""
-      Ok(Received(object, trailing))
+      let decoder = @protocol.SubgroupDecoder::new(header)
+      match decoder.decode_next(self.object_buffer[header_length:].to_owned()) {
+        @protocol.Incomplete => Ok(Pending)
+        @protocol.Invalid(_) => Err(InvalidControlMessage)
+        @protocol.Complete(frame, frame_length) => {
+          self.object_received = true
+          let consumed = header_length + frame_length
+          let trailing = self.object_buffer[consumed:].to_owned()
+          self.object_buffer = b""
+          Ok(Received(header, frame, trailing))
+        }
+      }
     }
   }
 }

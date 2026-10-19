@@ -1,57 +1,97 @@
 ///|
-test "one reliable subgroup object round-trips including empty payload" {
-  let wire = b"\x78\x01\x00\x00\x05hello"
-  let object : @protocol.SubgroupObject = {
+test "one reliable subgroup frame round-trips including empty payload" {
+  let header : @protocol.SubgroupHeader = {
     track_alias: 1,
     group_id: 0,
-    object_id: 0,
+    subgroup_id_mode: @protocol.Zero,
+    publisher_priority: None,
     end_of_group: true,
+    first_object: true,
+    has_properties: false,
+  }
+  let frame : @protocol.SubgroupFrame = {
+    object_id: 0,
+    status: @protocol.Normal,
+    properties: b"",
     payload: b"hello",
   }
-  assert_eq(@protocol.encode_one_object(1, 0, 0, b"hello"), wire)
-  assert_eq(
-    @protocol.decode_subgroup_object(wire),
-    @protocol.Complete(object, wire.length()),
-  )
-
-  let empty = @protocol.encode_one_object(1, 0, 0, b"")
-  assert_eq(empty, b"\x78\x01\x00\x00\x00\x00")
-  let empty_object : @protocol.SubgroupObject = {
-    track_alias: 1,
-    group_id: 0,
-    object_id: 0,
-    end_of_group: true,
-    payload: b"",
+  let wire = b"\x78\x01\x00\x00\x05hello"
+  assert_eq(@protocol.encode_subgroup_stream(header, [frame]), Ok(wire))
+  let (decoded_header, header_length) = match
+    @protocol.decode_subgroup_header(wire) {
+    @protocol.Complete(value, consumed) => (value, consumed)
+    _ => fail("expected a complete subgroup header")
   }
   assert_eq(
-    @protocol.decode_subgroup_object(empty),
-    @protocol.Complete(empty_object, empty.length()),
+    @protocol.SubgroupDecoder::new(decoded_header).decode_next(
+      wire[header_length:].to_owned(),
+    ),
+    @protocol.Complete(frame, wire.length() - header_length),
   )
+
+  let empty_frame : @protocol.SubgroupFrame = {
+    object_id: 0,
+    status: @protocol.Normal,
+    properties: b"",
+    payload: b"",
+  }
+  let empty = @protocol.encode_subgroup_stream(header, [empty_frame]).unwrap()
+  assert_eq(empty, b"\x78\x01\x00\x00\x00\x00")
+  let (empty_header, empty_header_length) = match
+    @protocol.decode_subgroup_header(empty) {
+    @protocol.Complete(value, consumed) => (value, consumed)
+    _ => fail("expected a complete subgroup header")
+  }
   assert_eq(
-    @protocol.decode_subgroup_object(b"\x58\x01\x00\x80\x00\x05hello"),
-    @protocol.Complete(object, 11),
+    @protocol.SubgroupDecoder::new(empty_header).decode_next(
+      empty[empty_header_length:].to_owned(),
+    ),
+    @protocol.Complete(empty_frame, empty.length() - empty_header_length),
   )
 }
 
 ///|
-test "one subgroup object parser handles every split" {
-  let wire = @protocol.encode_one_object(7, 9, 3, b"payload")
-  let object : @protocol.SubgroupObject = {
+test "one subgroup frame parser handles every split" {
+  let header : @protocol.SubgroupHeader = {
     track_alias: 7,
     group_id: 9,
-    object_id: 3,
+    subgroup_id_mode: @protocol.Zero,
+    publisher_priority: None,
     end_of_group: true,
+    first_object: true,
+    has_properties: false,
+  }
+  let frame : @protocol.SubgroupFrame = {
+    object_id: 3,
+    status: @protocol.Normal,
+    properties: b"",
     payload: b"payload",
   }
+  let wire = @protocol.encode_subgroup_stream(header, [frame]).unwrap()
   for split = 0; split < wire.length(); split = split + 1 {
-    assert_eq(
-      @protocol.decode_subgroup_object(wire[:split].to_owned()),
-      @protocol.Incomplete,
-    )
+    let partial = wire[:split].to_owned()
+    match @protocol.decode_subgroup_header(partial) {
+      @protocol.Incomplete => ()
+      @protocol.Complete(partial_header, header_length) =>
+        assert_eq(
+          @protocol.SubgroupDecoder::new(partial_header).decode_next(
+            partial[header_length:].to_owned(),
+          ),
+          @protocol.Incomplete,
+        )
+      @protocol.Invalid(_) => fail("invalid subgroup header")
+    }
+  }
+  let (decoded_header, header_length) = match
+    @protocol.decode_subgroup_header(wire) {
+    @protocol.Complete(value, consumed) => (value, consumed)
+    _ => fail("expected a complete subgroup header")
   }
   assert_eq(
-    @protocol.decode_subgroup_object(wire),
-    @protocol.Complete(object, wire.length()),
+    @protocol.SubgroupDecoder::new(decoded_header).decode_next(
+      wire[header_length:].to_owned(),
+    ),
+    @protocol.Complete(frame, wire.length() - header_length),
   )
 }
 

@@ -46,9 +46,9 @@ fn run_subscriber(
       Data(stream, bytes) =>
         match subscriber.receive_object(stream, bytes) {
           Ok(@session.Pending) => ()
-          Ok(@session.Received(object, _trailing)) => {
+          Ok(@session.Received(header, frame, _trailing)) => {
             println(
-              "Received Object (group \{object.group_id}, object \{object.object_id}, \{object.payload.length()} bytes)",
+              "Received Object (group \{header.group_id}, object \{frame.object_id}, \{frame.payload.length()} bytes)",
             )
             return
           }

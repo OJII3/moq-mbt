@@ -5,7 +5,22 @@ test "single-track subscriber handles split responses and objects" {
     name: b"video",
   }
   let response = b"\x04\x00\x02\x01\x00"
-  let wire = @protocol.encode_one_object(1, 4, 2, b"payload")
+  let object_header : @protocol.SubgroupHeader = {
+    track_alias: 1,
+    group_id: 4,
+    subgroup_id_mode: @protocol.Zero,
+    publisher_priority: None,
+    end_of_group: true,
+    first_object: true,
+    has_properties: false,
+  }
+  let object_frame : @protocol.SubgroupFrame = {
+    object_id: 2,
+    status: @protocol.Normal,
+    properties: b"",
+    payload: b"payload",
+  }
+  let wire = @protocol.encode_subgroup_stream(object_header, [object_frame]).unwrap()
   for split = 0; split < response.length(); split = split + 1 {
     let subscriber = @session.SingleTrackSubscriber::new(track)
     assert_eq(
@@ -36,18 +51,7 @@ test "single-track subscriber handles split responses and objects" {
     )
     assert_eq(
       subscriber.receive_object(9, wire[split:].to_owned()),
-      Ok(
-        @session.Received(
-          {
-            track_alias: 1,
-            group_id: 4,
-            object_id: 2,
-            end_of_group: true,
-            payload: b"payload",
-          },
-          b"",
-        ),
-      ),
+      Ok(@session.Received(object_header, object_frame, b"")),
     )
   }
 }

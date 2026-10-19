@@ -12,11 +12,7 @@ pub fn decode_setup(Bytes) -> DecodeResult[Setup]
 
 pub fn decode_subgroup_header(Bytes) -> DecodeResult[SubgroupHeader]
 
-pub fn decode_subgroup_object(Bytes) -> DecodeResult[SubgroupObject]
-
 pub fn decode_vi64(Bytes) -> DecodeResult[UInt64]
-
-pub fn encode_one_object(UInt64, UInt64, UInt64, Bytes, end_of_group? : Bool) -> Bytes
 
 pub fn encode_publish(PublishMessage) -> Result[Bytes, CodecError]
 
@@ -207,17 +203,6 @@ pub(all) enum SubgroupIdMode {
 pub fn SubgroupIdMode::equal(Self, Self) -> Bool
 pub fn SubgroupIdMode::not_equal(Self, Self) -> Bool
 pub fn SubgroupIdMode::to_repr(Self) -> @debug.Repr
-
-pub(all) struct SubgroupObject {
-  track_alias : UInt64
-  group_id : UInt64
-  object_id : UInt64
-  end_of_group : Bool
-  payload : Bytes
-} derive(Eq, @debug.Debug)
-pub fn SubgroupObject::equal(Self, Self) -> Bool
-pub fn SubgroupObject::not_equal(Self, Self) -> Bool
-pub fn SubgroupObject::to_repr(Self) -> @debug.Repr
 
 pub(all) struct SubscribeMessage {
   request_id : UInt64
