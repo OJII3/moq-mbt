@@ -4,6 +4,16 @@ fn probe_payload(group_id : UInt64, object_id : UInt64) -> Bytes {
 }
 
 ///|
+fn client_stream_direction(
+  direction : @transport.StreamDirection,
+) -> @session.ClientStreamDirection {
+  match direction {
+    @transport.Unidirectional => @session.Unidirectional
+    @transport.Bidirectional => @session.Bidirectional
+  }
+}
+
+///|
 fn drive_session_actions(
   client : @transport.Client,
   session : @session.ClientSession,
@@ -89,7 +99,7 @@ fn setup_client(
   port : Int32,
   path : String,
   insecure : Bool,
-) -> (@transport.Client, @session.ClientSession, Int64) raise {
+) -> (@transport.Client, @session.ClientSession) raise {
   let authority = if host.contains(":") {
     "[\{host}]:\{port}"
   } else {
@@ -105,7 +115,6 @@ fn setup_client(
   let client = @transport.Client::connect(host, port, insecure~)
   let send_counts : Map[Int64, UInt64] = Map([])
   let mut setup_stream : Int64? = None
-  let mut peer_control_stream : Int64? = None
   let mut setup_received = false
   let mut setup_acknowledged = false
   let deadline = @env.now() + 10000
@@ -125,18 +134,25 @@ fn setup_client(
           }
         }
       }
-      StreamStarted(_) => ()
-      Data(stream, bytes) => {
-        match peer_control_stream {
-          None => peer_control_stream = Some(stream)
-          Some(previous) if previous != stream =>
-            fail("unexpected second server control stream during SETUP")
-          _ => ()
-        }
+      StreamStarted(stream, direction) => {
         let (notices, _) = drive_session_result(
           client,
           session,
-          session.receive(@session.ControlData(stream, bytes)),
+          session.receive(
+            @session.InboundStreamStarted(
+              stream,
+              client_stream_direction(direction),
+            ),
+          ),
+          send_counts,
+        )
+        ignore(notices)
+      }
+      Data(stream, bytes) => {
+        let (notices, _) = drive_session_result(
+          client,
+          session,
+          session.receive(@session.StreamData(stream, bytes)),
           send_counts,
         )
         for notice in notices {
@@ -177,7 +193,7 @@ fn setup_client(
       Timeout => ()
     }
     if setup_received && setup_acknowledged {
-      return (client, session, peer_control_stream.unwrap())
+      return (client, session)
     }
   }
   client.close()

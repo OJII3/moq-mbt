@@ -204,7 +204,13 @@ pub fn Client::next_event(
           native_shutdown(raw, 3L)
           return QueueOverflow
         }
-        return StreamStarted(id)
+        // QUIC stream ID bit 1 distinguishes unidirectional streams.
+        let direction = if (id & 0x2L) != 0L {
+          Unidirectional
+        } else {
+          Bidirectional
+        }
+        return StreamStarted(id, direction)
       }
       _ => raise TransportError("event queue failed")
     }

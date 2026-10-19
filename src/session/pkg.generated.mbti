@@ -69,11 +69,8 @@ pub fn ClientSessionError::not_equal(Self, Self) -> Bool
 pub fn ClientSessionError::to_repr(Self) -> @debug.Repr
 
 pub(all) enum ClientSessionEvent {
-  ControlData(Int64, Bytes)
-  RequestStreamStarted(Int64)
-  RequestData(Int64, Bytes)
-  SubgroupStreamStarted(Int64)
-  SubgroupData(Int64, Bytes)
+  InboundStreamStarted(Int64, ClientStreamDirection)
+  StreamData(Int64, Bytes)
   StreamOpened(ClientStreamPurpose, Int64)
   StreamFinished(Int64)
   StreamReset(Int64, UInt64)

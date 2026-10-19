@@ -28,7 +28,7 @@ pub fn Client::stop_receiving(Self, Int64, Int64) -> Unit raise TransportError
 
 pub(all) enum Event {
   Connected
-  StreamStarted(Int64)
+  StreamStarted(Int64, StreamDirection)
   Data(Int64, Bytes)
   StreamFinished(Int64)
   StreamReset(Int64, Int64)
@@ -40,6 +40,14 @@ pub(all) enum Event {
   Timeout
 } derive(@debug.Debug)
 pub fn Event::to_repr(Self) -> @debug.Repr
+
+pub(all) enum StreamDirection {
+  Unidirectional
+  Bidirectional
+} derive(Eq, @debug.Debug)
+pub fn StreamDirection::equal(Self, Self) -> Bool
+pub fn StreamDirection::not_equal(Self, Self) -> Bool
+pub fn StreamDirection::to_repr(Self) -> @debug.Repr
 
 // Type aliases
 
