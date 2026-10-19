@@ -38,13 +38,30 @@ fn run_publisher(
               fail("invalid PUBLISH response: \{error.to_repr()}")
             @protocol.Complete(@protocol.RequestOk(_), _) => {
               publish_accepted = true
-              publisher.publish_accepted()
+              publisher.publish_accepted(stream).unwrap()
               eprintln("PUBLISH_OK received")
               println("Track publication accepted")
               if object_stream is None {
                 let data_stream = client.open_uni()
+                let header : @protocol.SubgroupHeader = {
+                  track_alias: 1,
+                  group_id: 0,
+                  subgroup_id_mode: @protocol.Zero,
+                  publisher_priority: None,
+                  end_of_group: true,
+                  first_object: true,
+                  has_properties: false,
+                }
                 let data = publisher
-                  .object_stream(0, 0, @utf8.encode(payload))
+                  .open_object_stream(stream, data_stream, header)
+                  .unwrap() +
+                  publisher
+                  .object_stream(data_stream, {
+                    object_id: 0,
+                    status: @protocol.Normal,
+                    properties: b"",
+                    payload: @utf8.encode(payload),
+                  })
                   .unwrap()
                 object_stream = Some(data_stream)
                 object_request_stream = Some(publish_stream)
@@ -76,8 +93,25 @@ fn run_publisher(
           eprintln("PUBLISH request sent")
         } else if subscribe_stream == Some(stream) && object_stream is None {
           let data_stream = client.open_uni()
+          let header : @protocol.SubgroupHeader = {
+            track_alias: 1,
+            group_id: 0,
+            subgroup_id_mode: @protocol.Zero,
+            publisher_priority: None,
+            end_of_group: true,
+            first_object: true,
+            has_properties: false,
+          }
           let data = publisher
-            .object_stream(0, 0, @utf8.encode(payload))
+            .open_object_stream(stream, data_stream, header)
+            .unwrap() +
+            publisher
+            .object_stream(data_stream, {
+              object_id: 0,
+              status: @protocol.Normal,
+              properties: b"",
+              payload: @utf8.encode(payload),
+            })
             .unwrap()
           object_stream = Some(data_stream)
           object_request_stream = Some(stream)
@@ -85,11 +119,8 @@ fn run_publisher(
           println("Sent one Object")
         } else if object_stream == Some(stream) {
           let request_stream = object_request_stream.unwrap()
-          let done = @protocol.encode_publish_done({
-            code: 3,
-            stream_count: 1,
-            reason: b"",
-          }).unwrap()
+          publisher.finish_object_stream(stream).unwrap()
+          let done = publisher.publish_done(request_stream, 3, b"").unwrap()
           done_stream = Some(request_stream)
           client.send(request_stream, done, fin=true)
         } else if done_stream == Some(stream) {

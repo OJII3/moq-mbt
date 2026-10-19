@@ -7,6 +7,9 @@ pub(all) enum TrackSessionError {
   AliasMismatch
   UnexpectedMessage
   BufferLimitExceeded
+  IncompleteObjectStream
+  ObjectIdNotIncreasing
+  ObjectStreamsStillOpen
 } derive(Debug, Eq)
 
 ///|
