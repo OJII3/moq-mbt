@@ -77,7 +77,7 @@ pub(all) enum ClientSessionError {
 priv enum ClientRequestKind {
   Publishing
   Subscribing
-}
+} derive(Eq)
 
 ///|
 priv struct ClientRequest {
@@ -337,20 +337,34 @@ pub fn ClientSession::reject_subscription(
 }
 
 ///|
-/// Ask the adapter to open an object stream for an accepted peer subscription.
+/// Ask the adapter to open an object stream for an accepted subscription,
+/// whether this endpoint accepted an inbound SUBSCRIBE or sent a PUBLISH.
 pub fn ClientSession::open_object_stream(
   self : ClientSession,
   subscription_stream : Int64,
   header : @protocol.SubgroupHeader,
 ) -> Result[Array[ClientSessionAction], ClientSessionError] {
-  let inbound = match self.inbound_subscriptions.get(subscription_stream) {
-    Some(value) => value
-    None => return Err(UnknownStream)
+  let publisher_request_id = match
+    self.inbound_subscriptions.get(subscription_stream) {
+    Some(inbound) => {
+      if !inbound.accepted || inbound.finished {
+        return Err(SubscriptionNotAccepted)
+      }
+      inbound.publisher_request_id
+    }
+    None =>
+      match self.request_streams.get(subscription_stream) {
+        Some(request_id) => {
+          let request = self.requests.get(request_id).unwrap()
+          if request.kind != Publishing || !request.accepted || request.terminal {
+            return Err(SubscriptionNotAccepted)
+          }
+          request_id
+        }
+        None => return Err(UnknownStream)
+      }
   }
-  if !inbound.accepted || inbound.finished {
-    return Err(SubscriptionNotAccepted)
-  }
-  let publisher = self.publisher(inbound.publisher_request_id)
+  let publisher = self.publisher(publisher_request_id)
   if header.track_alias != publisher.track_alias() {
     return Err(Track(AliasMismatch))
   }
@@ -358,7 +372,7 @@ pub fn ClientSession::open_object_stream(
   self.next_object_token = token + 1UL
   self.pending_object_streams[token] = {
     subscription_stream,
-    publisher_request_id: inbound.publisher_request_id,
+    publisher_request_id,
     header,
   }
   Ok([OpenStream(Unidirectional, Object(token))])
@@ -406,33 +420,50 @@ pub fn ClientSession::finish_object_stream(
 }
 
 ///|
-/// Send PUBLISH_DONE after all object streams for the peer subscription finish.
+/// Send PUBLISH_DONE after all object streams for this subscription finish.
 pub fn ClientSession::publish_done(
   self : ClientSession,
   subscription_stream : Int64,
   code : UInt64,
   reason : Bytes,
 ) -> Result[Array[ClientSessionAction], ClientSessionError] {
-  let inbound = match self.inbound_subscriptions.get(subscription_stream) {
-    Some(value) => value
-    None => return Err(UnknownStream)
+  let (request_id, publisher_request_id, local_publish) = match
+    self.inbound_subscriptions.get(subscription_stream) {
+    Some(inbound) => {
+      if !inbound.accepted || inbound.finished {
+        return Err(SubscriptionNotAccepted)
+      }
+      (inbound.request_id, inbound.publisher_request_id, false)
+    }
+    None =>
+      match self.request_streams.get(subscription_stream) {
+        Some(request_id) => {
+          let request = self.requests.get(request_id).unwrap()
+          if request.kind != Publishing || !request.accepted || request.terminal {
+            return Err(SubscriptionNotAccepted)
+          }
+          (request_id, request_id, true)
+        }
+        None => return Err(UnknownStream)
+      }
   }
-  if !inbound.accepted || inbound.finished {
-    return Err(SubscriptionNotAccepted)
-  }
-  let publisher = self.publisher(inbound.publisher_request_id)
+  let publisher = self.publisher(publisher_request_id)
   let bytes = match publisher.publish_done(subscription_stream, code, reason) {
     Ok(value) => value
     Err(error) => return Err(Track(error))
   }
-  inbound.finished = true
+  if local_publish {
+    self.requests.get(request_id).unwrap().terminal = true
+  } else {
+    self.inbound_subscriptions.get(subscription_stream).unwrap().finished = true
+  }
   let message = match @protocol.decode_control(bytes) {
     @protocol.Complete(@protocol.PublishDone(value), _) => value
     _ => return Err(UnexpectedMessage)
   }
   Ok([
     Send(subscription_stream, bytes, true),
-    Notify(PublishDone(inbound.request_id, message)),
+    Notify(PublishDone(request_id, message)),
   ])
 }
 
