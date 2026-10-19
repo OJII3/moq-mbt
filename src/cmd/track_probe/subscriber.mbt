@@ -209,7 +209,19 @@ fn run_subscriber(
           return
         }
       }
-      SendStopped(_, _) => ()
+      SendStopped(stream, code) => {
+        let (notices, _) = drive_session_result(
+          client,
+          session,
+          session.receive(
+            @session.SendStopped(stream, code.reinterpret_as_uint64()),
+          ),
+          send_counts,
+        )
+        if handle_subscriber_notices(notices, state) {
+          return
+        }
+      }
       Closed(code) => fail("peer closed (application code \{code})")
       TransportClosed(status) => fail("QUIC failed (MsQuic status \{status})")
       QueueOverflow => fail("transport event buffer overflow")

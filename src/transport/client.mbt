@@ -110,6 +110,40 @@ pub fn Client::send(
 }
 
 ///|
+/// Abort the local send side of a stream.
+pub fn Client::abort_send(
+  self : Client,
+  stream : Int64,
+  error_code : Int64,
+) -> Unit raise TransportError {
+  let raw = self.handle()
+  guard self.streams.get(stream) is Some(handle) else {
+    raise TransportError("unknown stream \{stream}")
+  }
+  let status = native_abort_send(raw, handle, error_code)
+  if status != 0 {
+    raise TransportError("stream send abort failed (status \{status})")
+  }
+}
+
+///|
+/// Stop receiving data on a stream.
+pub fn Client::stop_receiving(
+  self : Client,
+  stream : Int64,
+  error_code : Int64,
+) -> Unit raise TransportError {
+  let raw = self.handle()
+  guard self.streams.get(stream) is Some(handle) else {
+    raise TransportError("unknown stream \{stream}")
+  }
+  let status = native_stop_receiving(raw, handle, error_code)
+  if status != 0 {
+    raise TransportError("stream receive stop failed (status \{status})")
+  }
+}
+
+///|
 /// Wait at most `timeout_ms` for an event. Stream data may arrive in arbitrary chunks.
 /// A connection buffers at most 1 MiB and 256 queued events; overflow closes it.
 pub fn Client::next_event(

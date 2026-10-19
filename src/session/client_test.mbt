@@ -634,3 +634,326 @@ test "ClientSession sends Objects and PUBLISH_DONE on a local PUBLISH stream" {
     ]),
   )
 }
+
+///|
+test "ClientSession ends inbound subscriptions when request streams terminate" {
+  let publisher = client_session_ready()
+  let track = client_track(b"video")
+  let (publish_id, _) = publisher.publish_track(track, 1).unwrap()
+  assert_eq(publish_id, 0UL)
+  assert_eq(
+    publisher.receive(@session.StreamOpened(@session.Request(0), 20)),
+    Ok([
+      @session.Send(
+        20,
+        @protocol.encode_publish({
+          request_id: 0,
+          track,
+          track_alias: 1,
+          parameters: [],
+          properties: b"",
+        }).unwrap(),
+        false,
+      ),
+    ]),
+  )
+  assert_eq(
+    publisher.receive(
+      @session.RequestData(
+        20,
+        @protocol.encode_request_ok({ parameters: [], properties: b"", }).unwrap(),
+      ),
+    ),
+    Ok([@session.Notify(@session.PublishAccepted(0))]),
+  )
+
+  assert_eq(publisher.receive(@session.RequestStreamStarted(40)), Ok([]))
+  assert_eq(
+    publisher.receive(
+      @session.RequestData(
+        40,
+        @protocol.encode_subscribe({ request_id: 1, track, parameters: [], }).unwrap(),
+      ),
+    ),
+    Ok([@session.Notify(@session.SubscriptionRequested(1, 40, track))]),
+  )
+  assert_eq(
+    publisher.accept_subscription(40),
+    Ok([
+      @session.Send(
+        40,
+        @protocol.encode_subscribe_ok({
+          track_alias: 1,
+          parameters: [],
+          properties: b"",
+        }).unwrap(),
+        false,
+      ),
+      @session.Notify(@session.SubscriptionAccepted(1, 40, 1)),
+    ]),
+  )
+
+  let header = client_subgroup_header(1, 7)
+  assert_eq(
+    publisher.open_object_stream(40, header),
+    Ok([@session.OpenStream(@session.Unidirectional, @session.Object(0))]),
+  )
+  assert_eq(
+    publisher.receive(@session.StreamOpened(@session.Object(0), 50)),
+    Ok([@session.Send(50, @protocol.encode_subgroup_header(header), false)]),
+  )
+  assert_eq(
+    publisher.receive(@session.StreamReset(40, 9UL)),
+    Ok([
+      @session.AbortSend(40, 9UL),
+      @session.AbortSend(50, 9UL),
+      @session.Notify(@session.SubscriptionEnded(1, 40)),
+    ]),
+  )
+  assert_eq(
+    publisher.open_object_stream(40, header),
+    Err(@session.SubscriptionNotAccepted),
+  )
+  assert_eq(
+    publisher.send_object(50, client_object(0, b"late")),
+    Err(@session.UnknownStream),
+  )
+
+  assert_eq(publisher.receive(@session.RequestStreamStarted(42)), Ok([]))
+  assert_eq(
+    publisher.receive(
+      @session.RequestData(
+        42,
+        @protocol.encode_subscribe({ request_id: 3, track, parameters: [], }).unwrap(),
+      ),
+    ),
+    Ok([@session.Notify(@session.SubscriptionRequested(3, 42, track))]),
+  )
+  assert_eq(
+    publisher.accept_subscription(42),
+    Ok([
+      @session.Send(
+        42,
+        @protocol.encode_subscribe_ok({
+          track_alias: 1,
+          parameters: [],
+          properties: b"",
+        }).unwrap(),
+        false,
+      ),
+      @session.Notify(@session.SubscriptionAccepted(3, 42, 1)),
+    ]),
+  )
+  assert_eq(
+    publisher.open_object_stream(42, header),
+    Ok([@session.OpenStream(@session.Unidirectional, @session.Object(1))]),
+  )
+  assert_eq(
+    publisher.receive(@session.SendStopped(42, 5UL)),
+    Ok([
+      @session.AbortSend(42, 5UL),
+      @session.Notify(@session.SubscriptionEnded(3, 42)),
+    ]),
+  )
+  assert_eq(
+    publisher.receive(@session.StreamOpened(@session.Object(1), 52)),
+    Ok([@session.AbortSend(52, 5UL)]),
+  )
+}
+
+///|
+test "ClientSession stops incoming object streams when a subscription request ends" {
+  let subscriber = client_session_ready()
+  let track = client_track(b"video")
+  let (request_id, _) = subscriber.subscribe_track(track).unwrap()
+  assert_eq(request_id, 0UL)
+  assert_eq(
+    subscriber.receive(@session.StreamOpened(@session.Request(0), 30)),
+    Ok([
+      @session.Send(
+        30,
+        @protocol.encode_subscribe({ request_id: 0, track, parameters: [], }).unwrap(),
+        false,
+      ),
+    ]),
+  )
+  assert_eq(
+    subscriber.receive(
+      @session.RequestData(
+        30,
+        @protocol.encode_subscribe_ok({
+          track_alias: 10,
+          parameters: [],
+          properties: b"",
+        }).unwrap(),
+      ),
+    ),
+    Ok([@session.Notify(@session.SubscribeEstablished(0, 10))]),
+  )
+  assert_eq(subscriber.receive(@session.SubgroupStreamStarted(60)), Ok([]))
+  assert_eq(subscriber.receive(@session.SubgroupStreamStarted(62)), Ok([]))
+  assert_eq(
+    subscriber.receive(
+      @session.SubgroupData(
+        60,
+        @protocol.encode_subgroup_header(client_subgroup_header(10, 7)),
+      ),
+    ),
+    Ok([]),
+  )
+  assert_eq(
+    subscriber.receive(@session.StreamFinished(30)),
+    Ok([
+      @session.AbortSend(30, 0UL),
+      @session.StopReceiving(60, 0UL),
+      @session.Notify(@session.SubscriptionEnded(0, 30)),
+    ]),
+  )
+  assert_eq(
+    subscriber.receive(
+      @session.SubgroupData(
+        62,
+        @protocol.encode_subgroup_header(client_subgroup_header(10, 8)),
+      ),
+    ),
+    Ok([@session.StopReceiving(62, 0UL)]),
+  )
+  assert_eq(subscriber.receive(@session.SubgroupData(60, b"ignored")), Ok([]))
+  assert_eq(subscriber.receive(@session.StreamFinished(60)), Ok([]))
+  assert_eq(subscriber.receive(@session.StreamFinished(62)), Ok([]))
+}
+
+///|
+test "ClientSession releases a completed subscription alias" {
+  let subscriber = client_session_ready()
+  let first_track = client_track(b"first")
+  let second_track = client_track(b"second")
+  assert_eq(subscriber.subscribe_track(first_track).unwrap().0, 0UL)
+  assert_eq(
+    subscriber.receive(@session.StreamOpened(@session.Request(0), 30)),
+    Ok([
+      @session.Send(
+        30,
+        @protocol.encode_subscribe({
+          request_id: 0,
+          track: first_track,
+          parameters: [],
+        }).unwrap(),
+        false,
+      ),
+    ]),
+  )
+  assert_eq(
+    subscriber.receive(
+      @session.RequestData(
+        30,
+        @protocol.encode_subscribe_ok({
+          track_alias: 10,
+          parameters: [],
+          properties: b"",
+        }).unwrap(),
+      ),
+    ),
+    Ok([@session.Notify(@session.SubscribeEstablished(0, 10))]),
+  )
+  assert_eq(
+    subscriber.receive(
+      @session.RequestData(
+        30,
+        @protocol.encode_publish_done({ code: 0, stream_count: 0, reason: b"", }).unwrap(),
+      ),
+    ),
+    Ok([
+      @session.Notify(
+        @session.PublishDone(0, { code: 0, stream_count: 0, reason: b"", }),
+      ),
+    ]),
+  )
+
+  assert_eq(subscriber.subscribe_track(second_track).unwrap().0, 2UL)
+  assert_eq(
+    subscriber.receive(@session.StreamOpened(@session.Request(2), 32)),
+    Ok([
+      @session.Send(
+        32,
+        @protocol.encode_subscribe({
+          request_id: 2,
+          track: second_track,
+          parameters: [],
+        }).unwrap(),
+        false,
+      ),
+    ]),
+  )
+  assert_eq(
+    subscriber.receive(
+      @session.RequestData(
+        32,
+        @protocol.encode_subscribe_ok({
+          track_alias: 10,
+          parameters: [],
+          properties: b"",
+        }).unwrap(),
+      ),
+    ),
+    Ok([@session.Notify(@session.SubscribeEstablished(2, 10))]),
+  )
+}
+
+///|
+test "ClientSession ends local PUBLISH subscriptions on STOP_SENDING" {
+  let publisher = client_session_ready()
+  let track = client_track(b"video")
+  assert_eq(publisher.publish_track(track, 1).unwrap().0, 0UL)
+  assert_eq(
+    publisher.receive(@session.StreamOpened(@session.Request(0), 20)),
+    Ok([
+      @session.Send(
+        20,
+        @protocol.encode_publish({
+          request_id: 0,
+          track,
+          track_alias: 1,
+          parameters: [],
+          properties: b"",
+        }).unwrap(),
+        false,
+      ),
+    ]),
+  )
+  assert_eq(
+    publisher.receive(
+      @session.RequestData(
+        20,
+        @protocol.encode_request_ok({ parameters: [], properties: b"", }).unwrap(),
+      ),
+    ),
+    Ok([@session.Notify(@session.PublishAccepted(0))]),
+  )
+
+  let header = client_subgroup_header(1, 7)
+  assert_eq(
+    publisher.open_object_stream(20, header),
+    Ok([@session.OpenStream(@session.Unidirectional, @session.Object(0))]),
+  )
+  assert_eq(
+    publisher.receive(@session.StreamOpened(@session.Object(0), 50)),
+    Ok([@session.Send(50, @protocol.encode_subgroup_header(header), false)]),
+  )
+  assert_eq(
+    publisher.receive(@session.SendStopped(20, 4UL)),
+    Ok([
+      @session.AbortSend(20, 4UL),
+      @session.AbortSend(50, 4UL),
+      @session.Notify(@session.SubscriptionEnded(0, 20)),
+    ]),
+  )
+  assert_eq(
+    publisher.open_object_stream(20, header),
+    Err(@session.SubscriptionNotAccepted),
+  )
+  assert_eq(
+    publisher.send_object(50, client_object(0, b"late")),
+    Err(@session.UnknownStream),
+  )
+}

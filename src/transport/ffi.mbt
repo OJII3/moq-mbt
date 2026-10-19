@@ -45,6 +45,20 @@ extern "C" fn native_send(
 ) -> Int32 = "moq_client_send"
 
 ///|
+extern "C" fn native_abort_send(
+  client : RawClient,
+  stream : RawStream,
+  error_code : Int64,
+) -> Int32 = "moq_client_abort_send"
+
+///|
+extern "C" fn native_stop_receiving(
+  client : RawClient,
+  stream : RawStream,
+  error_code : Int64,
+) -> Int32 = "moq_client_stop_receiving"
+
+///|
 extern "C" fn native_pop(client : RawClient) -> Int32 = "moq_client_pop"
 
 ///|
