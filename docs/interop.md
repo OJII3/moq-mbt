@@ -10,7 +10,7 @@ Native QUIC 上で Draft 18 の SETUP 交換、単一トラックの publish/sub
 nix develop -c moon test
 nix develop -c moon test --target wasm
 nix develop -c moon test --target js
-nix develop -c bash scripts/check-setup-interop.sh
+nix develop -c bash scripts/check-interop.sh
 ~~~
 
 疎通スクリプトは 127.0.0.1:4443 を使う。実行中のリレーがある場合は終了してから実行する。証明書検証に失敗する接続を確認したあと、SETUP、track 登録、object 配送を確認する。成功時には次のような出力が得られる。

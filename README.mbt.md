@@ -37,7 +37,7 @@ The Nix devShell includes MoonBit, Node.js, MsQuic, OpenSSL and a pinned moq5 re
 Run the local Draft 18 interoperability check with:
 
 ```sh
-nix develop -c bash scripts/check-setup-interop.sh
+nix develop -c bash scripts/check-interop.sh
 ```
 
 The check starts a relay on `127.0.0.1:4443`, exchanges SETUP, publishes a
