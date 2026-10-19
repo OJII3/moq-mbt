@@ -49,6 +49,13 @@ fn Client::handle(self : Client) -> RawClient raise TransportError {
 }
 
 ///|
+/// Whether the local stream table has room for another stream.
+pub fn Client::has_stream_capacity(self : Client) -> Bool raise TransportError {
+  ignore(self.handle())
+  self.streams.length() < max_streams
+}
+
+///|
 /// Open a unidirectional stream. The returned value is the QUIC stream ID.
 pub fn Client::open_uni(self : Client) -> Int64 raise TransportError {
   let raw = self.handle()
