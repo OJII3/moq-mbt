@@ -28,34 +28,124 @@ fn publisher_frame(
 }
 
 ///|
-fn publisher_started() -> @session.SingleTrackPublisher raise {
-  let publisher = @session.SingleTrackPublisher::new(publisher_track(), 1)
-  assert_eq(
-    publisher.receive_subscribe(
-      11,
-      @protocol.encode_subscribe({
-        request_id: 1,
-        track: publisher_track(),
-        parameters: [],
-      }).unwrap(),
-    ),
-    Ok(
-      @session.SubscribeRequested(
-        11,
-        { request_id: 1, track: publisher_track(), parameters: [], },
-        b"",
-      ),
-    ),
+fn publisher_announced() -> @session.ClientSession raise {
+  let publisher = client_session_ready()
+  ignore(publisher.publish_track(publisher_track(), 1).unwrap())
+  ignore(
+    publisher.receive(@session.StreamOpened(@session.Request(0), 20)).unwrap(),
   )
-  assert_eq(publisher.accept_subscribe(11).unwrap(), b"\x04\x00\x02\x01\x00")
+  assert_eq(
+    publisher.receive(@session.StreamData(20, b"\x07\x00\x01\x00")),
+    Ok([@session.Notify(@session.PublishAccepted(0))]),
+  )
   publisher
 }
 
 ///|
+fn publisher_started() -> @session.ClientSession raise {
+  let publisher = publisher_announced()
+  ignore(
+    publisher
+    .receive(@session.InboundStreamStarted(40, @session.Bidirectional))
+    .unwrap(),
+  )
+  assert_eq(
+    publisher.receive(
+      @session.StreamData(
+        40,
+        @protocol.encode_subscribe({
+          request_id: 1,
+          track: publisher_track(),
+          parameters: [],
+        }).unwrap(),
+      ),
+    ),
+    Ok([
+      @session.Notify(@session.SubscriptionRequested(1, 40, publisher_track())),
+    ]),
+  )
+  assert_eq(
+    publisher.accept_subscription(40),
+    Ok([
+      @session.Send(40, b"\x04\x00\x02\x01\x00", false),
+      @session.Notify(@session.SubscriptionAccepted(1, 40, 1)),
+    ]),
+  )
+  publisher
+}
+
+///|
+fn publisher_open(
+  publisher : @session.ClientSession,
+  subscription_stream : Int64,
+  stream : Int64,
+  header : @protocol.SubgroupHeader,
+) -> Bytes raise {
+  let token = match
+    publisher.open_object_stream(subscription_stream, header).unwrap() {
+    [@session.OpenStream(@session.Unidirectional, @session.Object(token))] =>
+      token
+    _ => fail("expected object stream request")
+  }
+  client_send_bytes(
+    publisher
+    .receive(@session.StreamOpened(@session.Object(token), stream))
+    .unwrap(),
+  )
+}
+
+///|
+fn publisher_finish(
+  publisher : @session.ClientSession,
+  stream : Int64,
+  object_count : Int32,
+) -> Unit raise {
+  assert_eq(
+    publisher.finish_object_stream(stream),
+    Ok([@session.Send(stream, b"", true)]),
+  )
+  // Header, Objects, then FIN each produce a send completion.
+  for _ in 0..<(object_count + 1) {
+    assert_eq(
+      publisher.receive(@session.SendComplete(stream, false)),
+      Ok([@session.Notify(@session.SendFinished(stream, false))]),
+    )
+  }
+  assert_eq(
+    publisher.receive(@session.SendComplete(stream, false)),
+    Ok([
+      @session.Notify(@session.SendFinished(stream, false)),
+      @session.Notify(@session.ObjectStreamFinished(stream)),
+    ]),
+  )
+}
+
+///|
+fn publisher_done_message(
+  publisher : @session.ClientSession,
+  stream : Int64,
+) -> @protocol.PublishDoneMessage raise {
+  let bytes = match publisher.publish_done(stream, 3, b"").unwrap() {
+    [@session.Send(_, bytes, true), @session.Notify(@session.PublishDone(_, _))] =>
+      bytes
+    _ => fail("expected PUBLISH_DONE and FIN")
+  }
+  match @protocol.decode_control(bytes) {
+    @protocol.Complete(@protocol.PublishDone(message), _) => message
+    _ => fail("expected encoded PUBLISH_DONE")
+  }
+}
+
+///|
 test "publisher encodes one header and increasing object deltas" {
-  let publish_wire = b"\x1d\x00\x0f\x00\x01\x04demo\x05video\x01\x00"
-  let publisher = @session.SingleTrackPublisher::new(publisher_track(), 1)
-  assert_eq(publisher.publish_request().unwrap(), publish_wire)
+  let publisher = client_session_ready()
+  ignore(publisher.publish_track(publisher_track(), 1).unwrap())
+  assert_eq(
+    client_send_bytes(
+      publisher.receive(@session.StreamOpened(@session.Request(0), 20)).unwrap(),
+    ),
+    b"\x1d\x00\x0f\x00\x01\x04demo\x05video\x01\x00",
+  )
   let subscribe = @protocol.encode_subscribe({
     request_id: 1,
     track: publisher_track(),
@@ -63,148 +153,188 @@ test "publisher encodes one header and increasing object deltas" {
   }).unwrap()
   assert_eq(subscribe, b"\x03\x00\x0e\x01\x01\x04demo\x05video\x00")
   for split = 0; split < subscribe.length(); split = split + 1 {
-    let publisher = @session.SingleTrackPublisher::new(publisher_track(), 1)
-    assert_eq(
-      publisher.receive_subscribe(11, subscribe[:split].to_owned()),
-      Ok(@session.Pending),
+    let publisher = publisher_announced()
+    ignore(
+      publisher
+      .receive(@session.InboundStreamStarted(40, @session.Bidirectional))
+      .unwrap(),
     )
     assert_eq(
-      publisher.receive_subscribe(11, subscribe[split:].to_owned()),
-      Ok(
-        @session.SubscribeRequested(
-          11,
-          { request_id: 1, track: publisher_track(), parameters: [], },
-          b"",
+      publisher.receive(@session.StreamData(40, subscribe[:split].to_owned())),
+      Ok([]),
+    )
+    assert_eq(
+      publisher.receive(@session.StreamData(40, subscribe[split:].to_owned())),
+      Ok([
+        @session.Notify(
+          @session.SubscriptionRequested(1, 40, publisher_track()),
         ),
-      ),
+      ]),
     )
   }
-
   let publisher = publisher_started()
   let header = publisher_header(0, true)
   assert_eq(
-    publisher.open_object_stream(11, 20, header),
-    Ok(@protocol.encode_subgroup_header(header)),
+    publisher_open(publisher, 40, 50, header),
+    @protocol.encode_subgroup_header(header),
   )
   assert_eq(
-    publisher.object_stream(20, publisher_frame(0, b"payload")),
-    Ok(b"\x00\x07payload"),
-  )
-  assert_eq(
-    publisher.object_stream(20, publisher_frame(2, b"second")),
-    Ok(b"\x01\x06second"),
-  )
-  assert_eq(
-    publisher.object_stream(20, publisher_frame(2, b"duplicate")),
-    Err(@session.ObjectIdNotIncreasing),
-  )
-  assert_eq(publisher.finish_object_stream(20), Ok(()))
-  let done = publisher.publish_done(11, 3, b"").unwrap()
-  assert_eq(
-    @protocol.decode_control(done),
-    @protocol.Complete(
-      @protocol.PublishDone({ code: 3, stream_count: 1, reason: b"", }),
-      done.length(),
+    client_send_bytes(
+      publisher.send_object(50, publisher_frame(0, b"payload")).unwrap(),
     ),
+    b"\x00\x07payload",
   )
+  assert_eq(
+    client_send_bytes(
+      publisher.send_object(50, publisher_frame(2, b"second")).unwrap(),
+    ),
+    b"\x01\x06second",
+  )
+  assert_eq(
+    publisher.send_object(50, publisher_frame(2, b"duplicate")),
+    Err(@session.Track(@session.ObjectIdNotIncreasing)),
+  )
+  publisher_finish(publisher, 50, 2)
+  assert_eq(publisher_done_message(publisher, 40), {
+    code: 3,
+    stream_count: 1,
+    reason: b"",
+  })
 }
 
 ///|
 test "publisher counts empty and parallel streams per subscription" {
-  let publisher = @session.SingleTrackPublisher::new(publisher_track(), 1)
-  assert_eq(publisher.publish_accepted(50), Ok(()))
-  assert_eq(publisher.publish_accepted(51), Ok(()))
+  let publisher = publisher_started()
   let header_a = publisher_header(1, false)
   let header_b = publisher_header(2, true)
-  ignore(publisher.open_object_stream(50, 60, header_a).unwrap())
-  ignore(publisher.open_object_stream(50, 61, header_b).unwrap())
-  ignore(publisher.open_object_stream(51, 62, header_a).unwrap())
+  ignore(publisher_open(publisher, 40, 60, header_a))
+  ignore(publisher_open(publisher, 40, 61, header_b))
+  ignore(publisher_open(publisher, 20, 62, header_a))
   assert_eq(
-    publisher.object_stream(60, publisher_frame(3, b"a")),
-    Ok(b"\x03\x01a"),
-  )
-  assert_eq(
-    publisher.object_stream(60, publisher_frame(4, b"b")),
-    Ok(b"\x00\x01b"),
-  )
-  assert_eq(
-    publisher.publish_done(50, 3, b""),
-    Err(@session.ObjectStreamsStillOpen),
-  )
-  assert_eq(publisher.finish_object_stream(60), Ok(()))
-  assert_eq(publisher.reset_object_stream(61), Ok(()))
-  assert_eq(publisher.finish_object_stream(62), Ok(()))
-  let done = publisher.publish_done(50, 3, b"").unwrap()
-  assert_eq(
-    @protocol.decode_control(done),
-    @protocol.Complete(
-      @protocol.PublishDone({ code: 3, stream_count: 2, reason: b"", }),
-      done.length(),
+    client_send_bytes(
+      publisher.send_object(60, publisher_frame(3, b"a")).unwrap(),
     ),
+    b"\x03\x01a",
   )
-  let empty_done = publisher.publish_done(51, 3, b"").unwrap()
   assert_eq(
-    @protocol.decode_control(empty_done),
-    @protocol.Complete(
-      @protocol.PublishDone({ code: 3, stream_count: 1, reason: b"", }),
-      empty_done.length(),
+    client_send_bytes(
+      publisher.send_object(60, publisher_frame(4, b"b")).unwrap(),
     ),
+    b"\x00\x01b",
   )
-
-  let no_stream_publisher = @session.SingleTrackPublisher::new(
-    publisher_track(),
-    1,
-  )
-  assert_eq(no_stream_publisher.publish_accepted(52), Ok(()))
-  let no_stream_done = no_stream_publisher.publish_done(52, 3, b"").unwrap()
   assert_eq(
-    @protocol.decode_control(no_stream_done),
-    @protocol.Complete(
-      @protocol.PublishDone({ code: 3, stream_count: 0, reason: b"", }),
-      no_stream_done.length(),
-    ),
+    publisher.publish_done(40, 3, b""),
+    Err(@session.Track(@session.ObjectStreamsStillOpen)),
   )
+  publisher_finish(publisher, 60, 2)
+  assert_eq(
+    publisher.receive(@session.SendComplete(61, true)),
+    Ok([@session.Notify(@session.SendFinished(61, true))]),
+  )
+  publisher_finish(publisher, 62, 0)
+  assert_eq(publisher_done_message(publisher, 40), {
+    code: 3,
+    stream_count: 2,
+    reason: b"",
+  })
+  assert_eq(publisher_done_message(publisher, 20), {
+    code: 3,
+    stream_count: 1,
+    reason: b"",
+  })
+  let no_stream_publisher = publisher_announced()
+  assert_eq(publisher_done_message(no_stream_publisher, 20), {
+    code: 3,
+    stream_count: 0,
+    reason: b"",
+  })
 }
 
 ///|
 test "publisher validates stream alias and allows only one publish done" {
-  let publisher = @session.SingleTrackPublisher::new(publisher_track(), 1)
-  assert_eq(publisher.publish_accepted(70), Ok(()))
+  let publisher = publisher_announced()
   let invalid_header : @protocol.SubgroupHeader = {
+    ..publisher_header(0, false),
     track_alias: 2,
-    group_id: 0,
-    subgroup_id_mode: @protocol.Zero,
-    publisher_priority: None,
-    end_of_group: false,
-    first_object: true,
-    has_properties: false,
   }
   assert_eq(
-    publisher.open_object_stream(70, 71, invalid_header),
-    Err(@session.AliasMismatch),
+    publisher.open_object_stream(20, invalid_header),
+    Err(@session.Track(@session.AliasMismatch)),
   )
-  assert_eq(publisher.publish_done(70, 3, b""), Ok(b"\x0b\x00\x03\x03\x00\x00"))
-  assert_eq(publisher.publish_done(70, 3, b""), Err(@session.UnexpectedMessage))
+  assert_eq(publisher_done_message(publisher, 20), {
+    code: 3,
+    stream_count: 0,
+    reason: b"",
+  })
+  assert_eq(
+    publisher.publish_done(20, 3, b""),
+    Err(@session.SubscriptionNotAccepted),
+  )
 }
 
 ///|
 test "publisher keeps EndOfGroup status separate from header End of Group" {
   let publisher = publisher_started()
   let header = publisher_header(1, false)
-  let header_bytes = publisher.open_object_stream(11, 80, header).unwrap()
+  let header_bytes = publisher_open(publisher, 40, 80, header)
   let frame : @protocol.SubgroupFrame = {
     object_id: 4,
     status: @protocol.EndOfGroup,
     properties: b"",
     payload: b"",
   }
-  let wire = header_bytes + publisher.object_stream(80, frame).unwrap()
-  let subscriber = @session.SingleTrackSubscriber::new(publisher_track())
-  ignore(subscriber.receive_response(8, b"\x04\x00\x02\x01\x00"))
-  assert_eq(
-    subscriber.receive_object(80, wire),
-    Ok(@session.Received(header, [frame])),
+  let wire = header_bytes +
+    client_send_bytes(publisher.send_object(80, frame).unwrap())
+  let subscriber = subscriber_started()
+  ignore(
+    subscriber
+    .receive(@session.InboundStreamStarted(80, @session.Unidirectional))
+    .unwrap(),
   )
-  assert_eq(publisher.finish_object_stream(80), Ok(()))
-  assert_eq(subscriber.finish_object_stream(80), Ok(false))
+  assert_eq(
+    subscriber.receive(@session.StreamData(80, wire)),
+    Ok([@session.Notify(@session.ObjectReceived(0, header, [frame]))]),
+  )
+  publisher_finish(publisher, 80, 1)
+  assert_eq(subscriber.receive(@session.StreamFinished(80)), Ok([]))
+}
+
+///|
+test "publisher rejects duplicate object stream handles without replacing writer state or counting twice" {
+  let publisher = publisher_announced()
+  ignore(publisher_open(publisher, 20, 50, publisher_header(1, false)))
+  assert_eq(
+    client_send_bytes(
+      publisher.send_object(50, publisher_frame(3, b"a")).unwrap(),
+    ),
+    b"\x03\x01a",
+  )
+  let token = match
+    publisher.open_object_stream(20, publisher_header(2, false)).unwrap() {
+    [@session.OpenStream(@session.Unidirectional, @session.Object(token))] =>
+      token
+    _ => fail("expected object stream request")
+  }
+  assert_eq(
+    publisher.receive(@session.StreamOpened(@session.Object(token), 50)),
+    Err(@session.Track(@session.UnexpectedMessage)),
+  )
+  assert_eq(
+    client_send_bytes(
+      publisher.send_object(50, publisher_frame(4, b"b")).unwrap(),
+    ),
+    b"\x00\x01b",
+  )
+  ignore(
+    publisher
+    .receive(@session.StreamOpened(@session.Object(token), 51))
+    .unwrap(),
+  )
+  publisher_finish(publisher, 50, 2)
+  publisher_finish(publisher, 51, 0)
+  assert_eq(publisher_done_message(publisher, 20), {
+    code: 3,
+    stream_count: 2,
+    reason: b"",
+  })
 }

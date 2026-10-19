@@ -141,60 +141,6 @@ pub fn HandshakeProgress::equal(Self, Self) -> Bool
 pub fn HandshakeProgress::not_equal(Self, Self) -> Bool
 pub fn HandshakeProgress::to_repr(Self) -> @debug.Repr
 
-pub(all) enum ObjectProgress {
-  Pending
-  Received(@protocol.SubgroupHeader, Array[@protocol.SubgroupFrame])
-} derive(Eq, @debug.Debug)
-pub fn ObjectProgress::equal(Self, Self) -> Bool
-pub fn ObjectProgress::not_equal(Self, Self) -> Bool
-pub fn ObjectProgress::to_repr(Self) -> @debug.Repr
-
-pub(all) enum PublisherProgress {
-  Pending
-  SubscribeRequested(Int64, @protocol.SubscribeMessage, Bytes)
-} derive(Eq, @debug.Debug)
-pub fn PublisherProgress::equal(Self, Self) -> Bool
-pub fn PublisherProgress::not_equal(Self, Self) -> Bool
-pub fn PublisherProgress::to_repr(Self) -> @debug.Repr
-
-pub struct SingleTrackPublisher {
-  // private fields
-}
-pub fn SingleTrackPublisher::accept_subscribe(Self, Int64) -> Result[Bytes, TrackSessionError]
-pub fn SingleTrackPublisher::finish_object_stream(Self, Int64) -> Result[Unit, TrackSessionError]
-pub fn SingleTrackPublisher::new(@protocol.TrackName, UInt64) -> Self
-pub fn SingleTrackPublisher::new_with_request_id(@protocol.TrackName, UInt64, UInt64) -> Self
-pub fn SingleTrackPublisher::object_stream(Self, Int64, @protocol.SubgroupFrame) -> Result[Bytes, TrackSessionError]
-pub fn SingleTrackPublisher::open_object_stream(Self, Int64, Int64, @protocol.SubgroupHeader) -> Result[Bytes, TrackSessionError]
-pub fn SingleTrackPublisher::publish_accepted(Self, Int64) -> Result[Unit, TrackSessionError]
-pub fn SingleTrackPublisher::publish_done(Self, Int64, UInt64, Bytes) -> Result[Bytes, TrackSessionError]
-pub fn SingleTrackPublisher::publish_request(Self) -> Result[Bytes, @protocol.CodecError]
-pub fn SingleTrackPublisher::receive_subscribe(Self, Int64, Bytes) -> Result[PublisherProgress, TrackSessionError]
-pub fn SingleTrackPublisher::reset_object_stream(Self, Int64) -> Result[Unit, TrackSessionError]
-pub fn SingleTrackPublisher::track_alias(Self) -> UInt64
-
-pub struct SingleTrackSubscriber {
-  // private fields
-}
-pub fn SingleTrackSubscriber::finish_object_stream(Self, Int64) -> Result[Bool, TrackSessionError]
-pub fn SingleTrackSubscriber::new(@protocol.TrackName) -> Self
-pub fn SingleTrackSubscriber::new_with_request_id(@protocol.TrackName, UInt64) -> Self
-pub fn SingleTrackSubscriber::object_stream_group_id(Self, Int64) -> Result[UInt64, TrackSessionError]
-pub fn SingleTrackSubscriber::receive_object(Self, Int64, Bytes) -> Result[ObjectProgress, TrackSessionError]
-pub fn SingleTrackSubscriber::receive_response(Self, Int64, Bytes) -> Result[SubscriberProgress, TrackSessionError]
-pub fn SingleTrackSubscriber::reset_object_stream(Self, Int64) -> Unit
-pub fn SingleTrackSubscriber::subscribe_request(Self) -> Result[Bytes, @protocol.CodecError]
-
-pub(all) enum SubscriberProgress {
-  Pending
-  Established(UInt64, Bytes)
-  Rejected(@protocol.RequestErrorMessage, Bytes)
-  Finished(@protocol.PublishDoneMessage, Bytes)
-} derive(Eq, @debug.Debug)
-pub fn SubscriberProgress::equal(Self, Self) -> Bool
-pub fn SubscriberProgress::not_equal(Self, Self) -> Bool
-pub fn SubscriberProgress::to_repr(Self) -> @debug.Repr
-
 pub(all) enum TrackSessionError {
   InvalidControlMessage
   TrackMismatch
