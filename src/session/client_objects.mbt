@@ -159,3 +159,144 @@ fn ClientSession::receive_subgroup(
     Ok([Notify(ObjectReceived(request_id, header, frames))])
   }
 }
+
+///|
+/// Ask the adapter to open an object stream for an accepted subscription,
+/// whether this endpoint accepted an inbound SUBSCRIBE or sent a PUBLISH.
+pub fn ClientSession::open_object_stream(
+  self : ClientSession,
+  subscription_stream : Int64,
+  header : @protocol.SubgroupHeader,
+) -> Result[Array[ClientSessionAction], ClientSessionError] {
+  let publisher_request_id = match
+    self.inbound_subscriptions.get(subscription_stream) {
+    Some(inbound) => {
+      if inbound.state != Active {
+        return Err(SubscriptionNotAccepted)
+      }
+      inbound.publisher_request_id
+    }
+    None =>
+      match self.request_streams.get(subscription_stream) {
+        Some(request_id) => {
+          let request = self.requests.get(request_id).unwrap()
+          if request.kind != Publishing || !request.accepted || request.terminal {
+            return Err(SubscriptionNotAccepted)
+          }
+          request_id
+        }
+        None => return Err(UnknownStream)
+      }
+  }
+  let publisher_request = self.requests.get(publisher_request_id).unwrap()
+  if header.track_alias != publisher_request.track_alias.unwrap() {
+    return Err(Track(AliasMismatch))
+  }
+  let token = self.next_object_token
+  self.next_object_token = token + 1UL
+  self.pending_object_streams[token] = {
+    subscription_stream,
+    header,
+    cancelled_error_code: None,
+  }
+  Ok([OpenStream(Unidirectional, Object(token))])
+}
+
+///|
+/// Encode and send an Object on an open outgoing Subgroup stream.
+pub fn ClientSession::send_object(
+  self : ClientSession,
+  stream : Int64,
+  frame : @protocol.SubgroupFrame,
+) -> Result[Array[ClientSessionAction], ClientSessionError] {
+  let outgoing = match self.outgoing_object_streams.get(stream) {
+    Some(value) => value
+    None => return Err(UnknownStream)
+  }
+  if !self.subscription_is_active(outgoing.subscription_stream) {
+    return Err(SubscriptionNotAccepted)
+  }
+  if outgoing.finishing {
+    return Err(UnexpectedMessage)
+  }
+  let bytes = match encode_outgoing_object(outgoing, frame) {
+    Ok(value) => value
+    Err(error) => return Err(Track(error))
+  }
+  outgoing.pending_send_count = outgoing.pending_send_count + 1UL
+  Ok([Send(stream, bytes, false)])
+}
+
+///|
+/// Finish an outgoing Subgroup stream after all of its Objects have been sent.
+pub fn ClientSession::finish_object_stream(
+  self : ClientSession,
+  stream : Int64,
+) -> Result[Array[ClientSessionAction], ClientSessionError] {
+  let outgoing = match self.outgoing_object_streams.get(stream) {
+    Some(value) => value
+    None => return Err(UnknownStream)
+  }
+  if outgoing.finishing {
+    return Err(UnexpectedMessage)
+  }
+  outgoing.finishing = true
+  outgoing.pending_send_count = outgoing.pending_send_count + 1UL
+  Ok([Send(stream, b"", true)])
+}
+
+///|
+/// Send PUBLISH_DONE after all object streams for this subscription finish.
+pub fn ClientSession::publish_done(
+  self : ClientSession,
+  subscription_stream : Int64,
+  code : UInt64,
+  reason : Bytes,
+) -> Result[Array[ClientSessionAction], ClientSessionError] {
+  let (request_id, local_publish) = match
+    self.inbound_subscriptions.get(subscription_stream) {
+    Some(inbound) => {
+      if inbound.state != Active {
+        return Err(SubscriptionNotAccepted)
+      }
+      (inbound.request_id, false)
+    }
+    None =>
+      match self.request_streams.get(subscription_stream) {
+        Some(request_id) => {
+          let request = self.requests.get(request_id).unwrap()
+          if request.kind != Publishing || !request.accepted || request.terminal {
+            return Err(SubscriptionNotAccepted)
+          }
+          (request_id, true)
+        }
+        None => return Err(UnknownStream)
+      }
+  }
+  let subscription = match
+    self.published_subscriptions.get(subscription_stream) {
+    Some(value) => value
+    None => return Err(UnexpectedMessage)
+  }
+  if subscription.open_stream_count != 0UL {
+    return Err(Track(ObjectStreamsStillOpen))
+  }
+  let message : @protocol.PublishDoneMessage = {
+    code,
+    stream_count: subscription.opened_stream_count,
+    reason,
+  }
+  let bytes = match @protocol.encode_publish_done(message) {
+    Ok(value) => value
+    Err(error) => return Err(Encoding(error))
+  }
+  if local_publish {
+    self.requests.get(request_id).unwrap().terminal = true
+  } else {
+    self.inbound_subscriptions.get(subscription_stream).unwrap().state = Ended
+  }
+  Ok([
+    Send(subscription_stream, bytes, true),
+    Notify(PublishDone(request_id, message)),
+  ])
+}
