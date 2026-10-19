@@ -43,6 +43,10 @@ fn drive_session_actions(
         }
         send_counts[stream] = count + 1UL
       }
+      @session.AbortSend(stream, error_code) =>
+        client.abort_send(stream, error_code.reinterpret_as_int64())
+      @session.StopReceiving(stream, error_code) =>
+        client.stop_receiving(stream, error_code.reinterpret_as_int64())
       @session.CloseConnection(code, _reason) =>
         client.close(error_code=code.reinterpret_as_int64())
       @session.Notify(notice) => notices.push(notice)

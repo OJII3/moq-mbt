@@ -252,7 +252,17 @@ fn run_publisher(
         )
         handle_publisher_notices(client, session, notices, send_counts, state)
       }
-      SendStopped(_, _) => fail("publisher send was stopped")
+      SendStopped(stream, code) => {
+        let (notices, _) = drive_session_result(
+          client,
+          session,
+          session.receive(
+            @session.SendStopped(stream, code.reinterpret_as_uint64()),
+          ),
+          send_counts,
+        )
+        handle_publisher_notices(client, session, notices, send_counts, state)
+      }
       Closed(code) => fail("peer closed (application code \{code})")
       TransportClosed(status) => fail("QUIC failed (MsQuic status \{status})")
       QueueOverflow => fail("transport event buffer overflow")

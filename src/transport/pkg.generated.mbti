@@ -17,12 +17,14 @@ pub fn TransportError::to_repr(Self) -> @debug.Repr
 pub struct Client {
   // private fields
 }
+pub fn Client::abort_send(Self, Int64, Int64) -> Unit raise TransportError
 pub fn Client::close(Self, error_code? : Int64) -> Unit
 pub fn Client::connect(String, Int, insecure? : Bool) -> Self raise TransportError
 pub fn Client::next_event(Self, Int) -> Event raise TransportError
 pub fn Client::open_bidi(Self) -> Int64 raise TransportError
 pub fn Client::open_uni(Self) -> Int64 raise TransportError
 pub fn Client::send(Self, Int64, Bytes, fin? : Bool) -> Unit raise TransportError
+pub fn Client::stop_receiving(Self, Int64, Int64) -> Unit raise TransportError
 
 pub(all) enum Event {
   Connected
