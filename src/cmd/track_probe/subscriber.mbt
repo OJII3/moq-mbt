@@ -111,9 +111,7 @@ fn run_subscriber(
     namespace_fields: [@utf8.encode(namespace_field)],
     name: @utf8.encode(track_name),
   }
-  let (client, session, control_stream) = setup_client(
-    host, port, path, insecure,
-  )
+  let (client, session) = setup_client(host, port, path, insecure)
   defer client.close()
   let send_counts : Map[Int64, UInt64] = Map([])
   let (request_id, actions) = session.subscribe_track(track).unwrap()
@@ -141,11 +139,16 @@ fn run_subscriber(
   while @env.now() < deadline {
     match client.next_event(100) {
       Connected => ()
-      StreamStarted(stream) => {
+      StreamStarted(stream, direction) => {
         let (notices, _) = drive_session_result(
           client,
           session,
-          session.receive(@session.SubgroupStreamStarted(stream)),
+          session.receive(
+            @session.InboundStreamStarted(
+              stream,
+              client_stream_direction(direction),
+            ),
+          ),
           send_counts,
         )
         if handle_subscriber_notices(notices, state) {
@@ -153,17 +156,10 @@ fn run_subscriber(
         }
       }
       Data(stream, bytes) => {
-        let event = if stream == control_stream {
-          @session.ControlData(stream, bytes)
-        } else if stream == request_stream {
-          @session.RequestData(stream, bytes)
-        } else {
-          @session.SubgroupData(stream, bytes)
-        }
         let (notices, _) = drive_session_result(
           client,
           session,
-          session.receive(event),
+          session.receive(@session.StreamData(stream, bytes)),
           send_counts,
         )
         if handle_subscriber_notices(notices, state) {

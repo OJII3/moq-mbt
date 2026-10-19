@@ -13,11 +13,8 @@ pub(all) enum ClientStreamPurpose {
 
 ///|
 pub(all) enum ClientSessionEvent {
-  ControlData(Int64, Bytes)
-  RequestStreamStarted(Int64)
-  RequestData(Int64, Bytes)
-  SubgroupStreamStarted(Int64)
-  SubgroupData(Int64, Bytes)
+  InboundStreamStarted(Int64, ClientStreamDirection)
+  StreamData(Int64, Bytes)
   StreamOpened(ClientStreamPurpose, Int64)
   StreamFinished(Int64)
   StreamReset(Int64, UInt64)
@@ -84,6 +81,14 @@ priv enum ClientRequestKind {
 } derive(Eq)
 
 ///|
+priv enum InboundStreamKind {
+  Control
+  Request
+  Subgroup
+  Padding
+}
+
+///|
 priv struct ClientRequest {
   kind : ClientRequestKind
   track : @protocol.TrackName
@@ -142,6 +147,8 @@ pub struct ClientSession {
   priv mut next_object_token : UInt64
   priv mut peer_control_stream : Int64?
   priv mut control_buffer : Bytes
+  priv inbound_stream_kinds : Map[Int64, InboundStreamKind]
+  priv inbound_unclassified_buffers : Map[Int64, Bytes]
   priv requests : Map[UInt64, ClientRequest]
   priv request_streams : Map[Int64, UInt64]
   priv inbound_buffers : Map[Int64, Bytes]
@@ -173,6 +180,8 @@ pub fn ClientSession::new(
         next_object_token: 0UL,
         peer_control_stream: None,
         control_buffer: b"",
+        inbound_stream_kinds: {},
+        inbound_unclassified_buffers: {},
         requests: {},
         request_streams: {},
         inbound_buffers: {},
@@ -277,26 +286,26 @@ pub fn ClientSession::receive(
   event : ClientSessionEvent,
 ) -> Result[Array[ClientSessionAction], ClientSessionError] {
   match event {
-    ControlData(stream, bytes) => self.receive_control(stream, bytes)
-    RequestStreamStarted(stream) => {
-      if self.inbound_buffers.get(stream) is Some(_) ||
+    InboundStreamStarted(stream, direction) => {
+      if self.inbound_stream_kinds.get(stream) is Some(_) ||
+        self.inbound_unclassified_buffers.get(stream) is Some(_) ||
+        self.inbound_buffers.get(stream) is Some(_) ||
         self.inbound_subscriptions.get(stream) is Some(_) ||
-        self.request_streams.get(stream) is Some(_) {
-        return Err(DuplicateStream)
-      }
-      self.inbound_buffers[stream] = b""
-      Ok([])
-    }
-    RequestData(stream, bytes) => self.receive_request(stream, bytes)
-    SubgroupStreamStarted(stream) => {
-      if self.subgroup_buffers.get(stream) is Some(_) ||
+        self.request_streams.get(stream) is Some(_) ||
+        self.subgroup_buffers.get(stream) is Some(_) ||
         self.subgroup_requests.get(stream) is Some(_) {
         return Err(DuplicateStream)
       }
-      self.subgroup_buffers[stream] = b""
+      match direction {
+        Bidirectional => {
+          self.inbound_stream_kinds[stream] = Request
+          self.inbound_buffers[stream] = b""
+        }
+        Unidirectional => self.inbound_unclassified_buffers[stream] = b""
+      }
       Ok([])
     }
-    SubgroupData(stream, bytes) => self.receive_subgroup(stream, bytes)
+    StreamData(stream, bytes) => self.receive_stream_data(stream, bytes)
     StreamOpened(purpose, stream) => self.stream_opened(purpose, stream)
     StreamFinished(stream) => self.stream_finished(stream)
     StreamReset(stream, code) => self.stream_reset(stream, code)
@@ -569,6 +578,67 @@ fn ClientSession::receive_control(
     self.control_buffer = self.control_buffer + bytes
     self.decode_control_messages(b"")
   }
+}
+
+///|
+fn ClientSession::receive_stream_data(
+  self : ClientSession,
+  stream : Int64,
+  bytes : Bytes,
+) -> Result[Array[ClientSessionAction], ClientSessionError] {
+  match self.inbound_unclassified_buffers.get(stream) {
+    Some(previous) => {
+      if bytes.length() > 1024 * 1024 - previous.length() {
+        return Err(BufferLimitExceeded)
+      }
+      let combined = previous + bytes
+      match @protocol.decode_vi64(combined) {
+        @protocol.Incomplete => {
+          self.inbound_unclassified_buffers[stream] = combined
+          Ok([])
+        }
+        @protocol.Invalid(_) => Err(UnexpectedMessage)
+        @protocol.Complete(stream_type, _) => {
+          self.inbound_unclassified_buffers.remove(stream)
+          match stream_type {
+            0x2f00UL => {
+              self.inbound_stream_kinds[stream] = Control
+              self.receive_control(stream, combined)
+            }
+            0x05UL => Err(UnexpectedMessage)
+            0x132b3e28UL => {
+              self.inbound_stream_kinds[stream] = Padding
+              Ok([])
+            }
+            _ if is_subgroup_stream_type(stream_type) => {
+              self.inbound_stream_kinds[stream] = Subgroup
+              self.receive_subgroup(stream, combined)
+            }
+            _ => Err(UnexpectedMessage)
+          }
+        }
+      }
+    }
+    None =>
+      match self.inbound_stream_kinds.get(stream) {
+        Some(Control) => self.receive_control(stream, bytes)
+        Some(Request) => self.receive_request(stream, bytes)
+        Some(Subgroup) => self.receive_subgroup(stream, bytes)
+        Some(Padding) => Ok([])
+        None =>
+          match self.request_streams.get(stream) {
+            Some(_) => self.receive_request(stream, bytes)
+            None => Err(UnknownStream)
+          }
+      }
+  }
+}
+
+///|
+fn is_subgroup_stream_type(stream_type : UInt64) -> Bool {
+  stream_type >= 0x10UL &&
+  stream_type <= 0x7fUL &&
+  (stream_type & 0x10UL) != 0UL
 }
 
 ///|
@@ -1098,12 +1168,14 @@ fn ClientSession::stream_finished(
   self : ClientSession,
   stream : Int64,
 ) -> Result[Array[ClientSessionAction], ClientSessionError] {
-  if self.peer_control_stream == Some(stream) {
+  if self.peer_control_stream == Some(stream) ||
+    self.inbound_stream_kinds.get(stream) is Some(Control) {
     return Err(Handshake(self.handshake.control_closed()))
   }
   match self.ignored_object_streams.get(stream) {
     Some(ignored) => {
       self.ignored_object_streams.remove(stream)
+      self.inbound_stream_kinds.remove(stream)
       if ignored.counted_active {
         let request = self.requests.get(ignored.request_id).unwrap()
         request.active_object_streams = request.active_object_streams - 1UL
@@ -1127,6 +1199,7 @@ fn ClientSession::stream_finished(
       request.active_object_streams = request.active_object_streams - 1UL
       self.subgroup_requests.remove(stream)
       self.subgroup_buffers.remove(stream)
+      self.inbound_stream_kinds.remove(stream)
       let actions : Array[ClientSessionAction] = []
       if group_finished {
         actions.push(Notify(GroupFinished(request_id, group_id)))
@@ -1140,13 +1213,19 @@ fn ClientSession::stream_finished(
     None => {
       if self.subgroup_buffers.get(stream) is Some(_) {
         self.subgroup_buffers.remove(stream)
+        self.inbound_stream_kinds.remove(stream)
         return Err(Track(IncompleteObjectStream))
       }
       if self.inbound_subscriptions.get(stream) is Some(_) ||
         self.request_streams.get(stream) is Some(_) {
         return Ok(self.end_request_stream(stream, 0UL))
       }
+      if self.inbound_unclassified_buffers.get(stream) is Some(_) {
+        self.inbound_unclassified_buffers.remove(stream)
+        return Err(UnexpectedMessage)
+      }
       self.inbound_buffers.remove(stream)
+      self.inbound_stream_kinds.remove(stream)
       Ok([])
     }
   }
@@ -1158,9 +1237,14 @@ fn ClientSession::stream_reset(
   stream : Int64,
   error_code : UInt64,
 ) -> Result[Array[ClientSessionAction], ClientSessionError] {
+  if self.peer_control_stream == Some(stream) ||
+    self.inbound_stream_kinds.get(stream) is Some(Control) {
+    return Err(Handshake(self.handshake.control_closed()))
+  }
   match self.ignored_object_streams.get(stream) {
     Some(ignored) => {
       self.ignored_object_streams.remove(stream)
+      self.inbound_stream_kinds.remove(stream)
       if ignored.counted_active {
         let request = self.requests.get(ignored.request_id).unwrap()
         request.active_object_streams = request.active_object_streams - 1UL
@@ -1177,6 +1261,7 @@ fn ClientSession::stream_reset(
       request.active_object_streams = request.active_object_streams - 1UL
       self.subgroup_requests.remove(stream)
       self.subgroup_buffers.remove(stream)
+      self.inbound_stream_kinds.remove(stream)
       let actions : Array[ClientSessionAction] = [
         Notify(ObjectStreamReset(request_id, stream)),
       ]
@@ -1193,6 +1278,8 @@ fn ClientSession::stream_reset(
       }
       self.inbound_buffers.remove(stream)
       self.subgroup_buffers.remove(stream)
+      self.inbound_unclassified_buffers.remove(stream)
+      self.inbound_stream_kinds.remove(stream)
       Ok([])
     }
   }

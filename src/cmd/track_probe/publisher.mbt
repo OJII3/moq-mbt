@@ -156,9 +156,7 @@ fn run_publisher(
     namespace_fields: [@utf8.encode(namespace_field)],
     name: @utf8.encode(track_name),
   }
-  let (client, session, control_stream) = setup_client(
-    host, port, path, insecure,
-  )
+  let (client, session) = setup_client(host, port, path, insecure)
   defer client.close()
   let send_counts : Map[Int64, UInt64] = Map([])
   let (request_id, actions) = session.publish_track(track, 1).unwrap()
@@ -192,25 +190,25 @@ fn run_publisher(
   while @env.now() < deadline {
     match client.next_event(100) {
       Connected => ()
-      StreamStarted(stream) => {
+      StreamStarted(stream, direction) => {
         let (notices, _) = drive_session_result(
           client,
           session,
-          session.receive(@session.RequestStreamStarted(stream)),
+          session.receive(
+            @session.InboundStreamStarted(
+              stream,
+              client_stream_direction(direction),
+            ),
+          ),
           send_counts,
         )
         handle_publisher_notices(client, session, notices, send_counts, state)
       }
       Data(stream, bytes) => {
-        let event = if stream == control_stream {
-          @session.ControlData(stream, bytes)
-        } else {
-          @session.RequestData(stream, bytes)
-        }
         let (notices, _) = drive_session_result(
           client,
           session,
-          session.receive(event),
+          session.receive(@session.StreamData(stream, bytes)),
           send_counts,
         )
         handle_publisher_notices(client, session, notices, send_counts, state)
