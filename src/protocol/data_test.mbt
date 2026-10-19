@@ -131,6 +131,43 @@ test "subgroup header encodes all optional fields and id modes" {
 }
 
 ///|
+test "subgroup frame encoder accepts the previous object ID" {
+  let header : @protocol.SubgroupHeader = {
+    track_alias: 1,
+    group_id: 2,
+    subgroup_id_mode: @protocol.Zero,
+    publisher_priority: None,
+    end_of_group: false,
+    first_object: true,
+    has_properties: true,
+  }
+  let frame : @protocol.SubgroupFrame = {
+    object_id: 7,
+    status: @protocol.Normal,
+    properties: b"\xaa",
+    payload: b"abc",
+  }
+  assert_eq(
+    @protocol.encode_subgroup_frame(header, Some(2), frame),
+    Ok(b"\x04\x01\xaa\x03abc"),
+  )
+  assert_eq(
+    @protocol.encode_subgroup_stream(header, [
+      { object_id: 2, status: @protocol.Normal, properties: b"", payload: b"", },
+      frame,
+    ]),
+    Ok(
+      @protocol.encode_subgroup_header(header) +
+      b"\x02\x00\x00\x00\x04\x01\xaa\x03abc",
+    ),
+  )
+  assert_eq(
+    @protocol.encode_subgroup_frame(header, Some(7), frame),
+    Err(@protocol.InvalidSubgroup),
+  )
+}
+
+///|
 test "subgroup stream round-trips multiple objects, deltas, properties, and statuses" {
   let header : @protocol.SubgroupHeader = {
     track_alias: 7,

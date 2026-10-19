@@ -24,6 +24,8 @@ pub fn encode_request_ok(RequestOkMessage) -> Result[Bytes, CodecError]
 
 pub fn encode_setup(Setup) -> Result[Bytes, CodecError]
 
+pub fn encode_subgroup_frame(SubgroupHeader, UInt64?, SubgroupFrame) -> Result[Bytes, CodecError]
+
 pub fn encode_subgroup_header(SubgroupHeader) -> Bytes
 
 pub fn encode_subgroup_stream(SubgroupHeader, Array[SubgroupFrame]) -> Result[Bytes, CodecError]

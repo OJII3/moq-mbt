@@ -40,29 +40,22 @@ fn encode_outgoing_object(
   writer : OutgoingObjectStream,
   frame : @protocol.SubgroupFrame,
 ) -> Result[Bytes, TrackSessionError] {
-  let delta = match writer.previous_object_id {
-    None => frame.object_id
-    Some(previous) => {
-      if frame.object_id <= previous {
-        return Err(ObjectIdNotIncreasing)
-      }
-      frame.object_id - previous - 1UL
-    }
-  }
-  let delta_frame : @protocol.SubgroupFrame = {
-    object_id: delta,
-    status: frame.status,
-    properties: frame.properties,
-    payload: frame.payload,
+  match writer.previous_object_id {
+    Some(previous) if frame.object_id <= previous =>
+      return Err(ObjectIdNotIncreasing)
+    _ => ()
   }
   let encoded = match
-    @protocol.encode_subgroup_stream(writer.header, [delta_frame]) {
+    @protocol.encode_subgroup_frame(
+      writer.header,
+      writer.previous_object_id,
+      frame,
+    ) {
     Ok(value) => value
     Err(_) => return Err(InvalidControlMessage)
   }
-  let header_length = @protocol.encode_subgroup_header(writer.header).length()
   writer.previous_object_id = Some(frame.object_id)
-  Ok(encoded[header_length:].to_owned())
+  Ok(encoded)
 }
 
 ///|
