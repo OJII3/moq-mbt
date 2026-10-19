@@ -128,9 +128,22 @@ pub fn SingleTrackPublisher::object_stream(
     return Err(UnexpectedMessage)
   }
   self.object_sent = true
-  Ok(
-    @protocol.encode_one_object(self.track_alias, group_id, object_id, payload),
-  )
+  match
+    @protocol.encode_subgroup_stream(
+      {
+        track_alias: self.track_alias,
+        group_id,
+        subgroup_id_mode: @protocol.Zero,
+        publisher_priority: None,
+        end_of_group: true,
+        first_object: true,
+        has_properties: false,
+      },
+      [{ object_id, status: @protocol.Normal, properties: b"", payload, }],
+    ) {
+    Ok(bytes) => Ok(bytes)
+    Err(_) => Err(InvalidControlMessage)
+  }
 }
 
 ///|

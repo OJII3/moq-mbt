@@ -10,11 +10,9 @@ pub fn decode_control(Bytes) -> DecodeResult[ControlMessage]
 
 pub fn decode_setup(Bytes) -> DecodeResult[Setup]
 
-pub fn decode_subgroup_object(Bytes) -> DecodeResult[SubgroupObject]
+pub fn decode_subgroup_header(Bytes) -> DecodeResult[SubgroupHeader]
 
 pub fn decode_vi64(Bytes) -> DecodeResult[UInt64]
-
-pub fn encode_one_object(UInt64, UInt64, UInt64, Bytes, end_of_group? : Bool) -> Bytes
 
 pub fn encode_publish(PublishMessage) -> Result[Bytes, CodecError]
 
@@ -25,6 +23,10 @@ pub fn encode_request_error(RequestErrorMessage) -> Result[Bytes, CodecError]
 pub fn encode_request_ok(RequestOkMessage) -> Result[Bytes, CodecError]
 
 pub fn encode_setup(Setup) -> Result[Bytes, CodecError]
+
+pub fn encode_subgroup_header(SubgroupHeader) -> Bytes
+
+pub fn encode_subgroup_stream(SubgroupHeader, Array[SubgroupFrame]) -> Result[Bytes, CodecError]
 
 pub fn encode_subscribe(SubscribeMessage) -> Result[Bytes, CodecError]
 
@@ -81,6 +83,15 @@ pub(all) struct MessageParameter {
 pub fn MessageParameter::equal(Self, Self) -> Bool
 pub fn MessageParameter::not_equal(Self, Self) -> Bool
 pub fn MessageParameter::to_repr(Self) -> @debug.Repr
+
+pub(all) enum ObjectStatus {
+  Normal
+  EndOfGroup
+  EndOfTrack
+} derive(Eq, @debug.Debug)
+pub fn ObjectStatus::equal(Self, Self) -> Bool
+pub fn ObjectStatus::not_equal(Self, Self) -> Bool
+pub fn ObjectStatus::to_repr(Self) -> @debug.Repr
 
 pub(all) enum OptionValue {
   Integer(UInt64)
@@ -153,16 +164,45 @@ pub fn SetupOption::equal(Self, Self) -> Bool
 pub fn SetupOption::not_equal(Self, Self) -> Bool
 pub fn SetupOption::to_repr(Self) -> @debug.Repr
 
-pub(all) struct SubgroupObject {
-  track_alias : UInt64
-  group_id : UInt64
+pub struct SubgroupDecoder {
+  header : SubgroupHeader
+  // private fields
+}
+pub fn SubgroupDecoder::decode_next(Self, Bytes) -> DecodeResult[SubgroupFrame]
+pub fn SubgroupDecoder::new(SubgroupHeader) -> Self
+pub fn SubgroupDecoder::subgroup_id(Self) -> UInt64?
+
+pub(all) struct SubgroupFrame {
   object_id : UInt64
-  end_of_group : Bool
+  status : ObjectStatus
+  properties : Bytes
   payload : Bytes
 } derive(Eq, @debug.Debug)
-pub fn SubgroupObject::equal(Self, Self) -> Bool
-pub fn SubgroupObject::not_equal(Self, Self) -> Bool
-pub fn SubgroupObject::to_repr(Self) -> @debug.Repr
+pub fn SubgroupFrame::equal(Self, Self) -> Bool
+pub fn SubgroupFrame::not_equal(Self, Self) -> Bool
+pub fn SubgroupFrame::to_repr(Self) -> @debug.Repr
+
+pub(all) struct SubgroupHeader {
+  track_alias : UInt64
+  group_id : UInt64
+  subgroup_id_mode : SubgroupIdMode
+  publisher_priority : Byte?
+  end_of_group : Bool
+  first_object : Bool
+  has_properties : Bool
+} derive(Eq, @debug.Debug)
+pub fn SubgroupHeader::equal(Self, Self) -> Bool
+pub fn SubgroupHeader::not_equal(Self, Self) -> Bool
+pub fn SubgroupHeader::to_repr(Self) -> @debug.Repr
+
+pub(all) enum SubgroupIdMode {
+  Zero
+  FirstObject
+  Explicit(UInt64)
+} derive(Eq, @debug.Debug)
+pub fn SubgroupIdMode::equal(Self, Self) -> Bool
+pub fn SubgroupIdMode::not_equal(Self, Self) -> Bool
+pub fn SubgroupIdMode::to_repr(Self) -> @debug.Repr
 
 pub(all) struct SubscribeMessage {
   request_id : UInt64
