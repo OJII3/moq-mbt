@@ -31,6 +31,7 @@ priv struct SubscriberObjectStream {
 /// Sans-I/O subscriber state for one named track and its data streams.
 pub struct SingleTrackSubscriber {
   priv track : @protocol.TrackName
+  priv request_id : UInt64
   priv mut request_stream : Int64?
   priv mut response_buffer : Bytes
   priv mut track_alias : UInt64?
@@ -41,8 +42,18 @@ pub struct SingleTrackSubscriber {
 pub fn SingleTrackSubscriber::new(
   track : @protocol.TrackName,
 ) -> SingleTrackSubscriber {
+  SingleTrackSubscriber::new_with_request_id(track, 0)
+}
+
+///|
+/// Construct a subscriber with the even Request ID assigned by its session.
+pub fn SingleTrackSubscriber::new_with_request_id(
+  track : @protocol.TrackName,
+  request_id : UInt64,
+) -> SingleTrackSubscriber {
   {
     track,
+    request_id,
     request_stream: None,
     response_buffer: b"",
     track_alias: None,
@@ -51,13 +62,13 @@ pub fn SingleTrackSubscriber::new(
 }
 
 ///|
-/// Build the subscriber's unfiltered SUBSCRIBE request. Request ID 0 is the
-/// first client ID; an unfiltered request receives newly published Objects.
+/// Build the subscriber's unfiltered SUBSCRIBE request. An unfiltered request
+/// receives newly published Objects.
 pub fn SingleTrackSubscriber::subscribe_request(
   self : SingleTrackSubscriber,
 ) -> Result[Bytes, @protocol.CodecError] {
   @protocol.encode_subscribe({
-    request_id: 0,
+    request_id: self.request_id,
     track: self.track,
     parameters: [],
   })
@@ -167,6 +178,17 @@ pub fn SingleTrackSubscriber::receive_object(
     Ok(Pending)
   } else {
     Ok(Received(header, frames))
+  }
+}
+
+///|
+pub fn SingleTrackSubscriber::object_stream_group_id(
+  self : SingleTrackSubscriber,
+  stream : Int64,
+) -> Result[UInt64, TrackSessionError] {
+  match self.object_streams.get(stream) {
+    Some(state) if state.header is Some(header) => Ok(header.group_id)
+    _ => Err(IncompleteObjectStream)
   }
 }
 

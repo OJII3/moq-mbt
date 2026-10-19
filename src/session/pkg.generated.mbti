@@ -20,6 +20,105 @@ pub fn ClientHandshake::outbound_setup(Self) -> Bytes
 pub fn ClientHandshake::receive(Self, Int64, Bytes) -> Result[HandshakeProgress, HandshakeError]
 pub fn ClientHandshake::version(Self) -> Version
 
+pub struct ClientSession {
+  // private fields
+}
+pub fn ClientSession::accept_subscription(Self, Int64) -> Result[Array[ClientSessionAction], ClientSessionError]
+pub fn ClientSession::close(Self, UInt64, Bytes) -> Array[ClientSessionAction]
+pub fn ClientSession::finish_object_stream(Self, Int64) -> Result[Array[ClientSessionAction], ClientSessionError]
+pub fn ClientSession::new(Version, @protocol.Setup) -> Result[Self, @protocol.CodecError]
+pub fn ClientSession::open_object_stream(Self, Int64, @protocol.SubgroupHeader) -> Result[Array[ClientSessionAction], ClientSessionError]
+pub fn ClientSession::publish_done(Self, Int64, UInt64, Bytes) -> Result[Array[ClientSessionAction], ClientSessionError]
+pub fn ClientSession::publish_track(Self, @protocol.TrackName, UInt64) -> Result[(UInt64, Array[ClientSessionAction]), ClientSessionError]
+pub fn ClientSession::receive(Self, ClientSessionEvent) -> Result[Array[ClientSessionAction], ClientSessionError]
+pub fn ClientSession::reject_subscription(Self, Int64, @protocol.RequestErrorMessage) -> Result[Array[ClientSessionAction], ClientSessionError]
+pub fn ClientSession::send_object(Self, Int64, @protocol.SubgroupFrame) -> Result[Array[ClientSessionAction], ClientSessionError]
+pub fn ClientSession::start(Self) -> Result[Array[ClientSessionAction], ClientSessionError]
+pub fn ClientSession::subscribe_track(Self, @protocol.TrackName) -> Result[(UInt64, Array[ClientSessionAction]), ClientSessionError]
+
+pub(all) enum ClientSessionAction {
+  OpenStream(ClientStreamDirection, ClientStreamPurpose)
+  Send(Int64, Bytes, Bool)
+  CloseConnection(UInt64, Bytes)
+  Notify(ClientSessionNotice)
+} derive(Eq, @debug.Debug)
+pub fn ClientSessionAction::equal(Self, Self) -> Bool
+pub fn ClientSessionAction::not_equal(Self, Self) -> Bool
+pub fn ClientSessionAction::to_repr(Self) -> @debug.Repr
+
+pub(all) enum ClientSessionError {
+  Handshake(HandshakeError)
+  Track(TrackSessionError)
+  Encoding(@protocol.CodecError)
+  HandshakeNotComplete
+  InvalidRequestId
+  DuplicateRequestId
+  DuplicateStream
+  UnknownStream
+  UnknownRequest
+  TrackNotPublished
+  AliasInUse
+  SubscriptionNotAccepted
+  UnexpectedMessage
+  BufferLimitExceeded
+} derive(Eq, @debug.Debug)
+pub fn ClientSessionError::equal(Self, Self) -> Bool
+pub fn ClientSessionError::not_equal(Self, Self) -> Bool
+pub fn ClientSessionError::to_repr(Self) -> @debug.Repr
+
+pub(all) enum ClientSessionEvent {
+  ControlData(Int64, Bytes)
+  RequestStreamStarted(Int64)
+  RequestData(Int64, Bytes)
+  SubgroupStreamStarted(Int64)
+  SubgroupData(Int64, Bytes)
+  StreamOpened(ClientStreamPurpose, Int64)
+  StreamFinished(Int64)
+  StreamReset(Int64, UInt64)
+  SendComplete(Int64, Bool)
+} derive(Eq, @debug.Debug)
+pub fn ClientSessionEvent::equal(Self, Self) -> Bool
+pub fn ClientSessionEvent::not_equal(Self, Self) -> Bool
+pub fn ClientSessionEvent::to_repr(Self) -> @debug.Repr
+
+pub(all) enum ClientSessionNotice {
+  HandshakeComplete(@protocol.Setup)
+  ControlMessageReceived(@protocol.ControlMessage)
+  PublishAccepted(UInt64)
+  PublishRejected(UInt64, @protocol.RequestErrorMessage)
+  SubscribeEstablished(UInt64, UInt64)
+  SubscribeRejected(UInt64, @protocol.RequestErrorMessage)
+  SubscriptionRequested(UInt64, Int64, @protocol.TrackName)
+  SubscriptionAccepted(UInt64, Int64, UInt64)
+  SubscriptionRejected(UInt64, Int64)
+  ObjectReceived(UInt64, @protocol.SubgroupHeader, Array[@protocol.SubgroupFrame])
+  ObjectStreamReset(UInt64, Int64)
+  ObjectStreamFinished(Int64)
+  GroupFinished(UInt64, UInt64)
+  PublishDone(UInt64, @protocol.PublishDoneMessage)
+  SendFinished(Int64, Bool)
+} derive(Eq, @debug.Debug)
+pub fn ClientSessionNotice::equal(Self, Self) -> Bool
+pub fn ClientSessionNotice::not_equal(Self, Self) -> Bool
+pub fn ClientSessionNotice::to_repr(Self) -> @debug.Repr
+
+pub(all) enum ClientStreamDirection {
+  Unidirectional
+  Bidirectional
+} derive(Eq, @debug.Debug)
+pub fn ClientStreamDirection::equal(Self, Self) -> Bool
+pub fn ClientStreamDirection::not_equal(Self, Self) -> Bool
+pub fn ClientStreamDirection::to_repr(Self) -> @debug.Repr
+
+pub(all) enum ClientStreamPurpose {
+  Control
+  Request(UInt64)
+  Object(UInt64)
+} derive(Eq, @debug.Debug)
+pub fn ClientStreamPurpose::equal(Self, Self) -> Bool
+pub fn ClientStreamPurpose::not_equal(Self, Self) -> Bool
+pub fn ClientStreamPurpose::to_repr(Self) -> @debug.Repr
+
 pub(all) enum HandshakeError {
   InvalidSetup(@protocol.CodecError)
   DuplicateControlStream
@@ -63,6 +162,7 @@ pub struct SingleTrackPublisher {
 pub fn SingleTrackPublisher::accept_subscribe(Self, Int64) -> Result[Bytes, TrackSessionError]
 pub fn SingleTrackPublisher::finish_object_stream(Self, Int64) -> Result[Unit, TrackSessionError]
 pub fn SingleTrackPublisher::new(@protocol.TrackName, UInt64) -> Self
+pub fn SingleTrackPublisher::new_with_request_id(@protocol.TrackName, UInt64, UInt64) -> Self
 pub fn SingleTrackPublisher::object_stream(Self, Int64, @protocol.SubgroupFrame) -> Result[Bytes, TrackSessionError]
 pub fn SingleTrackPublisher::open_object_stream(Self, Int64, Int64, @protocol.SubgroupHeader) -> Result[Bytes, TrackSessionError]
 pub fn SingleTrackPublisher::publish_accepted(Self, Int64) -> Result[Unit, TrackSessionError]
@@ -70,12 +170,15 @@ pub fn SingleTrackPublisher::publish_done(Self, Int64, UInt64, Bytes) -> Result[
 pub fn SingleTrackPublisher::publish_request(Self) -> Result[Bytes, @protocol.CodecError]
 pub fn SingleTrackPublisher::receive_subscribe(Self, Int64, Bytes) -> Result[PublisherProgress, TrackSessionError]
 pub fn SingleTrackPublisher::reset_object_stream(Self, Int64) -> Result[Unit, TrackSessionError]
+pub fn SingleTrackPublisher::track_alias(Self) -> UInt64
 
 pub struct SingleTrackSubscriber {
   // private fields
 }
 pub fn SingleTrackSubscriber::finish_object_stream(Self, Int64) -> Result[Bool, TrackSessionError]
 pub fn SingleTrackSubscriber::new(@protocol.TrackName) -> Self
+pub fn SingleTrackSubscriber::new_with_request_id(@protocol.TrackName, UInt64) -> Self
+pub fn SingleTrackSubscriber::object_stream_group_id(Self, Int64) -> Result[UInt64, TrackSessionError]
 pub fn SingleTrackSubscriber::receive_object(Self, Int64, Bytes) -> Result[ObjectProgress, TrackSessionError]
 pub fn SingleTrackSubscriber::receive_response(Self, Int64, Bytes) -> Result[SubscriberProgress, TrackSessionError]
 pub fn SingleTrackSubscriber::reset_object_stream(Self, Int64) -> Unit

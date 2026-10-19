@@ -24,9 +24,9 @@ priv struct PublisherObjectStream {
 pub struct SingleTrackPublisher {
   priv track : @protocol.TrackName
   priv track_alias : UInt64
-  priv mut receive_stream : Int64?
-  priv mut receive_buffer : Bytes
-  priv mut subscription_stream : Int64?
+  priv request_id : UInt64
+  priv receive_buffers : Map[Int64, Bytes]
+  priv subscriptions_seen : Map[Int64, Bool]
   priv subscriptions : Map[Int64, PublisherSubscription]
   priv object_streams : Map[Int64, PublisherObjectStream]
 }
@@ -36,24 +36,39 @@ pub fn SingleTrackPublisher::new(
   track : @protocol.TrackName,
   track_alias : UInt64,
 ) -> SingleTrackPublisher {
+  SingleTrackPublisher::new_with_request_id(track, track_alias, 0)
+}
+
+///|
+/// Construct a publisher with the even Request ID assigned by its session.
+pub fn SingleTrackPublisher::new_with_request_id(
+  track : @protocol.TrackName,
+  track_alias : UInt64,
+  request_id : UInt64,
+) -> SingleTrackPublisher {
   {
     track,
     track_alias,
-    receive_stream: None,
-    receive_buffer: b"",
-    subscription_stream: None,
+    request_id,
+    receive_buffers: {},
+    subscriptions_seen: {},
     subscriptions: {},
     object_streams: {},
   }
 }
 
 ///|
-/// Build the publisher's PUBLISH request. Request ID 0 is the first client ID.
+pub fn SingleTrackPublisher::track_alias(self : SingleTrackPublisher) -> UInt64 {
+  self.track_alias
+}
+
+///|
+/// Build the publisher's PUBLISH request.
 pub fn SingleTrackPublisher::publish_request(
   self : SingleTrackPublisher,
 ) -> Result[Bytes, @protocol.CodecError] {
   @protocol.encode_publish({
-    request_id: 0,
+    request_id: self.request_id,
     track: self.track,
     track_alias: self.track_alias,
     parameters: [],
@@ -68,19 +83,19 @@ pub fn SingleTrackPublisher::receive_subscribe(
   stream : Int64,
   bytes : Bytes,
 ) -> Result[PublisherProgress, TrackSessionError] {
-  if self.subscription_stream is Some(_) {
+  let buffer = match self.receive_buffers.get(stream) {
+    Some(value) => value
+    None => b""
+  }
+  if self.subscriptions_seen.get(stream) is Some(_) {
     return Err(DuplicateSubscription)
   }
-  match self.receive_stream {
-    Some(previous) if previous != stream => return Err(DuplicateSubscription)
-    None => self.receive_stream = Some(stream)
-    _ => ()
-  }
-  if bytes.length() > 65546 - self.receive_buffer.length() {
+  if bytes.length() > 65546 - buffer.length() {
     return Err(BufferLimitExceeded)
   }
-  self.receive_buffer = self.receive_buffer + bytes
-  match @protocol.decode_control(self.receive_buffer) {
+  let combined = buffer + bytes
+  self.receive_buffers[stream] = combined
+  match @protocol.decode_control(combined) {
     @protocol.Incomplete => Ok(Pending)
     @protocol.Invalid(_) => Err(InvalidControlMessage)
     @protocol.Complete(message, consumed) =>
@@ -92,9 +107,9 @@ pub fn SingleTrackPublisher::receive_subscribe(
           if request.track != self.track {
             return Err(TrackMismatch)
           }
-          self.subscription_stream = Some(stream)
-          let trailing = self.receive_buffer[consumed:].to_owned()
-          self.receive_buffer = b""
+          self.subscriptions_seen[stream] = true
+          let trailing = combined[consumed:].to_owned()
+          self.receive_buffers.remove(stream)
           Ok(SubscribeRequested(stream, request, trailing))
         }
         _ => Err(UnexpectedMessage)
@@ -108,7 +123,7 @@ pub fn SingleTrackPublisher::accept_subscribe(
   self : SingleTrackPublisher,
   stream : Int64,
 ) -> Result[Bytes, TrackSessionError] {
-  if self.subscription_stream != Some(stream) ||
+  if self.subscriptions_seen.get(stream) is None ||
     self.subscriptions.get(stream) is Some(_) {
     return Err(UnexpectedMessage)
   }
