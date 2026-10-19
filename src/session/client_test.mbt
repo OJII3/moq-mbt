@@ -553,3 +553,84 @@ test "ClientSession validates peer request IDs and preserves SETUP trailing cont
     ]),
   )
 }
+
+///|
+test "ClientSession sends Objects and PUBLISH_DONE on a local PUBLISH stream" {
+  let publisher = client_session_ready()
+  let track = client_track(b"video")
+  let (request_id, _) = publisher.publish_track(track, 1).unwrap()
+  assert_eq(request_id, 0UL)
+  assert_eq(
+    publisher.receive(@session.StreamOpened(@session.Request(0), 20)),
+    Ok([
+      @session.Send(
+        20,
+        @protocol.encode_publish({
+          request_id: 0,
+          track,
+          track_alias: 1,
+          parameters: [],
+          properties: b"",
+        }).unwrap(),
+        false,
+      ),
+    ]),
+  )
+  assert_eq(
+    publisher.receive(
+      @session.RequestData(
+        20,
+        @protocol.encode_request_ok({ parameters: [], properties: b"", }).unwrap(),
+      ),
+    ),
+    Ok([@session.Notify(@session.PublishAccepted(0))]),
+  )
+
+  let header = client_subgroup_header(1, 7)
+  assert_eq(
+    publisher.open_object_stream(20, header),
+    Ok([@session.OpenStream(@session.Unidirectional, @session.Object(0))]),
+  )
+  assert_eq(
+    publisher.receive(@session.StreamOpened(@session.Object(0), 22)),
+    Ok([@session.Send(22, @protocol.encode_subgroup_header(header), false)]),
+  )
+  assert_true(
+    match publisher.send_object(22, client_object(0, b"payload")) {
+      Ok([@session.Send(22, bytes, false)]) => !bytes.is_empty()
+      _ => false
+    },
+  )
+  assert_eq(
+    publisher.finish_object_stream(22),
+    Ok([@session.Send(22, b"", true)]),
+  )
+  assert_eq(
+    publisher.receive(@session.SendComplete(22, false)),
+    Ok([@session.Notify(@session.SendFinished(22, false))]),
+  )
+  assert_eq(
+    publisher.receive(@session.SendComplete(22, false)),
+    Ok([@session.Notify(@session.SendFinished(22, false))]),
+  )
+  assert_eq(
+    publisher.receive(@session.SendComplete(22, false)),
+    Ok([
+      @session.Notify(@session.SendFinished(22, false)),
+      @session.Notify(@session.ObjectStreamFinished(22)),
+    ]),
+  )
+  assert_eq(
+    publisher.publish_done(20, 3, b""),
+    Ok([
+      @session.Send(
+        20,
+        @protocol.encode_publish_done({ code: 3, stream_count: 1, reason: b"", }).unwrap(),
+        true,
+      ),
+      @session.Notify(
+        @session.PublishDone(0, { code: 3, stream_count: 1, reason: b"", }),
+      ),
+    ]),
+  )
+}

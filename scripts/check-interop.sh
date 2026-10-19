@@ -68,7 +68,7 @@ cat "$task_tmp/probe.log"
 echo 'Client and relay SETUP exchange completed'
 
 moon run --release --target native src/cmd/track_probe -- \
-  publish 127.0.0.1 4443 /moq interop one-object 'one object' --insecure \
+  publish 127.0.0.1 4443 /moq interop multi-object 3 2 --insecure \
   >"$task_tmp/publisher.log" 2>&1 &
 publisher_pid=$!
 for ((attempt = 0; attempt < 100; attempt++)); do
@@ -84,20 +84,37 @@ for ((attempt = 0; attempt < 100; attempt++)); do
 done
 
 if ! moon run --release --target native src/cmd/track_probe -- \
-  subscribe 127.0.0.1 4443 /moq interop one-object --insecure \
+  subscribe 127.0.0.1 4443 /moq interop multi-object 3 2 --insecure \
   >"$task_tmp/subscriber.log" 2>&1; then
   cat "$task_tmp/publisher.log" "$task_tmp/subscriber.log" "$task_tmp/relay.log" >&2
   exit 1
 fi
-if ! grep -q 'Received Object' "$task_tmp/subscriber.log"; then
+expected_objects=6
+received_objects=$(awk '/^Received Object / { count++ } END { print count+0 }' "$task_tmp/subscriber.log")
+if [[ "$received_objects" != "$expected_objects" ]] || \
+  ! grep -Fq 'Verified 6 Objects across 3 groups; PUBLISH_DONE received' "$task_tmp/subscriber.log"; then
   cat "$task_tmp/publisher.log" "$task_tmp/subscriber.log" "$task_tmp/relay.log" >&2
-  echo 'Subscriber did not receive an Object' >&2
+  echo "Subscriber did not verify all $expected_objects Objects and PUBLISH_DONE" >&2
   exit 1
 fi
+for group in 0 1 2; do
+  for object in 0 1; do
+    if ! grep -Fq "Received Object (group $group, object $object," "$task_tmp/subscriber.log"; then
+      cat "$task_tmp/publisher.log" "$task_tmp/subscriber.log" "$task_tmp/relay.log" >&2
+      echo "Subscriber did not receive group $group object $object" >&2
+      exit 1
+    fi
+  done
+done
 if ! wait "$publisher_pid"; then
   publisher_pid=
   cat "$task_tmp/publisher.log" "$task_tmp/relay.log" >&2
   exit 1
 fi
 publisher_pid=
+if ! grep -Fq 'PUBLISH_DONE send completed' "$task_tmp/publisher.log"; then
+  cat "$task_tmp/publisher.log" "$task_tmp/subscriber.log" "$task_tmp/relay.log" >&2
+  echo 'Publisher did not complete the PUBLISH_DONE send' >&2
+  exit 1
+fi
 cat "$task_tmp/publisher.log" "$task_tmp/subscriber.log"

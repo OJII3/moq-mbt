@@ -1,6 +1,6 @@
-# Draft 18 publish/subscribe 疎通
+# Draft 18 multi-object / multi-group 疎通
 
-Native QUIC 上で Draft 18 の SETUP 交換、単一トラックの publish/subscribe、信頼性のある Subgroup stream による 1 object の配送を確認する。protocol は vi64、control message framing、SUBSCRIBE/PUBLISH と Subgroup object を扱う。session は一つの track と subscriber の状態を持ち、分割受信を組み立てる。
+Native QUIC 上で Draft 18 の SETUP 交換、単一トラックの publish/subscribe、複数 Group にまたがる複数 Object の配送を確認する。probe は各 Group を信頼性のある Subgroup stream に載せ、Object ID の順序、payload の一致、Group の終了、PUBLISH_DONE の stream 数を検証する。protocol は vi64、control message framing、SUBSCRIBE/PUBLISH と Subgroup object を扱う。session は複数 track request と複数 Object stream を管理し、分割受信を組み立てる。
 
 仕様は [Draft 18](https://www.ietf.org/archive/id/draft-ietf-moq-transport-18.txt) に固定する。vi64 は QUIC の 62-bit varint と異なり、1〜9 bytes で UInt64 全域を表現する。SETUP の type 0x2f00 は制御ストリームの type も兼ねるので、別のストリームヘッダーを付けない。制御ストリームは SETUP の後も開いたままにする。
 
@@ -18,11 +18,19 @@ nix develop -c bash scripts/check-interop.sh
 ~~~text
 QUIC connected: ALPN moqt-18, DATAGRAM negotiated
 MoQT Draft 18 SETUP complete (0 options)
-Track publication accepted
+PUBLISH request accepted
 Subscription accepted (track alias 1)
-Sent one Object
-Received Object (group 0, object 0, 10 bytes)
-Subscription finished
+Sent group 0 (2 Objects)
+Sent group 1 (2 Objects)
+Sent group 2 (2 Objects)
+PUBLISH_DONE send completed
+Received Object (group 0, object 0, 16 bytes)
+Received Object (group 0, object 1, 16 bytes)
+Received Object (group 1, object 0, 16 bytes)
+Received Object (group 1, object 1, 16 bytes)
+Received Object (group 2, object 0, 16 bytes)
+Received Object (group 2, object 1, 16 bytes)
+Verified 6 Objects across 3 groups; PUBLISH_DONE received
 Client and relay SETUP exchange completed
 ~~~
 
@@ -30,17 +38,19 @@ Client and relay SETUP exchange completed
 
 ~~~sh
 nix develop -c moon run --release --target native src/cmd/track_probe -- \
-  publish 127.0.0.1 4443 /moq interop one-object 'one object' --insecure
+  publish 127.0.0.1 4443 /moq interop multi-object 2 2 --insecure
 ~~~
 
 ~~~sh
 nix develop -c moon run --release --target native src/cmd/track_probe -- \
-  subscribe 127.0.0.1 4443 /moq interop one-object --insecure
+  subscribe 127.0.0.1 4443 /moq interop multi-object 2 2 --insecure
 ~~~
 
 疎通スクリプトは一時ディレクトリに証明書と設定を生成し、moq5 を versions: [18]、認証 allow_all で起動する。自己署名証明書が既定の証明書検証で拒否されることを確認した後、ループバック接続に限って --insecure を使う。終了時に publisher、relay、一時ファイルを削除する。
 
-SETUP はどちらのピアからも先に送れるため、probe は相手 SETUP の受信と、自分の SETUP の QUIC ACK の両方を待つ。続く PUBLISH_OK と SUBSCRIBE_OK も確認し、control request が relay を通ることを検証する。
+CLI の末尾には Group 数と各 Group の Object 数を指定する。probe は `group-<group id>-object-<object id>` 形式の payload を生成し、subscriber 側で各 Group の Object ID 順と payload を照合する。SETUP はどちらのピアからも先に送れるため、probe は相手 SETUP の受信と、自分の SETUP の QUIC ACK の両方を待つ。続く PUBLISH_OK と SUBSCRIBE_OK も確認し、control request が relay を通ることを検証する。publisher は全 Subgroup stream の ACK 後に PUBLISH_DONE を送り、subscriber は Object 数、Group 終了、PUBLISH_DONE の stream 数がそろった時点で成功する。
+
+publisher は PUBLISH_OK 後に 1 秒待ってから有限 batch を送る。この間に別プロセスの subscriber が relay に接続し、PUBLISH_DONE を含む完了通知を受け取れる。
 
 ## 接続先と参照実装
 
@@ -59,4 +69,4 @@ ClientHandshake は I/O、時計、スレッドを持たない。バージョン
 
 MsQuic の callback は C のメモリだけを操作し、受信データをキューにコピーする。MoonBit の割り当ては呼び出し元がイベントを取り出す際に行う。送信バイト列もコピーし、SEND_COMPLETE まで保持する。MsQuic の送信バッファリングを無効にし、成功の SEND_COMPLETE はピアの ACK 後に通知する。送受信それぞれの保持上限は 1 MiB、イベントと未完了送信は各 256 件、ストリームは同時 16 本。上限超過を暗黙のデータ破棄として扱わない。
 
-現時点の session API は単一トラックと一つの subscriber を扱う。object は信頼性のある Subgroup stream 上で一つだけ送受信する。transport.Client の操作は単一の呼び出し元から直列に行い、終了時には close() を呼ぶ。自動 finalizer はない。Native executable は -lmsquic -lpthread を link する。
+track_probe は一度に一つの track を publish または subscribe し、各 Group に一つの Subgroup stream を開く。session API は複数の track request と複数の Object stream を管理する。transport.Client の操作は単一の呼び出し元から直列に行い、終了時には close() を呼ぶ。自動 finalizer はない。Native executable は -lmsquic -lpthread を link する。

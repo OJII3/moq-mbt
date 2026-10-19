@@ -1,4 +1,9 @@
 ///|
+fn probe_payload(group_id : UInt64, object_id : UInt64) -> Bytes {
+  @utf8.encode("group-\{group_id}-object-\{object_id}")
+}
+
+///|
 fn drive_session_actions(
   client : @transport.Client,
   session : @session.ClientSession,
@@ -82,9 +87,9 @@ fn setup_client(
   insecure : Bool,
 ) -> (@transport.Client, @session.ClientSession, Int64) raise {
   let authority = if host.contains(":") {
-    "[{host}]:{port}"
+    "[\{host}]:\{port}"
   } else {
-    "{host}:{port}"
+    "\{host}:\{port}"
   }
   let session = @session.ClientSession::new(Draft18, {
     options: [
