@@ -75,12 +75,6 @@ pub(all) enum ClientSessionError {
 } derive(Debug, Eq)
 
 ///|
-priv enum ClientRequestKind {
-  Publishing
-  Subscribing
-} derive(Eq)
-
-///|
 priv enum InboundStreamKind {
   Control
   Request
@@ -89,55 +83,8 @@ priv enum InboundStreamKind {
 }
 
 ///|
-priv struct ClientRequest {
-  kind : ClientRequestKind
-  track : @protocol.TrackName
-  publisher : SingleTrackPublisher?
-  subscriber : SingleTrackSubscriber?
-  mut stream : Int64?
-  mut response_buffer : Bytes
-  mut accepted : Bool
-  mut terminal : Bool
-  mut publish_done_received : Bool
-  mut track_alias : UInt64?
-  mut observed_object_streams : UInt64
-  mut active_object_streams : UInt64
-  mut pending_publish_done : @protocol.PublishDoneMessage?
-}
-
-///|
-priv struct InboundSubscription {
-  request_id : UInt64
-  publisher_request_id : UInt64
-  mut accepted : Bool
-  mut finished : Bool
-}
-
-///|
-priv struct PendingObjectStream {
-  subscription_stream : Int64
-  publisher_request_id : UInt64
-  header : @protocol.SubgroupHeader
-  mut cancelled_error_code : UInt64?
-}
-
-///|
-priv struct OutgoingObjectStream {
-  subscription_stream : Int64
-  publisher_request_id : UInt64
-  mut finishing : Bool
-  mut pending_send_count : UInt64
-}
-
-///|
-priv struct IgnoredObjectStream {
-  request_id : UInt64
-  counted_active : Bool
-}
-
-///|
-/// Draft 18 client-side session coordinator. It owns request IDs, stream
-/// routing, and track aliases; transport references remain opaque.
+/// Draft 18 Sans-I/O client session. It owns requests, subscriptions, Object
+/// streams, and track aliases; transport references remain opaque.
 pub struct ClientSession {
   priv handshake : ClientHandshake
   priv mut started : Bool
@@ -156,8 +103,8 @@ pub struct ClientSession {
   priv peer_request_ids : Map[UInt64, Int64]
   priv published_requests : Array[UInt64]
   priv aliases : Map[UInt64, UInt64]
-  priv subgroup_buffers : Map[Int64, Bytes]
-  priv subgroup_requests : Map[Int64, UInt64]
+  priv incoming_object_streams : Map[Int64, IncomingObjectStream]
+  priv published_subscriptions : Map[Int64, PublishedSubscription]
   priv ignored_object_streams : Map[Int64, IgnoredObjectStream]
   priv pending_object_streams : Map[UInt64, PendingObjectStream]
   priv outgoing_object_streams : Map[Int64, OutgoingObjectStream]
@@ -189,8 +136,8 @@ pub fn ClientSession::new(
         peer_request_ids: {},
         published_requests: [],
         aliases: {},
-        subgroup_buffers: {},
-        subgroup_requests: {},
+        incoming_object_streams: {},
+        published_subscriptions: {},
         ignored_object_streams: {},
         pending_object_streams: {},
         outgoing_object_streams: {},
@@ -223,26 +170,20 @@ pub fn ClientSession::publish_track(
   }
   for request_id in self.published_requests {
     let request = self.requests.get(request_id).unwrap()
-    if request.track == track ||
-      request.publisher.unwrap().track_alias() == track_alias {
+    if request.track == track || request.track_alias == Some(track_alias) {
       return Err(AliasInUse)
     }
   }
   let request_id = self.allocate_request_id()
-  let publisher = SingleTrackPublisher::new_with_request_id(
-    track, track_alias, request_id,
-  )
   self.requests[request_id] = {
     kind: Publishing,
     track,
-    publisher: Some(publisher),
-    subscriber: None,
+    track_alias: Some(track_alias),
     stream: None,
     response_buffer: b"",
     accepted: false,
     terminal: false,
     publish_done_received: false,
-    track_alias: None,
     observed_object_streams: 0UL,
     active_object_streams: 0UL,
     pending_publish_done: None,
@@ -261,18 +202,15 @@ pub fn ClientSession::subscribe_track(
     return Err(HandshakeNotComplete)
   }
   let request_id = self.allocate_request_id()
-  let subscriber = SingleTrackSubscriber::new_with_request_id(track, request_id)
   self.requests[request_id] = {
     kind: Subscribing,
     track,
-    publisher: None,
-    subscriber: Some(subscriber),
+    track_alias: None,
     stream: None,
     response_buffer: b"",
     accepted: false,
     terminal: false,
     publish_done_received: false,
-    track_alias: None,
     observed_object_streams: 0UL,
     active_object_streams: 0UL,
     pending_publish_done: None,
@@ -292,8 +230,7 @@ pub fn ClientSession::receive(
         self.inbound_buffers.get(stream) is Some(_) ||
         self.inbound_subscriptions.get(stream) is Some(_) ||
         self.request_streams.get(stream) is Some(_) ||
-        self.subgroup_buffers.get(stream) is Some(_) ||
-        self.subgroup_requests.get(stream) is Some(_) {
+        self.incoming_object_streams.get(stream) is Some(_) {
         return Err(DuplicateStream)
       }
       match direction {
@@ -324,19 +261,32 @@ pub fn ClientSession::accept_subscription(
     Some(value) => value
     None => return Err(UnknownStream)
   }
-  if inbound.accepted || inbound.finished {
+  if inbound.state != Pending {
     return Err(UnexpectedMessage)
   }
-  let publisher = self.publisher(inbound.publisher_request_id)
-  let response = match publisher.accept_subscribe(stream) {
+  let request = self.requests.get(inbound.publisher_request_id).unwrap()
+  let response = match
+    @protocol.encode_subscribe_ok({
+      track_alias: request.track_alias.unwrap(),
+      parameters: [],
+      properties: b"",
+    }) {
     Ok(value) => value
-    Err(error) => return Err(Track(error))
+    Err(error) => return Err(Encoding(error))
   }
-  inbound.accepted = true
+  inbound.state = Active
+  self.published_subscriptions[stream] = {
+    opened_stream_count: 0UL,
+    open_stream_count: 0UL,
+  }
   Ok([
     Send(stream, response, false),
     Notify(
-      SubscriptionAccepted(inbound.request_id, stream, publisher.track_alias()),
+      SubscriptionAccepted(
+        inbound.request_id,
+        stream,
+        request.track_alias.unwrap(),
+      ),
     ),
   ])
 }
@@ -352,14 +302,14 @@ pub fn ClientSession::reject_subscription(
     Some(value) => value
     None => return Err(UnknownStream)
   }
-  if inbound.accepted || inbound.finished {
+  if inbound.state != Pending {
     return Err(UnexpectedMessage)
   }
   let response = match @protocol.encode_request_error(error) {
     Ok(value) => value
     Err(error) => return Err(Encoding(error))
   }
-  inbound.finished = true
+  inbound.state = Ended
   Ok([
     Send(stream, response, true),
     Notify(SubscriptionRejected(inbound.request_id, stream)),
@@ -377,7 +327,7 @@ pub fn ClientSession::open_object_stream(
   let publisher_request_id = match
     self.inbound_subscriptions.get(subscription_stream) {
     Some(inbound) => {
-      if !inbound.accepted || inbound.finished {
+      if inbound.state != Active {
         return Err(SubscriptionNotAccepted)
       }
       inbound.publisher_request_id
@@ -394,15 +344,14 @@ pub fn ClientSession::open_object_stream(
         None => return Err(UnknownStream)
       }
   }
-  let publisher = self.publisher(publisher_request_id)
-  if header.track_alias != publisher.track_alias() {
+  let publisher_request = self.requests.get(publisher_request_id).unwrap()
+  if header.track_alias != publisher_request.track_alias.unwrap() {
     return Err(Track(AliasMismatch))
   }
   let token = self.next_object_token
   self.next_object_token = token + 1UL
   self.pending_object_streams[token] = {
     subscription_stream,
-    publisher_request_id,
     header,
     cancelled_error_code: None,
   }
@@ -423,11 +372,10 @@ pub fn ClientSession::send_object(
   if !self.subscription_is_active(outgoing.subscription_stream) {
     return Err(SubscriptionNotAccepted)
   }
-  let publisher = self.publisher(outgoing.publisher_request_id)
   if outgoing.finishing {
     return Err(UnexpectedMessage)
   }
-  let bytes = match publisher.object_stream(stream, frame) {
+  let bytes = match encode_outgoing_object(outgoing, frame) {
     Ok(value) => value
     Err(error) => return Err(Track(error))
   }
@@ -461,13 +409,13 @@ pub fn ClientSession::publish_done(
   code : UInt64,
   reason : Bytes,
 ) -> Result[Array[ClientSessionAction], ClientSessionError] {
-  let (request_id, publisher_request_id, local_publish) = match
+  let (request_id, local_publish) = match
     self.inbound_subscriptions.get(subscription_stream) {
     Some(inbound) => {
-      if !inbound.accepted || inbound.finished {
+      if inbound.state != Active {
         return Err(SubscriptionNotAccepted)
       }
-      (inbound.request_id, inbound.publisher_request_id, false)
+      (inbound.request_id, false)
     }
     None =>
       match self.request_streams.get(subscription_stream) {
@@ -476,24 +424,32 @@ pub fn ClientSession::publish_done(
           if request.kind != Publishing || !request.accepted || request.terminal {
             return Err(SubscriptionNotAccepted)
           }
-          (request_id, request_id, true)
+          (request_id, true)
         }
         None => return Err(UnknownStream)
       }
   }
-  let publisher = self.publisher(publisher_request_id)
-  let bytes = match publisher.publish_done(subscription_stream, code, reason) {
+  let subscription = match
+    self.published_subscriptions.get(subscription_stream) {
+    Some(value) => value
+    None => return Err(UnexpectedMessage)
+  }
+  if subscription.open_stream_count != 0UL {
+    return Err(Track(ObjectStreamsStillOpen))
+  }
+  let message : @protocol.PublishDoneMessage = {
+    code,
+    stream_count: subscription.opened_stream_count,
+    reason,
+  }
+  let bytes = match @protocol.encode_publish_done(message) {
     Ok(value) => value
-    Err(error) => return Err(Track(error))
+    Err(error) => return Err(Encoding(error))
   }
   if local_publish {
     self.requests.get(request_id).unwrap().terminal = true
   } else {
-    self.inbound_subscriptions.get(subscription_stream).unwrap().finished = true
-  }
-  let message = match @protocol.decode_control(bytes) {
-    @protocol.Complete(@protocol.PublishDone(value), _) => value
-    _ => return Err(UnexpectedMessage)
+    self.inbound_subscriptions.get(subscription_stream).unwrap().state = Ended
   }
   Ok([
     Send(subscription_stream, bytes, true),
@@ -509,39 +465,6 @@ pub fn ClientSession::close(
   reason : Bytes,
 ) -> Array[ClientSessionAction] {
   [CloseConnection(code, reason)]
-}
-
-///|
-fn ClientSession::allocate_request_id(self : ClientSession) -> UInt64 {
-  let request_id = self.next_request_id
-  self.next_request_id = self.next_request_id + 2UL
-  request_id
-}
-
-///|
-fn ClientSession::publisher(
-  self : ClientSession,
-  request_id : UInt64,
-) -> SingleTrackPublisher {
-  self.requests.get(request_id).unwrap().publisher.unwrap()
-}
-
-///|
-fn ClientSession::subscription_is_active(
-  self : ClientSession,
-  stream : Int64,
-) -> Bool {
-  match self.inbound_subscriptions.get(stream) {
-    Some(inbound) => inbound.accepted && !inbound.finished
-    None =>
-      match self.request_streams.get(stream) {
-        Some(request_id) => {
-          let request = self.requests.get(request_id).unwrap()
-          request.kind == Publishing && request.accepted && !request.terminal
-        }
-        None => false
-      }
-  }
 }
 
 ///|
@@ -690,8 +613,20 @@ fn ClientSession::stream_opened(
       request.stream = Some(stream)
       self.request_streams[stream] = request_id
       let encoded = match request.kind {
-        Publishing => request.publisher.unwrap().publish_request()
-        Subscribing => request.subscriber.unwrap().subscribe_request()
+        Publishing =>
+          @protocol.encode_publish({
+            request_id,
+            track: request.track,
+            track_alias: request.track_alias.unwrap(),
+            parameters: [],
+            properties: b"",
+          })
+        Subscribing =>
+          @protocol.encode_subscribe({
+            request_id,
+            track: request.track,
+            parameters: [],
+          })
       }
       let bytes = match encoded {
         Ok(value) => value
@@ -715,359 +650,25 @@ fn ClientSession::stream_opened(
         self.pending_object_streams.remove(token)
         return Ok([AbortSend(stream, 0UL)])
       }
-      let publisher = self.publisher(pending.publisher_request_id)
-      let header = match
-        publisher.open_object_stream(
-          pending.subscription_stream,
-          stream,
-          pending.header,
-        ) {
-        Ok(value) => value
-        Err(error) => return Err(Track(error))
+      let subscription = match
+        self.published_subscriptions.get(pending.subscription_stream) {
+        Some(value) => value
+        None => return Err(SubscriptionNotAccepted)
       }
+      if self.outgoing_object_streams.get(stream) is Some(_) {
+        return Err(Track(UnexpectedMessage))
+      }
+      subscription.opened_stream_count = subscription.opened_stream_count + 1UL
+      subscription.open_stream_count = subscription.open_stream_count + 1UL
       self.pending_object_streams.remove(token)
       self.outgoing_object_streams[stream] = {
         subscription_stream: pending.subscription_stream,
-        publisher_request_id: pending.publisher_request_id,
+        header: pending.header,
+        previous_object_id: None,
         finishing: false,
         pending_send_count: 1UL,
       }
-      Ok([Send(stream, header, false)])
-    }
-  }
-}
-
-///|
-fn ClientSession::receive_request(
-  self : ClientSession,
-  stream : Int64,
-  bytes : Bytes,
-) -> Result[Array[ClientSessionAction], ClientSessionError] {
-  match self.request_streams.get(stream) {
-    Some(request_id) => self.receive_response(request_id, stream, bytes)
-    None => self.receive_peer_request(stream, bytes)
-  }
-}
-
-///|
-fn ClientSession::receive_response(
-  self : ClientSession,
-  request_id : UInt64,
-  stream : Int64,
-  bytes : Bytes,
-) -> Result[Array[ClientSessionAction], ClientSessionError] {
-  let request = self.requests.get(request_id).unwrap()
-  if request.terminal {
-    return Err(UnexpectedMessage)
-  }
-  match request.kind {
-    Publishing => {
-      if bytes.length() > 65546 - request.response_buffer.length() {
-        return Err(BufferLimitExceeded)
-      }
-      request.response_buffer = request.response_buffer + bytes
-      match @protocol.decode_control(request.response_buffer) {
-        @protocol.Incomplete => Ok([])
-        @protocol.Invalid(_) => Err(UnexpectedMessage)
-        @protocol.Complete(message, consumed) => {
-          let trailing = request.response_buffer[consumed:].to_owned()
-          request.response_buffer = b""
-          match message {
-            @protocol.RequestOk(_) if !request.accepted => {
-              request.accepted = true
-              match request.publisher.unwrap().publish_accepted(stream) {
-                Ok(_) => ()
-                Err(error) => return Err(Track(error))
-              }
-              let actions = [Notify(PublishAccepted(request_id))]
-              if trailing.is_empty() {
-                Ok(actions)
-              } else {
-                match self.receive_response(request_id, stream, trailing) {
-                  Ok(more) => Ok(actions + more)
-                  Err(error) => Err(error)
-                }
-              }
-            }
-            @protocol.RequestError(error) => {
-              request.terminal = true
-              Ok([Notify(PublishRejected(request_id, error))])
-            }
-            _ => Err(UnexpectedMessage)
-          }
-        }
-      }
-    }
-    Subscribing => self.receive_subscriber_response(request_id, stream, bytes)
-  }
-}
-
-///|
-fn ClientSession::receive_subscriber_response(
-  self : ClientSession,
-  request_id : UInt64,
-  stream : Int64,
-  bytes : Bytes,
-) -> Result[Array[ClientSessionAction], ClientSessionError] {
-  let request = self.requests.get(request_id).unwrap()
-  if request.terminal {
-    return Err(UnexpectedMessage)
-  }
-  let subscriber = request.subscriber.unwrap()
-  let progress = match subscriber.receive_response(stream, bytes) {
-    Ok(value) => value
-    Err(error) => return Err(Track(error))
-  }
-  match progress {
-    Pending => Ok([])
-    Established(track_alias, trailing) => {
-      if self.aliases.get(track_alias) is Some(_) {
-        return Err(AliasInUse)
-      }
-      self.aliases[track_alias] = request_id
-      request.track_alias = Some(track_alias)
-      request.accepted = true
-      let actions = [Notify(SubscribeEstablished(request_id, track_alias))]
-      if trailing.is_empty() {
-        Ok(actions)
-      } else {
-        match self.receive_subscriber_response(request_id, stream, trailing) {
-          Ok(more) => Ok(actions + more)
-          Err(error) => Err(error)
-        }
-      }
-    }
-    Rejected(error, trailing) => {
-      request.terminal = true
-      let actions = [Notify(SubscribeRejected(request_id, error))]
-      if trailing.is_empty() {
-        Ok(actions)
-      } else {
-        match self.receive_subscriber_response(request_id, stream, trailing) {
-          Ok(more) => Ok(actions + more)
-          Err(error) => Err(error)
-        }
-      }
-    }
-    Finished(message, trailing) => {
-      let actions = match self.receive_publish_done(request_id, message) {
-        Ok(value) => value
-        Err(error) => return Err(error)
-      }
-      if trailing.is_empty() {
-        Ok(actions)
-      } else {
-        match self.receive_subscriber_response(request_id, stream, trailing) {
-          Ok(more) => Ok(actions + more)
-          Err(error) => Err(error)
-        }
-      }
-    }
-  }
-}
-
-///|
-fn ClientSession::receive_publish_done(
-  self : ClientSession,
-  request_id : UInt64,
-  message : @protocol.PublishDoneMessage,
-) -> Result[Array[ClientSessionAction], ClientSessionError] {
-  let request = self.requests.get(request_id).unwrap()
-  if !request.accepted ||
-    request.terminal ||
-    message.stream_count < request.observed_object_streams {
-    return Err(UnexpectedMessage)
-  }
-  request.terminal = true
-  request.publish_done_received = true
-  request.pending_publish_done = Some(message)
-  match self.take_ready_publish_done(request_id) {
-    Some(done) => Ok([Notify(PublishDone(request_id, done))])
-    None => Ok([])
-  }
-}
-
-///|
-fn ClientSession::take_ready_publish_done(
-  self : ClientSession,
-  request_id : UInt64,
-) -> @protocol.PublishDoneMessage? {
-  let request = self.requests.get(request_id).unwrap()
-  match request.pending_publish_done {
-    Some(message) if request.observed_object_streams == message.stream_count &&
-      request.active_object_streams == 0UL => {
-      request.pending_publish_done = None
-      match request.track_alias {
-        Some(track_alias_value) if self.aliases.get(track_alias_value) ==
-          Some(request_id) => self.aliases.remove(track_alias_value)
-        _ => ()
-      }
-      request.track_alias = None
-      Some(message)
-    }
-    _ => None
-  }
-}
-
-///|
-fn ClientSession::receive_peer_request(
-  self : ClientSession,
-  stream : Int64,
-  bytes : Bytes,
-) -> Result[Array[ClientSessionAction], ClientSessionError] {
-  if self.inbound_subscriptions.get(stream) is Some(_) {
-    return Err(UnexpectedMessage)
-  }
-  let buffer = match self.inbound_buffers.get(stream) {
-    Some(value) => value
-    None => b""
-  }
-  if bytes.length() > 65546 - buffer.length() {
-    return Err(BufferLimitExceeded)
-  }
-  let combined = buffer + bytes
-  match @protocol.decode_control(combined) {
-    @protocol.Incomplete => {
-      self.inbound_buffers[stream] = combined
-      Ok([])
-    }
-    @protocol.Invalid(_) => Err(UnexpectedMessage)
-    @protocol.Complete(message, consumed) =>
-      match message {
-        @protocol.Subscribe(request) => {
-          if (request.request_id & 1UL) != 1UL {
-            return Err(InvalidRequestId)
-          }
-          if self.peer_request_ids.get(request.request_id) is Some(_) {
-            return Err(DuplicateRequestId)
-          }
-          let publisher_request_id = match self.find_publisher(request.track) {
-            Some(value) => value
-            None => return Err(TrackNotPublished)
-          }
-          let publisher = self.publisher(publisher_request_id)
-          let progress = match publisher.receive_subscribe(stream, combined) {
-            Ok(value) => value
-            Err(error) => return Err(Track(error))
-          }
-          match progress {
-            PublisherProgress::Pending => Ok([])
-            SubscribeRequested(_, _, trailing) => {
-              if !trailing.is_empty() || consumed != combined.length() {
-                return Err(UnexpectedMessage)
-              }
-              self.inbound_buffers.remove(stream)
-              self.peer_request_ids[request.request_id] = stream
-              self.inbound_subscriptions[stream] = {
-                request_id: request.request_id,
-                publisher_request_id,
-                accepted: false,
-                finished: false,
-              }
-              Ok([
-                Notify(
-                  SubscriptionRequested(
-                    request.request_id,
-                    stream,
-                    request.track,
-                  ),
-                ),
-              ])
-            }
-          }
-        }
-        _ => Err(UnexpectedMessage)
-      }
-  }
-}
-
-///|
-fn ClientSession::find_publisher(
-  self : ClientSession,
-  track : @protocol.TrackName,
-) -> UInt64? {
-  for request_id in self.published_requests {
-    let request = self.requests.get(request_id).unwrap()
-    if request.track == track && request.accepted {
-      return Some(request_id)
-    }
-  }
-  None
-}
-
-///|
-fn ClientSession::receive_subgroup(
-  self : ClientSession,
-  stream : Int64,
-  bytes : Bytes,
-) -> Result[Array[ClientSessionAction], ClientSessionError] {
-  if self.ignored_object_streams.get(stream) is Some(_) {
-    return Ok([])
-  }
-  match self.subgroup_requests.get(stream) {
-    Some(request_id) => {
-      let subscriber = self.requests.get(request_id).unwrap().subscriber.unwrap()
-      let progress = match subscriber.receive_object(stream, bytes) {
-        Ok(value) => value
-        Err(error) => return Err(Track(error))
-      }
-      match progress {
-        Pending => Ok([])
-        Received(header, frames) =>
-          Ok([Notify(ObjectReceived(request_id, header, frames))])
-      }
-    }
-    None => {
-      let previous = match self.subgroup_buffers.get(stream) {
-        Some(value) => value
-        None => b""
-      }
-      if bytes.length() > 1024 * 1024 - previous.length() {
-        return Err(BufferLimitExceeded)
-      }
-      let combined = previous + bytes
-      match @protocol.decode_subgroup_header(combined) {
-        @protocol.Incomplete => {
-          self.subgroup_buffers[stream] = combined
-          Ok([])
-        }
-        @protocol.Invalid(_) => Err(UnexpectedMessage)
-        @protocol.Complete(header, _) => {
-          let request_id = match self.aliases.get(header.track_alias) {
-            Some(value) => value
-            None => return Err(UnknownRequest)
-          }
-          let request = self.requests.get(request_id).unwrap()
-          if request.terminal && !request.publish_done_received {
-            self.subgroup_buffers.remove(stream)
-            self.ignored_object_streams[stream] = {
-              request_id,
-              counted_active: false,
-            }
-            return Ok([StopReceiving(stream, 0UL)])
-          }
-          match request.pending_publish_done {
-            Some(done) if request.observed_object_streams >= done.stream_count =>
-              return Err(UnexpectedMessage)
-            _ => ()
-          }
-          self.subgroup_buffers.remove(stream)
-          self.subgroup_requests[stream] = request_id
-          let subscriber = self.requests.get(request_id).unwrap().subscriber.unwrap()
-          let progress = match subscriber.receive_object(stream, combined) {
-            Ok(value) => value
-            Err(error) => return Err(Track(error))
-          }
-          request.observed_object_streams = request.observed_object_streams +
-            1UL
-          request.active_object_streams = request.active_object_streams + 1UL
-          match progress {
-            Pending => Ok([])
-            Received(actual_header, frames) =>
-              Ok([Notify(ObjectReceived(request_id, actual_header, frames))])
-          }
-        }
-      }
+      Ok([Send(stream, @protocol.encode_subgroup_header(pending.header), false)])
     }
   }
 }
@@ -1080,8 +681,8 @@ fn ClientSession::end_request_stream(
 ) -> Array[ClientSessionAction] {
   let actions : Array[ClientSessionAction] = []
   match self.inbound_subscriptions.get(stream) {
-    Some(inbound) if !inbound.finished => {
-      inbound.finished = true
+    Some(inbound) if inbound.state != Ended => {
+      inbound.state = Ended
       self.inbound_buffers.remove(stream)
       actions.push(AbortSend(stream, error_code))
       for (_, pending) in self.pending_object_streams {
@@ -1096,10 +697,7 @@ fn ClientSession::end_request_stream(
         }
       }
       for object_stream in object_streams {
-        let outgoing = self.outgoing_object_streams.get(object_stream).unwrap()
-        let publisher = self.publisher(outgoing.publisher_request_id)
-        ignore(publisher.reset_object_stream(object_stream))
-        self.outgoing_object_streams.remove(object_stream)
+        self.close_outgoing_object_stream(object_stream)
         actions.push(AbortSend(object_stream, error_code))
       }
       actions.push(Notify(SubscriptionEnded(inbound.request_id, stream)))
@@ -1123,12 +721,7 @@ fn ClientSession::end_request_stream(
               }
             }
             for object_stream in object_streams {
-              let outgoing = self.outgoing_object_streams
-                .get(object_stream)
-                .unwrap()
-              let publisher = self.publisher(outgoing.publisher_request_id)
-              ignore(publisher.reset_object_stream(object_stream))
-              self.outgoing_object_streams.remove(object_stream)
+              self.close_outgoing_object_stream(object_stream)
               actions.push(AbortSend(object_stream, error_code))
             }
             actions.push(Notify(SubscriptionEnded(request_id, stream)))
@@ -1138,16 +731,13 @@ fn ClientSession::end_request_stream(
             request.terminal = true
             actions.push(AbortSend(stream, error_code))
             let object_streams : Array[Int64] = []
-            for (object_stream, owner) in self.subgroup_requests {
-              if owner == request_id {
+            for (object_stream, state) in self.incoming_object_streams {
+              if state.request_id == Some(request_id) {
                 object_streams.push(object_stream)
               }
             }
-            let subscriber = request.subscriber.unwrap()
             for object_stream in object_streams {
-              subscriber.reset_object_stream(object_stream)
-              self.subgroup_requests.remove(object_stream)
-              self.subgroup_buffers.remove(object_stream)
+              self.incoming_object_streams.remove(object_stream)
               self.ignored_object_streams[object_stream] = {
                 request_id,
                 counted_active: true,
@@ -1184,21 +774,29 @@ fn ClientSession::stream_finished(
     }
     None => ()
   }
-  match self.subgroup_requests.get(stream) {
-    Some(request_id) => {
-      let subscriber = self.requests.get(request_id).unwrap().subscriber.unwrap()
-      let group_id = match subscriber.object_stream_group_id(stream) {
-        Ok(value) => value
-        Err(error) => return Err(Track(error))
+  match self.incoming_object_streams.get(stream) {
+    Some(state) => {
+      if state.header is None {
+        self.incoming_object_streams.remove(stream)
+        self.inbound_stream_kinds.remove(stream)
+        return Err(Track(IncompleteObjectStream))
       }
-      let group_finished = match subscriber.finish_object_stream(stream) {
-        Ok(value) => value
-        Err(error) => return Err(Track(error))
+      if !state.buffer.is_empty() {
+        return Err(Track(IncompleteObjectStream))
       }
+      let request_id = match state.request_id {
+        Some(value) => value
+        None => {
+          self.incoming_object_streams.remove(stream)
+          self.inbound_stream_kinds.remove(stream)
+          return Err(Track(IncompleteObjectStream))
+        }
+      }
+      let group_id = state.header.unwrap().group_id
+      let group_finished = state.header.unwrap().end_of_group
       let request = self.requests.get(request_id).unwrap()
       request.active_object_streams = request.active_object_streams - 1UL
-      self.subgroup_requests.remove(stream)
-      self.subgroup_buffers.remove(stream)
+      self.incoming_object_streams.remove(stream)
       self.inbound_stream_kinds.remove(stream)
       let actions : Array[ClientSessionAction] = []
       if group_finished {
@@ -1211,11 +809,6 @@ fn ClientSession::stream_finished(
       Ok(actions)
     }
     None => {
-      if self.subgroup_buffers.get(stream) is Some(_) {
-        self.subgroup_buffers.remove(stream)
-        self.inbound_stream_kinds.remove(stream)
-        return Err(Track(IncompleteObjectStream))
-      }
       if self.inbound_subscriptions.get(stream) is Some(_) ||
         self.request_streams.get(stream) is Some(_) {
         return Ok(self.end_request_stream(stream, 0UL))
@@ -1253,14 +846,19 @@ fn ClientSession::stream_reset(
     }
     None => ()
   }
-  match self.subgroup_requests.get(stream) {
-    Some(request_id) => {
-      let subscriber = self.requests.get(request_id).unwrap().subscriber.unwrap()
-      subscriber.reset_object_stream(stream)
+  match self.incoming_object_streams.get(stream) {
+    Some(state) => {
+      let request_id = match state.request_id {
+        Some(value) => value
+        None => {
+          self.incoming_object_streams.remove(stream)
+          self.inbound_stream_kinds.remove(stream)
+          return Ok([])
+        }
+      }
       let request = self.requests.get(request_id).unwrap()
       request.active_object_streams = request.active_object_streams - 1UL
-      self.subgroup_requests.remove(stream)
-      self.subgroup_buffers.remove(stream)
+      self.incoming_object_streams.remove(stream)
       self.inbound_stream_kinds.remove(stream)
       let actions : Array[ClientSessionAction] = [
         Notify(ObjectStreamReset(request_id, stream)),
@@ -1277,7 +875,7 @@ fn ClientSession::stream_reset(
         return Ok(self.end_request_stream(stream, error_code))
       }
       self.inbound_buffers.remove(stream)
-      self.subgroup_buffers.remove(stream)
+      self.incoming_object_streams.remove(stream)
       self.inbound_unclassified_buffers.remove(stream)
       self.inbound_stream_kinds.remove(stream)
       Ok([])
@@ -1292,13 +890,8 @@ fn ClientSession::send_complete(
   canceled : Bool,
 ) -> Result[Array[ClientSessionAction], ClientSessionError] {
   match self.outgoing_object_streams.get(stream) {
-    Some(outgoing) if canceled => {
-      let publisher = self.publisher(outgoing.publisher_request_id)
-      match publisher.reset_object_stream(stream) {
-        Ok(_) => ()
-        Err(error) => return Err(Track(error))
-      }
-      self.outgoing_object_streams.remove(stream)
+    Some(_) if canceled => {
+      self.close_outgoing_object_stream(stream)
       Ok([Notify(SendFinished(stream, true))])
     }
     Some(outgoing) => {
@@ -1306,12 +899,7 @@ fn ClientSession::send_complete(
         outgoing.pending_send_count = outgoing.pending_send_count - 1UL
       }
       if outgoing.finishing && outgoing.pending_send_count == 0UL {
-        let publisher = self.publisher(outgoing.publisher_request_id)
-        match publisher.finish_object_stream(stream) {
-          Ok(_) => ()
-          Err(error) => return Err(Track(error))
-        }
-        self.outgoing_object_streams.remove(stream)
+        self.close_outgoing_object_stream(stream)
         Ok([
           Notify(SendFinished(stream, false)),
           Notify(ObjectStreamFinished(stream)),
