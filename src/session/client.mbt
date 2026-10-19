@@ -246,7 +246,12 @@ pub fn ClientSession::receive(
     StreamOpened(purpose, stream) => self.stream_opened(purpose, stream)
     StreamFinished(stream) => self.stream_finished(stream)
     StreamReset(stream, code) => self.stream_reset(stream, code)
-    SendStopped(stream, code) => Ok(self.end_request_stream(stream, code))
+    SendStopped(stream, code) =>
+      if self.outbound_control_stream == Some(stream) {
+        Err(Handshake(self.handshake.control_closed()))
+      } else {
+        Ok(self.end_request_stream(stream, code))
+      }
     SendComplete(stream, canceled) => self.send_complete(stream, canceled)
   }
 }
