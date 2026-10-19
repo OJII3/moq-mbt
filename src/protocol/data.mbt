@@ -244,6 +244,69 @@ pub fn SubgroupDecoder::decode_next(
 }
 
 ///|
+/// Append one Object frame after a Subgroup header. Object IDs are absolute in
+/// memory and encoded as Draft 18 deltas on the wire.
+fn append_subgroup_frame(
+  bytes : Array[Byte],
+  header : SubgroupHeader,
+  previous_object_id : UInt64?,
+  frame : SubgroupFrame,
+) -> Result[Unit, CodecError] {
+  if !header.has_properties && !frame.properties.is_empty() {
+    return Err(InvalidSubgroup)
+  }
+  if frame.status != Normal &&
+    (!frame.payload.is_empty() || !frame.properties.is_empty()) {
+    return Err(InvalidSubgroup)
+  }
+  let object_id_delta = match previous_object_id {
+    None => frame.object_id
+    Some(previous) => {
+      if frame.object_id <= previous {
+        return Err(InvalidSubgroup)
+      }
+      frame.object_id - previous - 1UL
+    }
+  }
+  append_vi64s(bytes, object_id_delta)
+  if header.has_properties {
+    append_vi64s(bytes, frame.properties.length().to_uint64())
+    for byte in frame.properties {
+      bytes.push(byte)
+    }
+  }
+  append_vi64s(bytes, frame.payload.length().to_uint64())
+  if frame.payload.is_empty() {
+    let status_value = match frame.status {
+      Normal => 0UL
+      EndOfGroup => 3UL
+      EndOfTrack => 4UL
+    }
+    append_vi64s(bytes, status_value)
+  }
+  for byte in frame.payload {
+    bytes.push(byte)
+  }
+  Ok(())
+}
+
+///|
+/// Encode one Object frame after a Subgroup header. Object IDs are absolute in
+/// memory and encoded as Draft 18 deltas on the wire.
+pub fn encode_subgroup_frame(
+  header : SubgroupHeader,
+  previous_object_id : UInt64?,
+  frame : SubgroupFrame,
+) -> Result[Bytes, CodecError] {
+  let bytes : Array[Byte] = []
+  match append_subgroup_frame(bytes, header, previous_object_id, frame) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  Ok(Bytes::from_array(bytes))
+}
+
+///|
 /// Encode one or more Objects with a Subgroup header. Object IDs are absolute
 /// in `frames` and encoded as Draft 18 deltas on the wire.
 pub fn encode_subgroup_stream(
@@ -256,42 +319,10 @@ pub fn encode_subgroup_stream(
   }
   let mut previous_object_id : UInt64? = None
   for frame in frames {
-    if !header.has_properties && !frame.properties.is_empty() {
-      return Err(InvalidSubgroup)
+    match append_subgroup_frame(bytes, header, previous_object_id, frame) {
+      Ok(_) => previous_object_id = Some(frame.object_id)
+      Err(error) => return Err(error)
     }
-    if frame.status != Normal &&
-      (!frame.payload.is_empty() || !frame.properties.is_empty()) {
-      return Err(InvalidSubgroup)
-    }
-    let object_id_delta = match previous_object_id {
-      None => frame.object_id
-      Some(previous) => {
-        if frame.object_id <= previous {
-          return Err(InvalidSubgroup)
-        }
-        frame.object_id - previous - 1UL
-      }
-    }
-    append_vi64s(bytes, object_id_delta)
-    if header.has_properties {
-      append_vi64s(bytes, frame.properties.length().to_uint64())
-      for byte in frame.properties {
-        bytes.push(byte)
-      }
-    }
-    append_vi64s(bytes, frame.payload.length().to_uint64())
-    if frame.payload.is_empty() {
-      let status_value = match frame.status {
-        Normal => 0UL
-        EndOfGroup => 3UL
-        EndOfTrack => 4UL
-      }
-      append_vi64s(bytes, status_value)
-    }
-    for byte in frame.payload {
-      bytes.push(byte)
-    }
-    previous_object_id = Some(frame.object_id)
   }
   Ok(Bytes::from_array(bytes))
 }
