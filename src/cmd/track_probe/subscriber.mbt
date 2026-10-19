@@ -40,22 +40,31 @@ fn run_subscriber(
           }
           Ok(@session.Rejected(error, _trailing)) =>
             fail("SUBSCRIBE rejected (\{error.code})")
-          Ok(@session.Finished(_, _)) => ()
+          Ok(@session.Finished(_, _)) => return
           Err(error) => fail("invalid SUBSCRIBE response: \{error.to_repr()}")
         }
       Data(stream, bytes) =>
         match subscriber.receive_object(stream, bytes) {
           Ok(@session.Pending) => ()
-          Ok(@session.Received(header, frame, _trailing)) => {
-            println(
-              "Received Object (group \{header.group_id}, object \{frame.object_id}, \{frame.payload.length()} bytes)",
-            )
-            return
-          }
+          Ok(@session.Received(header, frames)) =>
+            for frame in frames {
+              println(
+                "Received Object (group \{header.group_id}, object \{frame.object_id}, \{frame.payload.length()} bytes)",
+              )
+            }
           Err(error) => fail("invalid Object: \{error.to_repr()}")
         }
-      StreamFinished(_) => ()
-      StreamReset(_, code) => fail("stream reset (code \{code})")
+      StreamFinished(stream) if stream == request_stream => ()
+      StreamFinished(stream) =>
+        match subscriber.finish_object_stream(stream) {
+          Ok(true) => eprintln("Group finished")
+          Ok(false) => ()
+          Err(error) =>
+            fail("invalid finished Object stream: \{error.to_repr()}")
+        }
+      StreamReset(stream, _) if stream != request_stream =>
+        subscriber.reset_object_stream(stream)
+      StreamReset(_, _) => ()
       SendComplete(stream, canceled) if stream == request_stream =>
         if canceled {
           fail("SUBSCRIBE send was canceled")

@@ -9,19 +9,32 @@ pub(all) enum SubscriberProgress {
 ///|
 pub(all) enum ObjectProgress {
   Pending
-  Received(@protocol.SubgroupHeader, @protocol.SubgroupFrame, Bytes)
+  Received(@protocol.SubgroupHeader, Array[@protocol.SubgroupFrame])
 } derive(Debug, Eq)
 
 ///|
-/// Sans-I/O subscriber state for one named track and one object.
+priv enum ObjectStreamEnd {
+  Open
+  Finished
+  Reset
+} derive(Eq)
+
+///|
+priv struct SubscriberObjectStream {
+  mut buffer : Bytes
+  mut header : @protocol.SubgroupHeader?
+  mut decoder : @protocol.SubgroupDecoder?
+  mut end_state : ObjectStreamEnd
+}
+
+///|
+/// Sans-I/O subscriber state for one named track and its data streams.
 pub struct SingleTrackSubscriber {
   priv track : @protocol.TrackName
   priv mut request_stream : Int64?
   priv mut response_buffer : Bytes
   priv mut track_alias : UInt64?
-  priv mut object_stream : Int64?
-  priv mut object_buffer : Bytes
-  priv mut object_received : Bool
+  priv object_streams : Map[Int64, SubscriberObjectStream]
 }
 
 ///|
@@ -33,9 +46,7 @@ pub fn SingleTrackSubscriber::new(
     request_stream: None,
     response_buffer: b"",
     track_alias: None,
-    object_stream: None,
-    object_buffer: b"",
-    object_received: false,
+    object_streams: {},
   }
 }
 
@@ -90,48 +101,118 @@ pub fn SingleTrackSubscriber::receive_response(
 }
 
 ///|
-/// Feed data from the first Subgroup stream and return its single Object.
+/// Feed bytes from one Subgroup stream. Complete frames are returned together;
+/// an incomplete trailing frame stays buffered for the next call on this stream.
 pub fn SingleTrackSubscriber::receive_object(
   self : SingleTrackSubscriber,
   stream : Int64,
   bytes : Bytes,
 ) -> Result[ObjectProgress, TrackSessionError] {
-  if self.object_received {
-    return Err(DuplicateSubscription)
-  }
   let track_alias = match self.track_alias {
     Some(value) => value
     None => return Err(UnexpectedMessage)
   }
-  match self.object_stream {
-    Some(previous) if previous != stream => return Err(DuplicateSubscription)
-    None => self.object_stream = Some(stream)
-    _ => ()
+  let state = match self.object_streams.get(stream) {
+    Some(value) => value
+    None => {
+      let value : SubscriberObjectStream = {
+        buffer: b"",
+        header: None,
+        decoder: None,
+        end_state: Open,
+      }
+      self.object_streams[stream] = value
+      value
+    }
   }
-  if bytes.length() > 1024 * 1024 - self.object_buffer.length() {
+  if state.end_state != Open {
+    return Err(UnexpectedMessage)
+  }
+  if bytes.length() > 1024 * 1024 - state.buffer.length() {
     return Err(BufferLimitExceeded)
   }
-  self.object_buffer = self.object_buffer + bytes
-  match @protocol.decode_subgroup_header(self.object_buffer) {
-    @protocol.Incomplete => Ok(Pending)
-    @protocol.Invalid(_) => Err(InvalidControlMessage)
-    @protocol.Complete(header, header_length) => {
-      if header.track_alias != track_alias {
-        return Err(AliasMismatch)
-      }
-      let decoder = @protocol.SubgroupDecoder::new(header)
-      match decoder.decode_next(self.object_buffer[header_length:].to_owned()) {
-        @protocol.Incomplete => Ok(Pending)
-        @protocol.Invalid(_) => Err(InvalidControlMessage)
-        @protocol.Complete(frame, frame_length) => {
-          self.object_received = true
-          let consumed = header_length + frame_length
-          let trailing = self.object_buffer[consumed:].to_owned()
-          self.object_buffer = b""
-          Ok(Received(header, frame, trailing))
+  state.buffer = state.buffer + bytes
+  match state.header {
+    Some(_) => ()
+    None =>
+      match @protocol.decode_subgroup_header(state.buffer) {
+        @protocol.Incomplete => return Ok(Pending)
+        @protocol.Invalid(_) => return Err(InvalidControlMessage)
+        @protocol.Complete(header, header_length) => {
+          if header.track_alias != track_alias {
+            return Err(AliasMismatch)
+          }
+          state.header = Some(header)
+          state.decoder = Some(@protocol.SubgroupDecoder::new(header))
+          state.buffer = state.buffer[header_length:].to_owned()
         }
       }
+  }
+  let header = state.header.unwrap()
+  let decoder = state.decoder.unwrap()
+  let frames : Array[@protocol.SubgroupFrame] = []
+  let mut remaining = state.buffer
+  while !remaining.is_empty() {
+    match decoder.decode_next(remaining) {
+      @protocol.Incomplete => break
+      @protocol.Invalid(_) => return Err(InvalidControlMessage)
+      @protocol.Complete(frame, consumed) => {
+        frames.push(frame)
+        remaining = remaining[consumed:].to_owned()
+      }
     }
+  }
+  state.buffer = remaining
+  if frames.is_empty() {
+    Ok(Pending)
+  } else {
+    Ok(Received(header, frames))
+  }
+}
+
+///|
+/// Mark a data stream's FIN. The return value says whether its header marks
+/// the end of its Group; a reset never carries that meaning.
+pub fn SingleTrackSubscriber::finish_object_stream(
+  self : SingleTrackSubscriber,
+  stream : Int64,
+) -> Result[Bool, TrackSessionError] {
+  match self.object_streams.get(stream) {
+    None => Err(IncompleteObjectStream)
+    Some(state) =>
+      match state.end_state {
+        Finished => Ok(false)
+        Reset => Ok(false)
+        Open => {
+          if state.header is None || !state.buffer.is_empty() {
+            return Err(IncompleteObjectStream)
+          }
+          state.end_state = Finished
+          Ok(state.header.unwrap().end_of_group)
+        }
+      }
+  }
+}
+
+///|
+/// Mark a data stream as reset without inferring End of Group from its header.
+pub fn SingleTrackSubscriber::reset_object_stream(
+  self : SingleTrackSubscriber,
+  stream : Int64,
+) -> Unit {
+  match self.object_streams.get(stream) {
+    Some(state) if state.end_state == Finished => ()
+    Some(state) => {
+      state.buffer = b""
+      state.end_state = Reset
+    }
+    None =>
+      self.object_streams[stream] = {
+        buffer: b"",
+        header: None,
+        decoder: None,
+        end_state: Reset,
+      }
   }
 }
 
