@@ -22,6 +22,24 @@ fn update_ok() -> @protocol.RequestOkMessage {
 }
 
 ///|
+fn update_datagram(
+  track_alias : UInt64,
+  object_id : UInt64,
+  payload : Bytes,
+) -> @protocol.ObjectDatagram {
+  {
+    track_alias,
+    group_id: 1,
+    object_id,
+    publisher_priority: None,
+    end_of_group: false,
+    properties: b"",
+    status: @protocol.Normal,
+    payload,
+  }
+}
+
+///|
 test "subscriber keeps its request stream open and matches one update response" {
   let subscriber = subscriber_started()
   let parameters = [forward_parameter(0)]
@@ -53,6 +71,211 @@ test "subscriber keeps its request stream open and matches one update response" 
     .update_subscription(0, [subscriber_priority_parameter(4)])
     .unwrap().0,
     4UL,
+  )
+}
+
+///|
+test "datagrams and subgroup objects use the accepted subscription FORWARD state" {
+  let subscriber = subscriber_started()
+  let forward_off = [forward_parameter(0)]
+  let forward_on = [forward_parameter(1)]
+  let datagram = update_datagram(1, 2, b"payload")
+  let datagram_bytes = @protocol.encode_object_datagram(datagram).unwrap()
+  assert_eq(
+    subscriber.receive(@session.DatagramReceived(datagram_bytes)),
+    Ok([@session.Notify(@session.ObjectDatagramReceived(0, datagram))]),
+  )
+  let subgroup : @protocol.SubgroupHeader = {
+    track_alias: 1,
+    group_id: 1,
+    subgroup_id_mode: @protocol.Zero,
+    publisher_priority: None,
+    end_of_group: false,
+    first_object: true,
+    has_properties: false,
+  }
+  assert_eq(
+    subscriber.receive(
+      @session.InboundStreamStarted(9, @session.Unidirectional),
+    ),
+    Ok([]),
+  )
+  assert_eq(
+    subscriber.receive(
+      @session.StreamData(
+        9,
+        @protocol.encode_subgroup_stream(subgroup, [
+          {
+            object_id: 1,
+            status: @protocol.Normal,
+            properties: b"",
+            payload: b"stream",
+          },
+        ]).unwrap(),
+      ),
+    ),
+    Ok([
+      @session.Notify(
+        @session.ObjectReceived(0, subgroup, [
+          {
+            object_id: 1,
+            status: @protocol.Normal,
+            properties: b"",
+            payload: b"stream",
+          },
+        ]),
+      ),
+    ]),
+  )
+
+  let (disable_id, _) = subscriber.update_subscription(0, forward_off).unwrap()
+  assert_eq(disable_id, 2UL)
+  assert_eq(
+    subscriber.receive(
+      @session.StreamData(
+        30,
+        @protocol.encode_request_ok_for(
+          update_ok(),
+          @protocol.RequestOkContext::RequestUpdate,
+        ).unwrap(),
+      ),
+    ),
+    Ok([@session.Notify(@session.SubscriptionUpdateAccepted(0, 2, update_ok()))]),
+  )
+  assert_eq(
+    subscriber.receive(@session.DatagramReceived(datagram_bytes)),
+    Ok([]),
+  )
+  assert_eq(
+    subscriber.receive(
+      @session.InboundStreamStarted(13, @session.Unidirectional),
+    ),
+    Ok([]),
+  )
+  assert_eq(
+    subscriber.receive(
+      @session.StreamData(
+        13,
+        @protocol.encode_subgroup_stream(subgroup, [
+          {
+            object_id: 2,
+            status: @protocol.Normal,
+            properties: b"",
+            payload: b"dropped",
+          },
+        ]).unwrap(),
+      ),
+    ),
+    Ok([]),
+  )
+
+  let (enable_id, _) = subscriber.update_subscription(0, forward_on).unwrap()
+  assert_eq(enable_id, 4UL)
+  ignore(
+    subscriber
+    .receive(
+      @session.StreamData(
+        30,
+        @protocol.encode_request_ok_for(
+          update_ok(),
+          @protocol.RequestOkContext::RequestUpdate,
+        ).unwrap(),
+      ),
+    )
+    .unwrap(),
+  )
+  assert_eq(
+    subscriber.receive(@session.DatagramReceived(datagram_bytes)),
+    Ok([@session.Notify(@session.ObjectDatagramReceived(0, datagram))]),
+  )
+}
+
+///|
+test "publisher datagram send obeys the same FORWARD update and alias checks" {
+  let publisher = publisher_started()
+  let datagram = update_datagram(1, 2, b"payload")
+  assert_eq(
+    publisher.send_object_datagram(20, datagram),
+    Ok([
+      @session.SendDatagram(@protocol.encode_object_datagram(datagram).unwrap()),
+    ]),
+  )
+  let forward_off = [forward_parameter(0)]
+  assert_eq(
+    publisher.send_object_datagram(40, datagram),
+    Ok([
+      @session.SendDatagram(@protocol.encode_object_datagram(datagram).unwrap()),
+    ]),
+  )
+  assert_eq(
+    publisher.receive(
+      @session.StreamData(40, request_update_bytes(3, forward_off)),
+    ),
+    Ok([
+      @session.Notify(
+        @session.SubscriptionUpdateRequested(1, 3, 40, forward_off, forward_off),
+      ),
+    ]),
+  )
+  ignore(publisher.accept_subscription_update(40, 3, update_ok()).unwrap())
+  assert_eq(
+    publisher.send_object_datagram(40, datagram),
+    Err(@session.SubscriptionNotAccepted),
+  )
+  let forward_on = [forward_parameter(1)]
+  assert_eq(
+    publisher.receive(
+      @session.StreamData(40, request_update_bytes(5, forward_on)),
+    ),
+    Ok([
+      @session.Notify(
+        @session.SubscriptionUpdateRequested(1, 5, 40, forward_on, forward_on),
+      ),
+    ]),
+  )
+  ignore(publisher.accept_subscription_update(40, 5, update_ok()).unwrap())
+  assert_eq(
+    publisher.send_object_datagram(40, datagram),
+    Ok([
+      @session.SendDatagram(@protocol.encode_object_datagram(datagram).unwrap()),
+    ]),
+  )
+  assert_eq(
+    publisher.send_object_datagram(40, update_datagram(99, 2, b"payload")),
+    Err(@session.Track(@session.AliasMismatch)),
+  )
+}
+
+///|
+test "unknown, malformed, and post-cancel datagrams do not reach the application" {
+  let subscriber = subscriber_started()
+  assert_eq(
+    subscriber.receive(
+      @session.DatagramReceived(
+        @protocol.encode_object_datagram(update_datagram(99, 1, b"unknown")).unwrap(),
+      ),
+    ),
+    Ok([]),
+  )
+  assert_eq(
+    subscriber.receive(@session.DatagramReceived(b"invalid")),
+    Err(@session.UnexpectedMessage),
+  )
+  assert_eq(
+    subscriber.cancel_request(0),
+    Ok([
+      @session.AbortSend(30, 1),
+      @session.StopReceiving(30, 1),
+      @session.Notify(@session.SubscriptionEnded(0, 30)),
+    ]),
+  )
+  assert_eq(
+    subscriber.receive(
+      @session.DatagramReceived(
+        @protocol.encode_object_datagram(update_datagram(1, 1, b"late")).unwrap(),
+      ),
+    ),
+    Ok([]),
   )
 }
 

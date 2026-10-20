@@ -53,6 +53,7 @@ fn drive_session_actions(
         }
         send_counts[stream] = count + 1UL
       }
+      @session.SendDatagram(bytes) => client.send_datagram(bytes)
       @session.AbortSend(stream, error_code) =>
         client.abort_send(stream, error_code.reinterpret_as_int64())
       @session.StopReceiving(stream, error_code) =>
@@ -166,6 +167,15 @@ fn setup_client(
             _ => ()
           }
         }
+      }
+      Datagram(bytes) => {
+        let (notices, _) = drive_session_result(
+          client,
+          session,
+          session.receive(@session.DatagramReceived(bytes)),
+          send_counts,
+        )
+        ignore(notices)
       }
       SendComplete(stream, canceled) => {
         note_send_complete(send_counts, stream)

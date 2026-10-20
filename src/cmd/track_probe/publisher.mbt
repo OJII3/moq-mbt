@@ -215,6 +215,15 @@ fn run_publisher(
         )
         handle_publisher_notices(client, session, notices, send_counts, state)
       }
+      Datagram(bytes) => {
+        let (notices, _) = drive_session_result(
+          client,
+          session,
+          session.receive(@session.DatagramReceived(bytes)),
+          send_counts,
+        )
+        handle_publisher_notices(client, session, notices, send_counts, state)
+      }
       SendComplete(stream, canceled) => {
         note_send_complete(send_counts, stream)
         if canceled {

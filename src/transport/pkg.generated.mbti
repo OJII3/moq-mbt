@@ -25,12 +25,14 @@ pub fn Client::next_event(Self, Int) -> Event raise TransportError
 pub fn Client::open_bidi(Self) -> Int64 raise TransportError
 pub fn Client::open_uni(Self) -> Int64 raise TransportError
 pub fn Client::send(Self, Int64, Bytes, fin? : Bool) -> Unit raise TransportError
+pub fn Client::send_datagram(Self, Bytes) -> Unit raise TransportError
 pub fn Client::stop_receiving(Self, Int64, Int64) -> Unit raise TransportError
 
 pub(all) enum Event {
   Connected
   StreamStarted(Int64, StreamDirection)
   Data(Int64, Bytes)
+  Datagram(Bytes)
   StreamFinished(Int64)
   StreamReset(Int64, Int64)
   SendStopped(Int64, Int64)

@@ -23,6 +23,7 @@ pub(all) enum Event {
   Connected
   StreamStarted(Int64, StreamDirection)
   Data(Int64, Bytes)
+  Datagram(Bytes)
   StreamFinished(Int64)
   StreamReset(Int64, Int64)
   SendStopped(Int64, Int64)
