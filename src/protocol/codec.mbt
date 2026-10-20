@@ -11,6 +11,10 @@ pub(all) enum CodecError {
   MalformedControlMessage
   UnsupportedControlMessage(UInt64)
   UnsupportedParameter(UInt64)
+  InvalidParameterScope(UInt64)
+  InvalidParameterValue(UInt64)
+  InvalidRequestOkProperties
+  InvalidGoAwayUri
   InvalidTrackName
   InvalidSubgroup
 } derive(Debug, Eq)

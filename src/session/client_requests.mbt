@@ -85,7 +85,13 @@ fn ClientSession::receive_response(
     return Err(BufferLimitExceeded)
   }
   request.response_buffer = request.response_buffer + bytes
-  match @protocol.decode_control(request.response_buffer) {
+  let context = match request.kind {
+    Publishing =>
+      @protocol.RequestStreamFor(@protocol.RequestOkContext::Publish)
+    Subscribing => @protocol.RequestStream
+  }
+  match
+    @protocol.decode_control_with_context(request.response_buffer, context) {
     @protocol.Incomplete => Ok([])
     @protocol.Invalid(_) => Err(UnexpectedMessage)
     @protocol.Complete(message, consumed) => {
@@ -196,7 +202,8 @@ fn ClientSession::receive_peer_request(
     return Err(BufferLimitExceeded)
   }
   let combined = buffer + bytes
-  match @protocol.decode_control(combined) {
+  match
+    @protocol.decode_control_with_context(combined, @protocol.RequestStream) {
     @protocol.Incomplete => {
       self.inbound_buffers[stream] = combined
       Ok([])

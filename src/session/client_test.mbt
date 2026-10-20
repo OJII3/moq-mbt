@@ -463,17 +463,13 @@ test "ClientSession validates peer request IDs and preserves SETUP trailing cont
   assert_eq(client.receive(@session.StreamData(11, b"\xaf\x00")), Ok([]))
   assert_eq(
     client.receive(
-      @session.StreamData(
-        11,
-        b"\x00\x00" +
-        @protocol.encode_request_ok({ parameters: [], properties: b"", }).unwrap(),
-      ),
+      @session.StreamData(11, b"\x00\x00" + b"\x10\x00\x03\x00\x00\x00"),
     ),
     Ok([
       @session.Notify(@session.HandshakeComplete({ options: [], })),
       @session.Notify(
         @session.ControlMessageReceived(
-          @protocol.RequestOk({ parameters: [], properties: b"", }),
+          @protocol.GoAwayControl({ uri: b"", timeout_ms: 0, request_id: 0, }),
         ),
       ),
     ]),

@@ -313,7 +313,11 @@ fn ClientSession::decode_control_messages(
   self.control_buffer = self.control_buffer + first
   let actions : Array[ClientSessionAction] = []
   while !self.control_buffer.is_empty() {
-    match @protocol.decode_control(self.control_buffer) {
+    match
+      @protocol.decode_control_with_context(
+        self.control_buffer,
+        @protocol.ControlStream,
+      ) {
       @protocol.Incomplete => return Ok(actions)
       @protocol.Invalid(_) => return Err(UnexpectedMessage)
       @protocol.Complete(message, consumed) => {
