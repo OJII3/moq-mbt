@@ -8,11 +8,17 @@ import {
 // Values
 pub fn decode_control(Bytes) -> DecodeResult[ControlMessage]
 
+pub fn decode_control_with_context(Bytes, ControlStreamContext) -> DecodeResult[ControlMessage]
+
 pub fn decode_setup(Bytes) -> DecodeResult[Setup]
 
 pub fn decode_subgroup_header(Bytes) -> DecodeResult[SubgroupHeader]
 
 pub fn decode_vi64(Bytes) -> DecodeResult[UInt64]
+
+pub fn encode_goaway_control(GoAwayControlMessage) -> Result[Bytes, CodecError]
+
+pub fn encode_goaway_request(GoAwayRequestMessage) -> Result[Bytes, CodecError]
 
 pub fn encode_publish(PublishMessage) -> Result[Bytes, CodecError]
 
@@ -21,6 +27,10 @@ pub fn encode_publish_done(PublishDoneMessage) -> Result[Bytes, CodecError]
 pub fn encode_request_error(RequestErrorMessage) -> Result[Bytes, CodecError]
 
 pub fn encode_request_ok(RequestOkMessage) -> Result[Bytes, CodecError]
+
+pub fn encode_request_ok_for(RequestOkMessage, RequestOkContext) -> Result[Bytes, CodecError]
+
+pub fn encode_request_update(RequestUpdateMessage) -> Result[Bytes, CodecError]
 
 pub fn encode_setup(Setup) -> Result[Bytes, CodecError]
 
@@ -50,6 +60,10 @@ pub(all) enum CodecError {
   MalformedControlMessage
   UnsupportedControlMessage(UInt64)
   UnsupportedParameter(UInt64)
+  InvalidParameterScope(UInt64)
+  InvalidParameterValue(UInt64)
+  InvalidRequestOkProperties
+  InvalidGoAwayUri
   InvalidTrackName
   InvalidSubgroup
 } derive(Eq, @debug.Debug)
@@ -62,12 +76,25 @@ pub(all) enum ControlMessage {
   Publish(PublishMessage)
   SubscribeOk(SubscribeOkMessage)
   RequestOk(RequestOkMessage)
+  RequestUpdate(RequestUpdateMessage)
+  GoAwayControl(GoAwayControlMessage)
+  GoAwayRequest(GoAwayRequestMessage)
   RequestError(RequestErrorMessage)
   PublishDone(PublishDoneMessage)
 } derive(Eq, @debug.Debug)
 pub fn ControlMessage::equal(Self, Self) -> Bool
 pub fn ControlMessage::not_equal(Self, Self) -> Bool
 pub fn ControlMessage::to_repr(Self) -> @debug.Repr
+
+pub(all) enum ControlStreamContext {
+  AnyStream
+  ControlStream
+  RequestStream
+  RequestStreamFor(RequestOkContext)
+} derive(Eq, @debug.Debug)
+pub fn ControlStreamContext::equal(Self, Self) -> Bool
+pub fn ControlStreamContext::not_equal(Self, Self) -> Bool
+pub fn ControlStreamContext::to_repr(Self) -> @debug.Repr
 
 pub(all) enum DecodeResult[T] {
   Complete(T, Int)
@@ -77,6 +104,23 @@ pub(all) enum DecodeResult[T] {
 pub fn[T : Eq] DecodeResult::equal(Self[T], Self[T]) -> Bool
 pub fn[T : Eq] DecodeResult::not_equal(Self[T], Self[T]) -> Bool
 pub fn[T : @debug.Debug] DecodeResult::to_repr(Self[T]) -> @debug.Repr
+
+pub(all) struct GoAwayControlMessage {
+  uri : Bytes
+  timeout_ms : UInt64
+  request_id : UInt64
+} derive(Eq, @debug.Debug)
+pub fn GoAwayControlMessage::equal(Self, Self) -> Bool
+pub fn GoAwayControlMessage::not_equal(Self, Self) -> Bool
+pub fn GoAwayControlMessage::to_repr(Self) -> @debug.Repr
+
+pub(all) struct GoAwayRequestMessage {
+  uri : Bytes
+  timeout_ms : UInt64
+} derive(Eq, @debug.Debug)
+pub fn GoAwayRequestMessage::equal(Self, Self) -> Bool
+pub fn GoAwayRequestMessage::not_equal(Self, Self) -> Bool
+pub fn GoAwayRequestMessage::to_repr(Self) -> @debug.Repr
 
 pub(all) struct MessageParameter {
   kind : UInt64
@@ -108,6 +152,7 @@ pub(all) enum ParameterValue {
   Byte(Byte)
   Data(Bytes)
   Location(UInt64, UInt64)
+  Filter(SubscriptionFilter)
 } derive(Eq, @debug.Debug)
 pub fn ParameterValue::equal(Self, Self) -> Bool
 pub fn ParameterValue::not_equal(Self, Self) -> Bool
@@ -143,6 +188,15 @@ pub fn RequestErrorMessage::equal(Self, Self) -> Bool
 pub fn RequestErrorMessage::not_equal(Self, Self) -> Bool
 pub fn RequestErrorMessage::to_repr(Self) -> @debug.Repr
 
+pub(all) enum RequestOkContext {
+  Publish
+  RequestUpdate
+  TrackStatus
+} derive(Eq, @debug.Debug)
+pub fn RequestOkContext::equal(Self, Self) -> Bool
+pub fn RequestOkContext::not_equal(Self, Self) -> Bool
+pub fn RequestOkContext::to_repr(Self) -> @debug.Repr
+
 pub(all) struct RequestOkMessage {
   parameters : Array[MessageParameter]
   properties : Bytes
@@ -150,6 +204,14 @@ pub(all) struct RequestOkMessage {
 pub fn RequestOkMessage::equal(Self, Self) -> Bool
 pub fn RequestOkMessage::not_equal(Self, Self) -> Bool
 pub fn RequestOkMessage::to_repr(Self) -> @debug.Repr
+
+pub(all) struct RequestUpdateMessage {
+  request_id : UInt64
+  parameters : Array[MessageParameter]
+} derive(Eq, @debug.Debug)
+pub fn RequestUpdateMessage::equal(Self, Self) -> Bool
+pub fn RequestUpdateMessage::not_equal(Self, Self) -> Bool
+pub fn RequestUpdateMessage::to_repr(Self) -> @debug.Repr
 
 pub(all) struct Setup {
   options : Array[SetupOption]
@@ -223,6 +285,16 @@ pub(all) struct SubscribeOkMessage {
 pub fn SubscribeOkMessage::equal(Self, Self) -> Bool
 pub fn SubscribeOkMessage::not_equal(Self, Self) -> Bool
 pub fn SubscribeOkMessage::to_repr(Self) -> @debug.Repr
+
+pub(all) enum SubscriptionFilter {
+  NextGroupStart
+  LargestObject
+  AbsoluteStart(UInt64, UInt64)
+  AbsoluteRange(UInt64, UInt64, UInt64)
+} derive(Eq, @debug.Debug)
+pub fn SubscriptionFilter::equal(Self, Self) -> Bool
+pub fn SubscriptionFilter::not_equal(Self, Self) -> Bool
+pub fn SubscriptionFilter::to_repr(Self) -> @debug.Repr
 
 pub(all) struct TrackName {
   namespace_fields : Array[Bytes]
