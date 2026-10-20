@@ -24,6 +24,7 @@ pub struct ClientSession {
   // private fields
 }
 pub fn ClientSession::accept_subscription(Self, Int64) -> Result[Array[ClientSessionAction], ClientSessionError]
+pub fn ClientSession::accept_subscription_update(Self, Int64, UInt64, @protocol.RequestOkMessage) -> Result[Array[ClientSessionAction], ClientSessionError]
 pub fn ClientSession::close(Self, UInt64, Bytes) -> Array[ClientSessionAction]
 pub fn ClientSession::finish_object_stream(Self, Int64) -> Result[Array[ClientSessionAction], ClientSessionError]
 pub fn ClientSession::new(Version, @protocol.Setup) -> Result[Self, @protocol.CodecError]
@@ -32,9 +33,11 @@ pub fn ClientSession::publish_done(Self, Int64, UInt64, Bytes) -> Result[Array[C
 pub fn ClientSession::publish_track(Self, @protocol.TrackName, UInt64) -> Result[(UInt64, Array[ClientSessionAction]), ClientSessionError]
 pub fn ClientSession::receive(Self, ClientSessionEvent) -> Result[Array[ClientSessionAction], ClientSessionError]
 pub fn ClientSession::reject_subscription(Self, Int64, @protocol.RequestErrorMessage) -> Result[Array[ClientSessionAction], ClientSessionError]
+pub fn ClientSession::reject_subscription_update(Self, Int64, UInt64, @protocol.RequestErrorMessage) -> Result[Array[ClientSessionAction], ClientSessionError]
 pub fn ClientSession::send_object(Self, Int64, @protocol.SubgroupFrame) -> Result[Array[ClientSessionAction], ClientSessionError]
 pub fn ClientSession::start(Self) -> Result[Array[ClientSessionAction], ClientSessionError]
 pub fn ClientSession::subscribe_track(Self, @protocol.TrackName) -> Result[(UInt64, Array[ClientSessionAction]), ClientSessionError]
+pub fn ClientSession::update_subscription(Self, UInt64, Array[@protocol.MessageParameter]) -> Result[(UInt64, Array[ClientSessionAction]), ClientSessionError]
 
 pub(all) enum ClientSessionAction {
   OpenStream(ClientStreamDirection, ClientStreamPurpose)
@@ -61,6 +64,7 @@ pub(all) enum ClientSessionError {
   TrackNotPublished
   AliasInUse
   SubscriptionNotAccepted
+  RequestUpdatePending
   UnexpectedMessage
   BufferLimitExceeded
 } derive(Eq, @debug.Debug)
@@ -91,6 +95,10 @@ pub(all) enum ClientSessionNotice {
   SubscriptionRequested(UInt64, Int64, @protocol.TrackName)
   SubscriptionAccepted(UInt64, Int64, UInt64)
   SubscriptionRejected(UInt64, Int64)
+  SubscriptionUpdateRequested(UInt64, UInt64, Int64, Array[@protocol.MessageParameter], Array[@protocol.MessageParameter])
+  SubscriptionUpdateApplied(UInt64, UInt64, Int64, Array[@protocol.MessageParameter])
+  SubscriptionUpdateAccepted(UInt64, UInt64, @protocol.RequestOkMessage)
+  SubscriptionUpdateRejected(UInt64, UInt64, @protocol.RequestErrorMessage)
   SubscriptionEnded(UInt64, Int64)
   ObjectReceived(UInt64, @protocol.SubgroupHeader, Array[@protocol.SubgroupFrame])
   ObjectStreamReset(UInt64, Int64)

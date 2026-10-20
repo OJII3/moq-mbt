@@ -17,6 +17,15 @@ priv struct ClientRequest {
   mut observed_object_streams : UInt64
   mut active_object_streams : UInt64
   mut pending_publish_done : @protocol.PublishDoneMessage?
+  mut parameters : Array[@protocol.MessageParameter]
+  mut pending_local_update : PendingSubscriptionUpdate?
+  mut update_failed : Bool
+}
+
+///|
+priv struct PendingSubscriptionUpdate {
+  request_id : UInt64
+  effective_parameters : Array[@protocol.MessageParameter]
 }
 
 ///|
@@ -24,6 +33,7 @@ priv struct InboundSubscription {
   request_id : UInt64
   publisher_request_id : UInt64
   mut state : SubscriptionState
+  parameters : Array[@protocol.MessageParameter]
 }
 
 ///|
@@ -45,7 +55,7 @@ fn ClientSession::subscription_is_active(
   self : ClientSession,
   stream : Int64,
 ) -> Bool {
-  match self.inbound_subscriptions.get(stream) {
+  let active = match self.inbound_subscriptions.get(stream) {
     Some(inbound) => inbound.state == Active
     None =>
       match self.request_streams.get(stream) {
@@ -55,6 +65,13 @@ fn ClientSession::subscription_is_active(
         }
         None => false
       }
+  }
+  if !active {
+    return false
+  }
+  match self.published_subscriptions.get(stream) {
+    Some(subscription) => subscription_forward(subscription.parameters)
+    None => true
   }
 }
 
@@ -85,10 +102,12 @@ fn ClientSession::receive_response(
     return Err(BufferLimitExceeded)
   }
   request.response_buffer = request.response_buffer + bytes
-  let context = match request.kind {
-    Publishing =>
+  let context = match (request.kind, request.accepted) {
+    (Publishing, false) =>
       @protocol.RequestStreamFor(@protocol.RequestOkContext::Publish)
-    Subscribing => @protocol.RequestStream
+    (Subscribing, true) if request.pending_local_update is Some(_) =>
+      @protocol.RequestStreamFor(@protocol.RequestOkContext::RequestUpdate)
+    _ => @protocol.RequestStream
   }
   match
     @protocol.decode_control_with_context(request.response_buffer, context) {
@@ -98,11 +117,16 @@ fn ClientSession::receive_response(
       let trailing = request.response_buffer[consumed:].to_owned()
       request.response_buffer = b""
       let actions = match (request.kind, message) {
-        (Publishing, @protocol.RequestOk(_)) if !request.accepted => {
+        (Publishing, @protocol.RequestOk(response)) if !request.accepted => {
           request.accepted = true
+          request.parameters = response.parameters
           self.published_subscriptions[stream] = {
             opened_stream_count: 0UL,
             open_stream_count: 0UL,
+            parameters: response.parameters,
+            pending_updates: [],
+            pending_failure: None,
+            request_id,
           }
           [Notify(PublishAccepted(request_id))]
         }
@@ -122,6 +146,35 @@ fn ClientSession::receive_response(
         (Subscribing, @protocol.RequestError(error)) if !request.accepted => {
           request.terminal = true
           [Notify(SubscribeRejected(request_id, error))]
+        }
+        (Publishing, @protocol.RequestUpdate(update)) if request.accepted =>
+          match self.receive_peer_subscription_update(stream, update) {
+            Ok(values) => values
+            Err(error) => return Err(error)
+          }
+        (Subscribing, @protocol.RequestOk(response)) if request.pending_local_update
+          is Some(pending) => {
+          request.parameters = pending.effective_parameters
+          request.pending_local_update = None
+          [
+            Notify(
+              SubscriptionUpdateAccepted(
+                request_id,
+                pending.request_id,
+                response,
+              ),
+            ),
+          ]
+        }
+        (Subscribing, @protocol.RequestError(error)) if request.pending_local_update
+          is Some(pending) => {
+          request.pending_local_update = None
+          request.update_failed = true
+          [
+            Notify(
+              SubscriptionUpdateRejected(request_id, pending.request_id, error),
+            ),
+          ]
         }
         (Subscribing, @protocol.PublishDone(message)) if request.accepted =>
           match self.receive_publish_done(request_id, message) {
@@ -151,10 +204,13 @@ fn ClientSession::receive_publish_done(
   let request = self.requests.get(request_id).unwrap()
   if !request.accepted ||
     request.terminal ||
-    message.stream_count < request.observed_object_streams {
+    message.stream_count < request.observed_object_streams ||
+    (request.update_failed && message.code != 8UL) ||
+    (!request.update_failed && message.code == 8UL) {
     return Err(UnexpectedMessage)
   }
   request.terminal = true
+  request.pending_local_update = None
   request.publish_done_received = true
   request.pending_publish_done = Some(message)
   match self.take_ready_publish_done(request_id) {
@@ -191,9 +247,6 @@ fn ClientSession::receive_peer_request(
   stream : Int64,
   bytes : Bytes,
 ) -> Result[Array[ClientSessionAction], ClientSessionError] {
-  if self.inbound_subscriptions.get(stream) is Some(_) {
-    return Err(UnexpectedMessage)
-  }
   let buffer = match self.inbound_buffers.get(stream) {
     Some(value) => value
     None => b""
@@ -201,46 +254,59 @@ fn ClientSession::receive_peer_request(
   if bytes.length() > 65546 - buffer.length() {
     return Err(BufferLimitExceeded)
   }
-  let combined = buffer + bytes
-  match
-    @protocol.decode_control_with_context(combined, @protocol.RequestStream) {
-    @protocol.Incomplete => {
-      self.inbound_buffers[stream] = combined
-      Ok([])
-    }
-    @protocol.Invalid(_) => Err(UnexpectedMessage)
-    @protocol.Complete(message, consumed) =>
-      match message {
-        @protocol.Subscribe(request) => {
-          if (request.request_id & 1UL) != 1UL {
-            return Err(InvalidRequestId)
-          }
-          if self.peer_request_ids.get(request.request_id) is Some(_) {
-            return Err(DuplicateRequestId)
-          }
-          let publisher_request_id = match self.find_publisher(request.track) {
-            Some(value) => value
-            None => return Err(TrackNotPublished)
-          }
-          if consumed != combined.length() {
-            return Err(UnexpectedMessage)
-          }
-          self.inbound_buffers.remove(stream)
-          self.peer_request_ids[request.request_id] = stream
-          self.inbound_subscriptions[stream] = {
-            request_id: request.request_id,
-            publisher_request_id,
-            state: Pending,
-          }
-          Ok([
-            Notify(
-              SubscriptionRequested(request.request_id, stream, request.track),
-            ),
-          ])
-        }
-        _ => Err(UnexpectedMessage)
+  let mut remaining = buffer + bytes
+  let actions : Array[ClientSessionAction] = []
+  while !remaining.is_empty() {
+    match
+      @protocol.decode_control_with_context(remaining, @protocol.RequestStream) {
+      @protocol.Incomplete => {
+        self.inbound_buffers[stream] = remaining
+        return Ok(actions)
       }
+      @protocol.Invalid(_) => return Err(UnexpectedMessage)
+      @protocol.Complete(message, consumed) => {
+        remaining = remaining[consumed:].to_owned()
+        match (self.inbound_subscriptions.get(stream), message) {
+          (None, @protocol.Subscribe(request)) => {
+            if (request.request_id & 1UL) != 1UL {
+              return Err(InvalidRequestId)
+            }
+            if self.peer_request_ids.get(request.request_id) is Some(_) {
+              return Err(DuplicateRequestId)
+            }
+            let publisher_request_id = match
+              self.find_publisher(request.track) {
+              Some(value) => value
+              None => return Err(TrackNotPublished)
+            }
+            self.peer_request_ids[request.request_id] = stream
+            self.inbound_subscriptions[stream] = {
+              request_id: request.request_id,
+              publisher_request_id,
+              state: Pending,
+              parameters: request.parameters,
+            }
+            actions.push(
+              Notify(
+                SubscriptionRequested(request.request_id, stream, request.track),
+              ),
+            )
+          }
+          (Some(_), @protocol.RequestUpdate(update)) =>
+            match self.receive_peer_subscription_update(stream, update) {
+              Ok(values) =>
+                for action in values {
+                  actions.push(action)
+                }
+              Err(error) => return Err(error)
+            }
+          _ => return Err(UnexpectedMessage)
+        }
+      }
+    }
   }
+  self.inbound_buffers.remove(stream)
+  Ok(actions)
 }
 
 ///|
@@ -287,6 +353,9 @@ pub fn ClientSession::publish_track(
     observed_object_streams: 0UL,
     active_object_streams: 0UL,
     pending_publish_done: None,
+    parameters: [],
+    pending_local_update: None,
+    update_failed: false,
   }
   self.published_requests.push(request_id)
   Ok((request_id, [OpenStream(Bidirectional, Request(request_id))]))
@@ -314,6 +383,9 @@ pub fn ClientSession::subscribe_track(
     observed_object_streams: 0UL,
     active_object_streams: 0UL,
     pending_publish_done: None,
+    parameters: [],
+    pending_local_update: None,
+    update_failed: false,
   }
   Ok((request_id, [OpenStream(Bidirectional, Request(request_id))]))
 }
@@ -345,6 +417,10 @@ pub fn ClientSession::accept_subscription(
   self.published_subscriptions[stream] = {
     opened_stream_count: 0UL,
     open_stream_count: 0UL,
+    parameters: inbound.parameters,
+    pending_updates: [],
+    pending_failure: None,
+    request_id: inbound.request_id,
   }
   Ok([
     Send(stream, response, false),
@@ -390,6 +466,13 @@ fn ClientSession::end_request_stream(
   error_code : UInt64,
 ) -> Array[ClientSessionAction] {
   let actions : Array[ClientSessionAction] = []
+  match self.published_subscriptions.get(stream) {
+    Some(subscription) => {
+      subscription.pending_updates = []
+      subscription.pending_failure = None
+    }
+    None => ()
+  }
   match self.inbound_subscriptions.get(stream) {
     Some(inbound) if inbound.state != Ended => {
       inbound.state = Ended
@@ -439,6 +522,7 @@ fn ClientSession::end_request_stream(
             !request.terminal &&
             !request.publish_done_received {
             request.terminal = true
+            request.pending_local_update = None
             actions.push(AbortSend(stream, error_code))
             let object_streams : Array[Int64] = []
             for (object_stream, state) in self.incoming_object_streams {

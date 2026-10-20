@@ -154,7 +154,7 @@ test "ClientSession shares even request IDs across tracks and routes interleaved
           track: track_b,
           parameters: [],
         }).unwrap(),
-        true,
+        false,
       ),
     ]),
   )
@@ -168,7 +168,7 @@ test "ClientSession shares even request IDs across tracks and routes interleaved
           track: track_a,
           parameters: [],
         }).unwrap(),
-        true,
+        false,
       ),
     ]),
   )
@@ -809,7 +809,7 @@ test "ClientSession stops incoming object streams when a subscription request en
       @session.Send(
         30,
         @protocol.encode_subscribe({ request_id: 0, track, parameters: [], }).unwrap(),
-        true,
+        false,
       ),
     ]),
   )
@@ -885,7 +885,7 @@ test "ClientSession releases a completed subscription alias" {
           track: first_track,
           parameters: [],
         }).unwrap(),
-        true,
+        false,
       ),
     ]),
   )
@@ -927,7 +927,7 @@ test "ClientSession releases a completed subscription alias" {
           track: second_track,
           parameters: [],
         }).unwrap(),
-        true,
+        false,
       ),
     ]),
   )

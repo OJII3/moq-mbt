@@ -33,6 +33,21 @@ pub(all) enum ClientSessionNotice {
   SubscriptionRequested(UInt64, Int64, @protocol.TrackName)
   SubscriptionAccepted(UInt64, Int64, UInt64)
   SubscriptionRejected(UInt64, Int64)
+  SubscriptionUpdateRequested(
+    UInt64,
+    UInt64,
+    Int64,
+    Array[@protocol.MessageParameter],
+    Array[@protocol.MessageParameter]
+  )
+  SubscriptionUpdateApplied(
+    UInt64,
+    UInt64,
+    Int64,
+    Array[@protocol.MessageParameter]
+  )
+  SubscriptionUpdateAccepted(UInt64, UInt64, @protocol.RequestOkMessage)
+  SubscriptionUpdateRejected(UInt64, UInt64, @protocol.RequestErrorMessage)
   SubscriptionEnded(UInt64, Int64)
   ObjectReceived(
     UInt64,
@@ -70,6 +85,7 @@ pub(all) enum ClientSessionError {
   TrackNotPublished
   AliasInUse
   SubscriptionNotAccepted
+  RequestUpdatePending
   UnexpectedMessage
   BufferLimitExceeded
 } derive(Debug, Eq)
@@ -189,7 +205,17 @@ pub fn ClientSession::receive(
       if self.outbound_control_stream == Some(stream) {
         Err(Handshake(self.handshake.control_closed()))
       } else {
-        Ok(self.end_request_stream(stream, code))
+        match self.outgoing_object_streams.get(stream) {
+          Some(outgoing) => {
+            let subscription_stream = outgoing.subscription_stream
+            self.close_outgoing_object_stream(stream)
+            Ok(
+              [AbortSend(stream, code), Notify(SendFinished(stream, true))] +
+              self.finish_failed_subscription(subscription_stream),
+            )
+          }
+          None => Ok(self.end_request_stream(stream, code))
+        }
       }
     SendComplete(stream, canceled) => self.send_complete(stream, canceled)
   }
@@ -374,7 +400,7 @@ fn ClientSession::stream_opened(
         Ok(value) => value
         Err(error) => return Err(Encoding(error))
       }
-      Ok([Send(stream, bytes, request.kind == Subscribing)])
+      Ok([Send(stream, bytes, false)])
     }
     Object(token) => {
       let pending = match self.pending_object_streams.get(token) {
@@ -552,20 +578,28 @@ fn ClientSession::send_complete(
   canceled : Bool,
 ) -> Result[Array[ClientSessionAction], ClientSessionError] {
   match self.outgoing_object_streams.get(stream) {
-    Some(_) if canceled => {
+    Some(outgoing) if canceled => {
+      let subscription_stream = outgoing.subscription_stream
       self.close_outgoing_object_stream(stream)
-      Ok([Notify(SendFinished(stream, true))])
+      Ok(
+        [Notify(SendFinished(stream, true))] +
+        self.finish_failed_subscription(subscription_stream),
+      )
     }
     Some(outgoing) => {
       if outgoing.pending_send_count > 0UL {
         outgoing.pending_send_count = outgoing.pending_send_count - 1UL
       }
       if outgoing.finishing && outgoing.pending_send_count == 0UL {
+        let subscription_stream = outgoing.subscription_stream
         self.close_outgoing_object_stream(stream)
-        Ok([
-          Notify(SendFinished(stream, false)),
-          Notify(ObjectStreamFinished(stream)),
-        ])
+        Ok(
+          [
+            Notify(SendFinished(stream, false)),
+            Notify(ObjectStreamFinished(stream)),
+          ] +
+          self.finish_failed_subscription(subscription_stream),
+        )
       } else {
         Ok([Notify(SendFinished(stream, false))])
       }
