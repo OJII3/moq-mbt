@@ -273,7 +273,13 @@ fn ClientSession::stop_subscription_object_sends(
   }
   let actions : Array[ClientSessionAction] = []
   for stream in streams {
-    actions.push(AbortSend(stream, error_code))
+    match self.outgoing_object_streams.get(stream) {
+      Some(outgoing) if !outgoing.abort_sent => {
+        outgoing.abort_sent = true
+        actions.push(AbortSend(stream, error_code))
+      }
+      _ => ()
+    }
   }
   actions
 }

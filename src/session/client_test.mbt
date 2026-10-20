@@ -787,7 +787,7 @@ test "ClientSession ends inbound subscriptions when request streams terminate" {
   assert_eq(
     publisher.receive(@session.SendStopped(42, 5UL)),
     Ok([
-      @session.AbortSend(42, 5UL),
+      @session.StopReceiving(42, 5UL),
       @session.Notify(@session.SubscriptionEnded(3, 42)),
     ]),
   )
@@ -848,10 +848,10 @@ test "ClientSession stops incoming object streams when a subscription request en
     Ok([]),
   )
   assert_eq(
-    subscriber.receive(@session.StreamFinished(30)),
+    subscriber.receive(@session.StreamReset(30, 1UL)),
     Ok([
-      @session.AbortSend(30, 0UL),
-      @session.StopReceiving(60, 0UL),
+      @session.AbortSend(30, 1UL),
+      @session.StopReceiving(60, 1UL),
       @session.Notify(@session.SubscriptionEnded(0, 30)),
     ]),
   )
@@ -862,7 +862,7 @@ test "ClientSession stops incoming object streams when a subscription request en
         @protocol.encode_subgroup_header(client_subgroup_header(10, 8)),
       ),
     ),
-    Ok([@session.StopReceiving(62, 0UL)]),
+    Ok([@session.StopReceiving(62, 1UL)]),
   )
   assert_eq(subscriber.receive(@session.StreamData(60, b"ignored")), Ok([]))
   assert_eq(subscriber.receive(@session.StreamFinished(60)), Ok([]))
@@ -915,6 +915,7 @@ test "ClientSession releases a completed subscription alias" {
       ),
     ]),
   )
+  assert_eq(subscriber.receive(@session.StreamFinished(30)), Ok([]))
 
   assert_eq(subscriber.subscribe_track(second_track).unwrap().0, 2UL)
   assert_eq(
@@ -989,7 +990,7 @@ test "ClientSession ends local PUBLISH subscriptions on STOP_SENDING" {
   assert_eq(
     publisher.receive(@session.SendStopped(20, 4UL)),
     Ok([
-      @session.AbortSend(20, 4UL),
+      @session.StopReceiving(20, 4UL),
       @session.AbortSend(50, 4UL),
       @session.Notify(@session.SubscriptionEnded(0, 20)),
     ]),

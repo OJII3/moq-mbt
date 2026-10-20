@@ -13,6 +13,11 @@ priv struct ClientRequest {
   mut response_buffer : Bytes
   mut accepted : Bool
   mut terminal : Bool
+  mut cancelled : Bool
+  mut send_closed : Bool
+  mut receive_closed : Bool
+  mut end_notified : Bool
+  mut cancel_error_code : UInt64?
   mut publish_done_received : Bool
   mut observed_object_streams : UInt64
   mut active_object_streams : UInt64
@@ -34,6 +39,9 @@ priv struct InboundSubscription {
   publisher_request_id : UInt64
   mut state : SubscriptionState
   parameters : Array[@protocol.MessageParameter]
+  mut cancelled : Bool
+  mut send_closed : Bool
+  mut receive_closed : Bool
 }
 
 ///|
@@ -95,6 +103,15 @@ fn ClientSession::receive_response(
   bytes : Bytes,
 ) -> Result[Array[ClientSessionAction], ClientSessionError] {
   let request = self.requests.get(request_id).unwrap()
+  if request.cancelled {
+    if request.kind == Subscribing && request.track_alias is None {
+      self.remember_cancelled_subscribe_alias(request_id, request, bytes)
+    }
+    return Ok([])
+  }
+  if request.receive_closed {
+    return Ok([])
+  }
   if request.terminal {
     return Err(UnexpectedMessage)
   }
@@ -196,6 +213,36 @@ fn ClientSession::receive_response(
 }
 
 ///|
+fn ClientSession::remember_cancelled_subscribe_alias(
+  self : ClientSession,
+  request_id : UInt64,
+  request : ClientRequest,
+  bytes : Bytes,
+) -> Unit {
+  if bytes.length() > 65546 - request.response_buffer.length() {
+    request.response_buffer = b""
+    return
+  }
+  request.response_buffer = request.response_buffer + bytes
+  match
+    @protocol.decode_control_with_context(
+      request.response_buffer,
+      @protocol.RequestStream,
+    ) {
+    @protocol.Incomplete => ()
+    @protocol.Invalid(_) => request.response_buffer = b""
+    @protocol.Complete(@protocol.SubscribeOk(response), _) => {
+      if self.aliases.get(response.track_alias) is None {
+        self.aliases[response.track_alias] = request_id
+        request.track_alias = Some(response.track_alias)
+      }
+      request.response_buffer = b""
+    }
+    @protocol.Complete(_, _) => request.response_buffer = b""
+  }
+}
+
+///|
 fn ClientSession::receive_publish_done(
   self : ClientSession,
   request_id : UInt64,
@@ -247,6 +294,11 @@ fn ClientSession::receive_peer_request(
   stream : Int64,
   bytes : Bytes,
 ) -> Result[Array[ClientSessionAction], ClientSessionError] {
+  match self.inbound_subscriptions.get(stream) {
+    Some(inbound) if inbound.cancelled || inbound.receive_closed =>
+      return Ok([])
+    _ => ()
+  }
   let buffer = match self.inbound_buffers.get(stream) {
     Some(value) => value
     None => b""
@@ -285,6 +337,9 @@ fn ClientSession::receive_peer_request(
               publisher_request_id,
               state: Pending,
               parameters: request.parameters,
+              cancelled: false,
+              send_closed: false,
+              receive_closed: false,
             }
             actions.push(
               Notify(
@@ -316,7 +371,7 @@ fn ClientSession::find_publisher(
 ) -> UInt64? {
   for request_id in self.published_requests {
     let request = self.requests.get(request_id).unwrap()
-    if request.track == track && request.accepted {
+    if request.track == track && request.accepted && !request.terminal {
       return Some(request_id)
     }
   }
@@ -336,7 +391,8 @@ pub fn ClientSession::publish_track(
   }
   for request_id in self.published_requests {
     let request = self.requests.get(request_id).unwrap()
-    if request.track == track || request.track_alias == Some(track_alias) {
+    if !request.terminal &&
+      (request.track == track || request.track_alias == Some(track_alias)) {
       return Err(AliasInUse)
     }
   }
@@ -349,6 +405,11 @@ pub fn ClientSession::publish_track(
     response_buffer: b"",
     accepted: false,
     terminal: false,
+    cancelled: false,
+    send_closed: false,
+    receive_closed: false,
+    end_notified: false,
+    cancel_error_code: None,
     publish_done_received: false,
     observed_object_streams: 0UL,
     active_object_streams: 0UL,
@@ -379,6 +440,11 @@ pub fn ClientSession::subscribe_track(
     response_buffer: b"",
     accepted: false,
     terminal: false,
+    cancelled: false,
+    send_closed: false,
+    receive_closed: false,
+    end_notified: false,
+    cancel_error_code: None,
     publish_done_received: false,
     observed_object_streams: 0UL,
     active_object_streams: 0UL,
@@ -460,89 +526,233 @@ pub fn ClientSession::reject_subscription(
 }
 
 ///|
+/// Cancel a local PUBLISH/SUBSCRIBE or a peer SUBSCRIBE by Request ID.
+/// Cancellation uses the request stream's transport directions, not a control
+/// message. Repeating cancellation after termination is a no-op.
+pub fn ClientSession::cancel_request(
+  self : ClientSession,
+  request_id : UInt64,
+) -> Result[Array[ClientSessionAction], ClientSessionError] {
+  match self.requests.get(request_id) {
+    Some(request) => {
+      let pending_failure = match request.stream {
+        Some(stream) => self.has_pending_publish_done(stream)
+        None => false
+      }
+      if request.cancelled || (request.terminal && !pending_failure) {
+        return Ok([])
+      }
+      match request.stream {
+        Some(stream) => Ok(self.end_request_stream(stream, 1UL, false, false))
+        None => {
+          request.terminal = true
+          request.cancelled = true
+          request.cancel_error_code = Some(1UL)
+          request.response_buffer = b""
+          request.pending_local_update = None
+          Ok([])
+        }
+      }
+    }
+    None =>
+      match self.peer_request_ids.get(request_id) {
+        Some(stream) => Ok(self.end_request_stream(stream, 1UL, false, false))
+        None => Err(UnknownRequest)
+      }
+  }
+}
+
+///|
 fn ClientSession::end_request_stream(
   self : ClientSession,
   stream : Int64,
   error_code : UInt64,
+  send_stopped : Bool,
+  receive_ended : Bool,
 ) -> Array[ClientSessionAction] {
+  match self.inbound_subscriptions.get(stream) {
+    Some(_) =>
+      return self.end_inbound_subscription(
+        stream, error_code, send_stopped, receive_ended,
+      )
+    None => ()
+  }
+  let request_id = match self.request_streams.get(stream) {
+    Some(value) => value
+    None => return []
+  }
+  let request = self.requests.get(request_id).unwrap()
+  if send_stopped {
+    request.send_closed = true
+  }
+  if receive_ended {
+    request.receive_closed = true
+  }
+  if request.cancelled ||
+    (request.terminal && !self.has_pending_publish_done(stream)) {
+    return []
+  }
+  request.terminal = true
+  request.cancelled = true
+  request.cancel_error_code = Some(error_code)
+  if request.kind != Subscribing || request.accepted || receive_ended {
+    request.response_buffer = b""
+  }
+  request.pending_local_update = None
+  request.pending_publish_done = None
+
   let actions : Array[ClientSessionAction] = []
-  match self.published_subscriptions.get(stream) {
+  if !request.send_closed {
+    request.send_closed = true
+    actions.push(AbortSend(stream, error_code))
+  }
+  if !request.receive_closed {
+    request.receive_closed = true
+    actions.push(StopReceiving(stream, error_code))
+  }
+  for action in self.cancel_outgoing_object_streams(stream, error_code) {
+    actions.push(action)
+  }
+  if request.kind == Subscribing {
+    for action in self.cancel_incoming_object_streams(request_id, error_code) {
+      actions.push(action)
+    }
+  }
+  if request.kind == Publishing {
+    let child_streams : Array[Int64] = []
+    for (child_stream, inbound) in self.inbound_subscriptions {
+      if inbound.publisher_request_id == request_id &&
+        (inbound.state != Ended || self.has_pending_publish_done(child_stream)) {
+        child_streams.push(child_stream)
+      }
+    }
+    for child_stream in child_streams {
+      for
+        action in self.end_inbound_subscription(
+          child_stream, error_code, false, false,
+        ) {
+        actions.push(action)
+      }
+    }
+  }
+  if !request.end_notified {
+    request.end_notified = true
+    actions.push(Notify(SubscriptionEnded(request_id, stream)))
+  }
+  actions
+}
+
+///|
+fn ClientSession::end_inbound_subscription(
+  self : ClientSession,
+  stream : Int64,
+  error_code : UInt64,
+  send_stopped : Bool,
+  receive_ended : Bool,
+) -> Array[ClientSessionAction] {
+  let inbound = match self.inbound_subscriptions.get(stream) {
+    Some(value) => value
+    None => return []
+  }
+  if send_stopped {
+    inbound.send_closed = true
+  }
+  if receive_ended {
+    inbound.receive_closed = true
+  }
+  if inbound.cancelled ||
+    (inbound.state == Ended && !self.has_pending_publish_done(stream)) {
+    return []
+  }
+  inbound.state = Ended
+  inbound.cancelled = true
+  self.inbound_buffers.remove(stream)
+  let actions : Array[ClientSessionAction] = []
+  if !inbound.send_closed {
+    inbound.send_closed = true
+    actions.push(AbortSend(stream, error_code))
+  }
+  if !inbound.receive_closed {
+    inbound.receive_closed = true
+    actions.push(StopReceiving(stream, error_code))
+  }
+  for action in self.cancel_outgoing_object_streams(stream, error_code) {
+    actions.push(action)
+  }
+  actions.push(Notify(SubscriptionEnded(inbound.request_id, stream)))
+  actions
+}
+
+///|
+fn ClientSession::cancel_outgoing_object_streams(
+  self : ClientSession,
+  subscription_stream : Int64,
+  error_code : UInt64,
+) -> Array[ClientSessionAction] {
+  match self.published_subscriptions.get(subscription_stream) {
     Some(subscription) => {
       subscription.pending_updates = []
       subscription.pending_failure = None
     }
     None => ()
   }
-  match self.inbound_subscriptions.get(stream) {
-    Some(inbound) if inbound.state != Ended => {
-      inbound.state = Ended
-      self.inbound_buffers.remove(stream)
-      actions.push(AbortSend(stream, error_code))
-      for (_, pending) in self.pending_object_streams {
-        if pending.subscription_stream == stream {
-          pending.cancelled_error_code = Some(error_code)
-        }
-      }
-      let object_streams : Array[Int64] = []
-      for (object_stream, outgoing) in self.outgoing_object_streams {
-        if outgoing.subscription_stream == stream {
-          object_streams.push(object_stream)
-        }
-      }
-      for object_stream in object_streams {
-        self.close_outgoing_object_stream(object_stream)
+  for (_, pending) in self.pending_object_streams {
+    if pending.subscription_stream == subscription_stream {
+      pending.cancelled_error_code = Some(error_code)
+    }
+  }
+  let object_streams : Array[Int64] = []
+  for (object_stream, outgoing) in self.outgoing_object_streams {
+    if outgoing.subscription_stream == subscription_stream {
+      object_streams.push(object_stream)
+    }
+  }
+  let actions : Array[ClientSessionAction] = []
+  for object_stream in object_streams {
+    match self.outgoing_object_streams.get(object_stream) {
+      Some(outgoing) if !outgoing.abort_sent => {
+        outgoing.abort_sent = true
         actions.push(AbortSend(object_stream, error_code))
       }
-      actions.push(Notify(SubscriptionEnded(inbound.request_id, stream)))
+      _ => ()
     }
-    _ =>
-      match self.request_streams.get(stream) {
-        Some(request_id) => {
-          let request = self.requests.get(request_id).unwrap()
-          if request.kind == Publishing && !request.terminal {
-            request.terminal = true
-            actions.push(AbortSend(stream, error_code))
-            for (_, pending) in self.pending_object_streams {
-              if pending.subscription_stream == stream {
-                pending.cancelled_error_code = Some(error_code)
-              }
-            }
-            let object_streams : Array[Int64] = []
-            for (object_stream, outgoing) in self.outgoing_object_streams {
-              if outgoing.subscription_stream == stream {
-                object_streams.push(object_stream)
-              }
-            }
-            for object_stream in object_streams {
-              self.close_outgoing_object_stream(object_stream)
-              actions.push(AbortSend(object_stream, error_code))
-            }
-            actions.push(Notify(SubscriptionEnded(request_id, stream)))
-          } else if request.kind == Subscribing &&
-            !request.terminal &&
-            !request.publish_done_received {
-            request.terminal = true
-            request.pending_local_update = None
-            actions.push(AbortSend(stream, error_code))
-            let object_streams : Array[Int64] = []
-            for (object_stream, state) in self.incoming_object_streams {
-              if state.request_id == Some(request_id) {
-                object_streams.push(object_stream)
-              }
-            }
-            for object_stream in object_streams {
-              self.incoming_object_streams.remove(object_stream)
-              self.ignored_object_streams[object_stream] = {
-                request_id,
-                counted_active: true,
-              }
-              actions.push(StopReceiving(object_stream, error_code))
-            }
-            actions.push(Notify(SubscriptionEnded(request_id, stream)))
-          }
-        }
-        None => ()
-      }
+    self.close_outgoing_object_stream(object_stream)
+  }
+  self.published_subscriptions.remove(subscription_stream)
+  actions
+}
+
+///|
+fn ClientSession::has_pending_publish_done(
+  self : ClientSession,
+  subscription_stream : Int64,
+) -> Bool {
+  match self.published_subscriptions.get(subscription_stream) {
+    Some(subscription) => subscription.pending_failure is Some(_)
+    None => false
+  }
+}
+
+///|
+fn ClientSession::cancel_incoming_object_streams(
+  self : ClientSession,
+  request_id : UInt64,
+  error_code : UInt64,
+) -> Array[ClientSessionAction] {
+  let object_streams : Array[Int64] = []
+  for (object_stream, state) in self.incoming_object_streams {
+    if state.request_id == Some(request_id) {
+      object_streams.push(object_stream)
+    }
+  }
+  let actions : Array[ClientSessionAction] = []
+  for object_stream in object_streams {
+    self.incoming_object_streams.remove(object_stream)
+    self.ignored_object_streams[object_stream] = {
+      request_id,
+      counted_active: true,
+    }
+    actions.push(StopReceiving(object_stream, error_code))
   }
   actions
 }

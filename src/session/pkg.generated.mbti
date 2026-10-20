@@ -25,6 +25,7 @@ pub struct ClientSession {
 }
 pub fn ClientSession::accept_subscription(Self, Int64) -> Result[Array[ClientSessionAction], ClientSessionError]
 pub fn ClientSession::accept_subscription_update(Self, Int64, UInt64, @protocol.RequestOkMessage) -> Result[Array[ClientSessionAction], ClientSessionError]
+pub fn ClientSession::cancel_request(Self, UInt64) -> Result[Array[ClientSessionAction], ClientSessionError]
 pub fn ClientSession::close(Self, UInt64, Bytes) -> Array[ClientSessionAction]
 pub fn ClientSession::finish_object_stream(Self, Int64) -> Result[Array[ClientSessionAction], ClientSessionError]
 pub fn ClientSession::new(Version, @protocol.Setup) -> Result[Self, @protocol.CodecError]

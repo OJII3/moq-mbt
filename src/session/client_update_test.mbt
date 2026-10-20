@@ -255,6 +255,98 @@ test "rejected update terminates its subscription after active object streams st
 }
 
 ///|
+test "cancellation supersedes a pending UPDATE_FAILED PUBLISH_DONE without aborting twice" {
+  let publisher = publisher_started()
+  let token = match
+    publisher.open_object_stream(40, publisher_header(1, false)).unwrap() {
+    [@session.OpenStream(@session.Unidirectional, @session.Object(token))] =>
+      token
+    _ => fail("expected object stream")
+  }
+  ignore(
+    publisher
+    .receive(@session.StreamOpened(@session.Object(token), 50))
+    .unwrap(),
+  )
+  ignore(
+    publisher
+    .receive(@session.StreamData(40, request_update_bytes(3, [])))
+    .unwrap(),
+  )
+  let error : @protocol.RequestErrorMessage = {
+    code: 1,
+    retry_interval: 0,
+    reason: b"unsupported",
+    redirect: b"",
+  }
+  assert_eq(
+    publisher.reject_subscription_update(40, 3, error),
+    Ok([
+      @session.Send(40, @protocol.encode_request_error(error).unwrap(), false),
+      @session.AbortSend(50, 0),
+    ]),
+  )
+  assert_eq(
+    publisher.cancel_request(1UL),
+    Ok([
+      @session.AbortSend(40, 1UL),
+      @session.StopReceiving(40, 1UL),
+      @session.Notify(@session.SubscriptionEnded(1UL, 40)),
+    ]),
+  )
+  assert_eq(
+    publisher.receive(@session.SendComplete(50, true)),
+    Ok([@session.Notify(@session.SendFinished(50, true))]),
+  )
+}
+
+///|
+test "cancellation can supersede a pending UPDATE_FAILED PUBLISH_DONE on local PUBLISH" {
+  let publisher = publisher_announced()
+  let token = match
+    publisher.open_object_stream(20, publisher_header(1, false)).unwrap() {
+    [@session.OpenStream(@session.Unidirectional, @session.Object(token))] =>
+      token
+    _ => fail("expected object stream")
+  }
+  ignore(
+    publisher
+    .receive(@session.StreamOpened(@session.Object(token), 50))
+    .unwrap(),
+  )
+  assert_eq(
+    publisher.receive(@session.StreamData(20, request_update_bytes(3, []))),
+    Ok([@session.Notify(@session.SubscriptionUpdateRequested(0, 3, 20, [], []))]),
+  )
+  let error : @protocol.RequestErrorMessage = {
+    code: 1,
+    retry_interval: 0,
+    reason: b"unsupported",
+    redirect: b"",
+  }
+  assert_eq(
+    publisher.reject_subscription_update(20, 3, error),
+    Ok([
+      @session.Send(20, @protocol.encode_request_error(error).unwrap(), false),
+      @session.AbortSend(50, 0),
+    ]),
+  )
+  assert_eq(
+    publisher.cancel_request(0UL),
+    Ok([
+      @session.AbortSend(20, 1UL),
+      @session.StopReceiving(20, 1UL),
+      @session.Notify(@session.SubscriptionEnded(0UL, 20)),
+    ]),
+  )
+  assert_eq(publisher.cancel_request(0UL), Ok([]))
+  assert_eq(
+    publisher.receive(@session.SendComplete(50, true)),
+    Ok([@session.Notify(@session.SendFinished(50, true))]),
+  )
+}
+
+///|
 test "failed local update requires UPDATE_FAILED PUBLISH_DONE" {
   let subscriber = subscriber_started()
   let (update_id, _) = subscriber
@@ -287,7 +379,7 @@ test "failed local update requires UPDATE_FAILED PUBLISH_DONE" {
 }
 
 ///|
-test "local PUBLISH receives peer updates and cancellation prevents late updates" {
+test "request FIN closes the update direction without ending the local PUBLISH subscription" {
   let publisher = publisher_announced()
   let forward_off = [forward_parameter(0)]
   assert_eq(
@@ -315,17 +407,15 @@ test "local PUBLISH receives peer updates and cancellation prevents late updates
     ]),
   )
   let inbound = publisher_started()
+  assert_eq(inbound.receive(@session.StreamFinished(40)), Ok([]))
   assert_eq(
-    inbound.receive(@session.StreamFinished(40)),
-    Ok([
-      @session.AbortSend(40, 0),
-      @session.Notify(@session.SubscriptionEnded(1, 40)),
-    ]),
+    inbound.open_object_stream(40, publisher_header(1, false)),
+    Ok([@session.OpenStream(@session.Unidirectional, @session.Object(0))]),
   )
   assert_eq(
     inbound.receive(
       @session.StreamData(40, request_update_bytes(3, forward_off)),
     ),
-    Err(@session.SubscriptionNotAccepted),
+    Ok([]),
   )
 }

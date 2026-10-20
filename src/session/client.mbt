@@ -214,7 +214,7 @@ pub fn ClientSession::receive(
               self.finish_failed_subscription(subscription_stream),
             )
           }
-          None => Ok(self.end_request_stream(stream, code))
+          None => Ok(self.end_request_stream(stream, code, true, false))
         }
       }
     SendComplete(stream, canceled) => self.send_complete(stream, canceled)
@@ -380,6 +380,28 @@ fn ClientSession::stream_opened(
       }
       request.stream = Some(stream)
       self.request_streams[stream] = request_id
+      if request.terminal {
+        let actions : Array[ClientSessionAction] = []
+        let error_code = match request.cancel_error_code {
+          Some(value) => value
+          None => 1UL
+        }
+        if request.cancelled {
+          if !request.send_closed {
+            request.send_closed = true
+            actions.push(AbortSend(stream, error_code))
+          }
+          if !request.receive_closed {
+            request.receive_closed = true
+            actions.push(StopReceiving(stream, error_code))
+          }
+          if !request.end_notified {
+            request.end_notified = true
+            actions.push(Notify(SubscriptionEnded(request_id, stream)))
+          }
+        }
+        return Ok(actions)
+      }
       let encoded = match request.kind {
         Publishing =>
           @protocol.encode_publish({
@@ -416,7 +438,7 @@ fn ClientSession::stream_opened(
       }
       if !self.subscription_is_active(pending.subscription_stream) {
         self.pending_object_streams.remove(token)
-        return Ok([AbortSend(stream, 0UL)])
+        return Ok([AbortSend(stream, 1UL)])
       }
       let subscription = match
         self.published_subscriptions.get(pending.subscription_stream) {
@@ -434,6 +456,7 @@ fn ClientSession::stream_opened(
         header: pending.header,
         previous_object_id: None,
         finishing: false,
+        abort_sent: false,
         pending_send_count: 1UL,
       }
       Ok([Send(stream, @protocol.encode_subgroup_header(pending.header), false)])
@@ -499,7 +522,20 @@ fn ClientSession::stream_finished(
     None => {
       if self.inbound_subscriptions.get(stream) is Some(_) ||
         self.request_streams.get(stream) is Some(_) {
-        return Ok(self.end_request_stream(stream, 0UL))
+        match self.inbound_subscriptions.get(stream) {
+          Some(inbound) => inbound.receive_closed = true
+          None =>
+            match self.request_streams.get(stream) {
+              Some(request_id) => {
+                let request = self.requests.get(request_id).unwrap()
+                request.receive_closed = true
+                request.response_buffer = b""
+              }
+              None => ()
+            }
+        }
+        self.inbound_buffers.remove(stream)
+        return Ok([])
       }
       if self.inbound_unclassified_buffers.get(stream) is Some(_) {
         self.inbound_unclassified_buffers.remove(stream)
@@ -560,7 +596,7 @@ fn ClientSession::stream_reset(
     None => {
       if self.inbound_subscriptions.get(stream) is Some(_) ||
         self.request_streams.get(stream) is Some(_) {
-        return Ok(self.end_request_stream(stream, error_code))
+        return Ok(self.end_request_stream(stream, error_code, false, true))
       }
       self.inbound_buffers.remove(stream)
       self.incoming_object_streams.remove(stream)
@@ -604,7 +640,12 @@ fn ClientSession::send_complete(
         Ok([Notify(SendFinished(stream, false))])
       }
     }
-    None => Ok([Notify(SendFinished(stream, canceled))])
+    None =>
+      match self.request_streams.get(stream) {
+        Some(request_id) if self.requests.get(request_id).unwrap().cancelled =>
+          Ok([])
+        _ => Ok([Notify(SendFinished(stream, canceled))])
+      }
   }
 }
 
