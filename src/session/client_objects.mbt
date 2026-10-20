@@ -21,6 +21,7 @@ priv struct OutgoingObjectStream {
   header : @protocol.SubgroupHeader
   mut previous_object_id : UInt64?
   mut finishing : Bool
+  mut abort_sent : Bool
   mut pending_send_count : UInt64
 }
 
@@ -118,12 +119,14 @@ fn ClientSession::receive_subgroup(
           }
           let request = self.requests.get(request_id).unwrap()
           if request.terminal && !request.publish_done_received {
+            // Cancellation retains the alias so delayed Object streams can be
+            // attributed to this request and discarded.
             self.incoming_object_streams.remove(stream)
             self.ignored_object_streams[stream] = {
               request_id,
               counted_active: false,
             }
-            return Ok([StopReceiving(stream, 0UL)])
+            return Ok([StopReceiving(stream, 1UL)])
           }
           match request.pending_publish_done {
             Some(done) if request.observed_object_streams >= done.stream_count =>
