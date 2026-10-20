@@ -1,0 +1,306 @@
+///|
+fn merge_subscription_parameters(
+  current : Array[@protocol.MessageParameter],
+  updates : Array[@protocol.MessageParameter],
+) -> Array[@protocol.MessageParameter] {
+  let merged : Array[@protocol.MessageParameter] = []
+  let mut current_index = 0
+  let mut update_index = 0
+  while current_index < current.length() || update_index < updates.length() {
+    if current_index == current.length() {
+      merged.push(updates[update_index])
+      update_index = update_index + 1
+    } else if update_index == updates.length() {
+      merged.push(current[current_index])
+      current_index = current_index + 1
+    } else {
+      let current_kind = current[current_index].kind
+      let update_kind = updates[update_index].kind
+      if current_kind < update_kind {
+        merged.push(current[current_index])
+        current_index = current_index + 1
+      } else if update_kind < current_kind {
+        merged.push(updates[update_index])
+        update_index = update_index + 1
+      } else {
+        while current_index < current.length() &&
+              current[current_index].kind == current_kind {
+          current_index = current_index + 1
+        }
+        while update_index < updates.length() &&
+              updates[update_index].kind == update_kind {
+          merged.push(updates[update_index])
+          update_index = update_index + 1
+        }
+      }
+    }
+  }
+  merged
+}
+
+///|
+fn subscription_forward(parameters : Array[@protocol.MessageParameter]) -> Bool {
+  for parameter in parameters {
+    if parameter.kind == 0x10 {
+      match parameter.value {
+        @protocol.Byte(value) => return value != 0
+        _ => ()
+      }
+    }
+  }
+  true
+}
+
+///|
+fn ClientSession::receive_peer_subscription_update(
+  self : ClientSession,
+  stream : Int64,
+  message : @protocol.RequestUpdateMessage,
+) -> Result[Array[ClientSessionAction], ClientSessionError] {
+  if (message.request_id & 1UL) != 1UL {
+    return Err(InvalidRequestId)
+  }
+  if self.peer_request_ids.get(message.request_id) is Some(_) {
+    return Err(DuplicateRequestId)
+  }
+  let request_id = match self.inbound_subscriptions.get(stream) {
+    Some(inbound) if inbound.state == Active => inbound.request_id
+    Some(_) => return Err(SubscriptionNotAccepted)
+    None =>
+      match self.request_streams.get(stream) {
+        Some(request_id) => {
+          let request = self.requests.get(request_id).unwrap()
+          if request.kind != Publishing || !request.accepted || request.terminal {
+            return Err(SubscriptionNotAccepted)
+          }
+          request_id
+        }
+        None => return Err(UnknownStream)
+      }
+  }
+  let subscription = match self.published_subscriptions.get(stream) {
+    Some(value) => value
+    None => return Err(SubscriptionNotAccepted)
+  }
+  let previous = if subscription.pending_updates.is_empty() {
+    subscription.parameters
+  } else {
+    subscription.pending_updates[subscription.pending_updates.length() - 1].effective_parameters
+  }
+  let effective_parameters = merge_subscription_parameters(
+    previous,
+    message.parameters,
+  )
+  subscription.pending_updates.push({
+    request_id: message.request_id,
+    effective_parameters,
+  })
+  self.peer_request_ids[message.request_id] = stream
+  Ok([
+    Notify(
+      SubscriptionUpdateRequested(
+        request_id,
+        message.request_id,
+        stream,
+        message.parameters,
+        effective_parameters,
+      ),
+    ),
+  ])
+}
+
+///|
+/// Send REQUEST_UPDATE on an accepted local SUBSCRIBE. Only one outgoing update
+/// can be pending because its response carries no Request ID.
+pub fn ClientSession::update_subscription(
+  self : ClientSession,
+  request_id : UInt64,
+  parameters : Array[@protocol.MessageParameter],
+) -> Result[(UInt64, Array[ClientSessionAction]), ClientSessionError] {
+  let request = match self.requests.get(request_id) {
+    Some(value) => value
+    None => return Err(UnknownRequest)
+  }
+  if request.kind != Subscribing ||
+    !request.accepted ||
+    request.terminal ||
+    request.update_failed {
+    return Err(SubscriptionNotAccepted)
+  }
+  if request.pending_local_update is Some(_) {
+    return Err(RequestUpdatePending)
+  }
+  let stream = match request.stream {
+    Some(value) => value
+    None => return Err(SubscriptionNotAccepted)
+  }
+  let update_id = self.allocate_request_id()
+  let bytes = match
+    @protocol.encode_request_update({ request_id: update_id, parameters, }) {
+    Ok(value) => value
+    Err(error) => return Err(Encoding(error))
+  }
+  request.pending_local_update = Some({
+    request_id: update_id,
+    effective_parameters: merge_subscription_parameters(
+      request.parameters,
+      parameters,
+    ),
+  })
+  Ok((update_id, [Send(stream, bytes, false)]))
+}
+
+///|
+/// Accept the next peer update waiting on a published subscription.
+pub fn ClientSession::accept_subscription_update(
+  self : ClientSession,
+  stream : Int64,
+  update_id : UInt64,
+  response : @protocol.RequestOkMessage,
+) -> Result[Array[ClientSessionAction], ClientSessionError] {
+  let subscription = match self.published_subscriptions.get(stream) {
+    Some(value) => value
+    None => return Err(UnknownStream)
+  }
+  if subscription.pending_failure is Some(_) {
+    return Err(SubscriptionNotAccepted)
+  }
+  if subscription.pending_updates.is_empty() ||
+    subscription.pending_updates[0].request_id != update_id {
+    return Err(RequestUpdatePending)
+  }
+  let pending = subscription.pending_updates[0]
+  let response_bytes = match
+    @protocol.encode_request_ok_for(
+      response,
+      @protocol.RequestOkContext::RequestUpdate,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(Encoding(error))
+  }
+  let was_forwarding = subscription_forward(subscription.parameters)
+  let forwarding = subscription_forward(pending.effective_parameters)
+  ignore(subscription.pending_updates.remove(0))
+  subscription.parameters = pending.effective_parameters
+  let actions : Array[ClientSessionAction] = [
+    Send(stream, response_bytes, false),
+  ]
+  if was_forwarding && !forwarding {
+    for action in self.stop_subscription_object_sends(stream, 0UL) {
+      actions.push(action)
+    }
+  }
+  let request_id = subscription.request_id
+  Ok(
+    actions +
+    [
+      Notify(
+        SubscriptionUpdateApplied(
+          request_id,
+          update_id,
+          stream,
+          subscription.parameters,
+        ),
+      ),
+    ],
+  )
+}
+
+///|
+/// Reject a peer update and terminate the subscription with UPDATE_FAILED.
+pub fn ClientSession::reject_subscription_update(
+  self : ClientSession,
+  stream : Int64,
+  update_id : UInt64,
+  error : @protocol.RequestErrorMessage,
+) -> Result[Array[ClientSessionAction], ClientSessionError] {
+  let subscription = match self.published_subscriptions.get(stream) {
+    Some(value) => value
+    None => return Err(UnknownStream)
+  }
+  if subscription.pending_failure is Some(_) {
+    return Err(SubscriptionNotAccepted)
+  }
+  if subscription.pending_updates.is_empty() ||
+    subscription.pending_updates[0].request_id != update_id {
+    return Err(RequestUpdatePending)
+  }
+  let error_bytes = match @protocol.encode_request_error(error) {
+    Ok(value) => value
+    Err(error) => return Err(Encoding(error))
+  }
+  subscription.pending_updates = []
+  match self.inbound_subscriptions.get(stream) {
+    Some(inbound) => inbound.state = Ended
+    None =>
+      match self.requests.get(subscription.request_id) {
+        Some(request) => request.terminal = true
+        None => ()
+      }
+  }
+  let failure : @protocol.PublishDoneMessage = {
+    code: 8UL,
+    stream_count: subscription.opened_stream_count,
+    reason: b"",
+  }
+  subscription.pending_failure = Some(failure)
+  let actions : Array[ClientSessionAction] = [Send(stream, error_bytes, false)]
+  for action in self.stop_subscription_object_sends(stream, 0UL) {
+    actions.push(action)
+  }
+  for action in self.finish_failed_subscription(stream) {
+    actions.push(action)
+  }
+  Ok(actions)
+}
+
+///|
+fn ClientSession::stop_subscription_object_sends(
+  self : ClientSession,
+  subscription_stream : Int64,
+  error_code : UInt64,
+) -> Array[ClientSessionAction] {
+  for (_, pending) in self.pending_object_streams {
+    if pending.subscription_stream == subscription_stream {
+      pending.cancelled_error_code = Some(error_code)
+    }
+  }
+  let streams : Array[Int64] = []
+  for (stream, outgoing) in self.outgoing_object_streams {
+    if outgoing.subscription_stream == subscription_stream {
+      streams.push(stream)
+    }
+  }
+  let actions : Array[ClientSessionAction] = []
+  for stream in streams {
+    actions.push(AbortSend(stream, error_code))
+  }
+  actions
+}
+
+///|
+fn ClientSession::finish_failed_subscription(
+  self : ClientSession,
+  stream : Int64,
+) -> Array[ClientSessionAction] {
+  let subscription = match self.published_subscriptions.get(stream) {
+    Some(value) => value
+    None => return []
+  }
+  if subscription.open_stream_count != 0UL {
+    return []
+  }
+  let done = match subscription.pending_failure {
+    Some(value) => value
+    None => return []
+  }
+  subscription.pending_failure = None
+  let bytes = match @protocol.encode_publish_done(done) {
+    Ok(value) => value
+    Err(_) => return []
+  }
+  [
+    Send(stream, bytes, true),
+    Notify(PublishDone(subscription.request_id, done)),
+  ]
+}

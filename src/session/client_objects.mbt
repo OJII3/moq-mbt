@@ -9,6 +9,10 @@ priv struct PendingObjectStream {
 priv struct PublishedSubscription {
   mut opened_stream_count : UInt64
   mut open_stream_count : UInt64
+  mut parameters : Array[@protocol.MessageParameter]
+  mut pending_updates : Array[PendingSubscriptionUpdate]
+  mut pending_failure : @protocol.PublishDoneMessage?
+  request_id : UInt64
 }
 
 ///|
@@ -189,6 +193,9 @@ pub fn ClientSession::open_object_stream(
       }
   }
   let publisher_request = self.requests.get(publisher_request_id).unwrap()
+  if !self.subscription_is_active(subscription_stream) {
+    return Err(SubscriptionNotAccepted)
+  }
   if header.track_alias != publisher_request.track_alias.unwrap() {
     return Err(Track(AliasMismatch))
   }
@@ -277,6 +284,9 @@ pub fn ClientSession::publish_done(
     self.published_subscriptions.get(subscription_stream) {
     Some(value) => value
     None => return Err(UnexpectedMessage)
+  }
+  if !subscription.pending_updates.is_empty() {
+    return Err(RequestUpdatePending)
   }
   if subscription.open_stream_count != 0UL {
     return Err(Track(ObjectStreamsStillOpen))
