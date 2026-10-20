@@ -59,6 +59,14 @@ extern "C" fn native_stop_receiving(
 ) -> Int32 = "moq_client_stop_receiving"
 
 ///|
+#borrow(data)
+extern "C" fn native_send_datagram(
+  client : RawClient,
+  data : Bytes,
+  length : Int32,
+) -> Int32 = "moq_client_send_datagram"
+
+///|
 extern "C" fn native_pop(client : RawClient) -> Int32 = "moq_client_pop"
 
 ///|

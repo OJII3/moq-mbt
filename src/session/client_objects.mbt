@@ -163,8 +163,41 @@ fn ClientSession::receive_subgroup(
   if frames.is_empty() {
     Ok([])
   } else {
-    Ok([Notify(ObjectReceived(request_id, header, frames))])
+    let request = self.requests.get(request_id).unwrap()
+    if request.kind == Subscribing &&
+      request.accepted &&
+      !request.update_failed &&
+      subscription_forward(request.parameters) {
+      Ok([Notify(ObjectReceived(request_id, header, frames))])
+    } else {
+      Ok([])
+    }
   }
+}
+
+///|
+/// Route a received Object Datagram through the accepted subscription Alias.
+fn ClientSession::receive_object_datagram(
+  self : ClientSession,
+  bytes : Bytes,
+) -> Result[Array[ClientSessionAction], ClientSessionError] {
+  let datagram = match @protocol.decode_object_datagram(bytes) {
+    @protocol.Complete(value, consumed) if consumed == bytes.length() => value
+    _ => return Err(UnexpectedMessage)
+  }
+  let request_id = match self.aliases.get(datagram.track_alias) {
+    Some(value) => value
+    None => return Ok([])
+  }
+  let request = self.requests.get(request_id).unwrap()
+  if request.kind != Subscribing ||
+    !request.accepted ||
+    request.terminal ||
+    request.update_failed ||
+    !subscription_forward(request.parameters) {
+    return Ok([])
+  }
+  Ok([Notify(ObjectDatagramReceived(request_id, datagram))])
 }
 
 ///|
@@ -235,6 +268,43 @@ pub fn ClientSession::send_object(
   }
   outgoing.pending_send_count = outgoing.pending_send_count + 1UL
   Ok([Send(stream, bytes, false)])
+}
+
+///|
+/// Send one Object Datagram for an active local or peer subscription.
+pub fn ClientSession::send_object_datagram(
+  self : ClientSession,
+  subscription_stream : Int64,
+  datagram : @protocol.ObjectDatagram,
+) -> Result[Array[ClientSessionAction], ClientSessionError] {
+  if !self.subscription_is_active(subscription_stream) {
+    return Err(SubscriptionNotAccepted)
+  }
+  let publisher_request_id = match
+    self.inbound_subscriptions.get(subscription_stream) {
+    Some(inbound) if inbound.state == Active => inbound.publisher_request_id
+    Some(_) => return Err(SubscriptionNotAccepted)
+    None =>
+      match self.request_streams.get(subscription_stream) {
+        Some(request_id) => {
+          let request = self.requests.get(request_id).unwrap()
+          if request.kind != Publishing || !request.accepted || request.terminal {
+            return Err(SubscriptionNotAccepted)
+          }
+          request_id
+        }
+        None => return Err(UnknownStream)
+      }
+  }
+  let publisher = self.requests.get(publisher_request_id).unwrap()
+  if datagram.track_alias != publisher.track_alias.unwrap() {
+    return Err(Track(AliasMismatch))
+  }
+  let bytes = match @protocol.encode_object_datagram(datagram) {
+    Ok(value) => value
+    Err(error) => return Err(Encoding(error))
+  }
+  Ok([SendDatagram(bytes)])
 }
 
 ///|

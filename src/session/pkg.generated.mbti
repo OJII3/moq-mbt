@@ -36,6 +36,7 @@ pub fn ClientSession::receive(Self, ClientSessionEvent) -> Result[Array[ClientSe
 pub fn ClientSession::reject_subscription(Self, Int64, @protocol.RequestErrorMessage) -> Result[Array[ClientSessionAction], ClientSessionError]
 pub fn ClientSession::reject_subscription_update(Self, Int64, UInt64, @protocol.RequestErrorMessage) -> Result[Array[ClientSessionAction], ClientSessionError]
 pub fn ClientSession::send_object(Self, Int64, @protocol.SubgroupFrame) -> Result[Array[ClientSessionAction], ClientSessionError]
+pub fn ClientSession::send_object_datagram(Self, Int64, @protocol.ObjectDatagram) -> Result[Array[ClientSessionAction], ClientSessionError]
 pub fn ClientSession::start(Self) -> Result[Array[ClientSessionAction], ClientSessionError]
 pub fn ClientSession::subscribe_track(Self, @protocol.TrackName) -> Result[(UInt64, Array[ClientSessionAction]), ClientSessionError]
 pub fn ClientSession::update_subscription(Self, UInt64, Array[@protocol.MessageParameter]) -> Result[(UInt64, Array[ClientSessionAction]), ClientSessionError]
@@ -43,6 +44,7 @@ pub fn ClientSession::update_subscription(Self, UInt64, Array[@protocol.MessageP
 pub(all) enum ClientSessionAction {
   OpenStream(ClientStreamDirection, ClientStreamPurpose)
   Send(Int64, Bytes, Bool)
+  SendDatagram(Bytes)
   AbortSend(Int64, UInt64)
   StopReceiving(Int64, UInt64)
   CloseConnection(UInt64, Bytes)
@@ -76,6 +78,7 @@ pub fn ClientSessionError::to_repr(Self) -> @debug.Repr
 pub(all) enum ClientSessionEvent {
   InboundStreamStarted(Int64, ClientStreamDirection)
   StreamData(Int64, Bytes)
+  DatagramReceived(Bytes)
   StreamOpened(ClientStreamPurpose, Int64)
   StreamFinished(Int64)
   StreamReset(Int64, UInt64)
@@ -102,6 +105,7 @@ pub(all) enum ClientSessionNotice {
   SubscriptionUpdateRejected(UInt64, UInt64, @protocol.RequestErrorMessage)
   SubscriptionEnded(UInt64, Int64)
   ObjectReceived(UInt64, @protocol.SubgroupHeader, Array[@protocol.SubgroupFrame])
+  ObjectDatagramReceived(UInt64, @protocol.ObjectDatagram)
   ObjectStreamReset(UInt64, Int64)
   ObjectStreamFinished(Int64)
   GroupFinished(UInt64, UInt64)

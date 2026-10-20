@@ -15,6 +15,7 @@ pub(all) enum ClientStreamPurpose {
 pub(all) enum ClientSessionEvent {
   InboundStreamStarted(Int64, ClientStreamDirection)
   StreamData(Int64, Bytes)
+  DatagramReceived(Bytes)
   StreamOpened(ClientStreamPurpose, Int64)
   StreamFinished(Int64)
   StreamReset(Int64, UInt64)
@@ -54,6 +55,7 @@ pub(all) enum ClientSessionNotice {
     @protocol.SubgroupHeader,
     Array[@protocol.SubgroupFrame]
   )
+  ObjectDatagramReceived(UInt64, @protocol.ObjectDatagram)
   ObjectStreamReset(UInt64, Int64)
   ObjectStreamFinished(Int64)
   GroupFinished(UInt64, UInt64)
@@ -65,6 +67,7 @@ pub(all) enum ClientSessionNotice {
 pub(all) enum ClientSessionAction {
   OpenStream(ClientStreamDirection, ClientStreamPurpose)
   Send(Int64, Bytes, Bool)
+  SendDatagram(Bytes)
   AbortSend(Int64, UInt64)
   StopReceiving(Int64, UInt64)
   CloseConnection(UInt64, Bytes)
@@ -198,6 +201,7 @@ pub fn ClientSession::receive(
       Ok([])
     }
     StreamData(stream, bytes) => self.receive_stream_data(stream, bytes)
+    DatagramReceived(bytes) => self.receive_object_datagram(bytes)
     StreamOpened(purpose, stream) => self.stream_opened(purpose, stream)
     StreamFinished(stream) => self.stream_finished(stream)
     StreamReset(stream, code) => self.stream_reset(stream, code)

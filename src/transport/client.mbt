@@ -14,6 +14,8 @@ pub struct Client {
   priv streams : Map[Int64, RawStream]
   priv send_sizes : Array[(Int64, Int32)]
   priv mut pending_send_bytes : Int32
+  priv mut pending_datagram_bytes : Int32
+  priv mut pending_datagrams : Int32
 }
 
 ///|
@@ -37,7 +39,14 @@ pub fn Client::connect(
   if !native_valid(raw) {
     raise TransportError("MsQuic connection initialization failed")
   }
-  { raw: Some(raw), streams: {}, send_sizes: [], pending_send_bytes: 0, }
+  {
+    raw: Some(raw),
+    streams: {},
+    send_sizes: [],
+    pending_send_bytes: 0,
+    pending_datagram_bytes: 0,
+    pending_datagrams: 0,
+  }
 }
 
 ///|
@@ -117,6 +126,26 @@ pub fn Client::send(
 }
 
 ///|
+/// Copy one unreliable datagram into a buffer retained until MsQuic finishes it.
+pub fn Client::send_datagram(
+  self : Client,
+  data : Bytes,
+) -> Unit raise TransportError {
+  let raw = self.handle()
+  let length = data.length()
+  if length > max_bytes - self.pending_datagram_bytes ||
+    self.pending_datagrams >= max_events {
+    raise TransportError("datagram send buffer overflow")
+  }
+  let status = native_send_datagram(raw, data, length)
+  if status != 0 {
+    raise TransportError("datagram send failed (status \{status})")
+  }
+  self.pending_datagram_bytes += length
+  self.pending_datagrams += 1
+}
+
+///|
 /// Abort the local send side of a stream.
 pub fn Client::abort_send(
   self : Client,
@@ -172,13 +201,7 @@ pub fn Client::next_event(
         native_sleep_ms(step)
         remaining -= step
       }
-      1 =>
-        if native_event_code(raw) != 0L {
-          return Connected
-        } else {
-          native_shutdown(raw, 3L)
-          return TransportClosed(-1)
-        }
+      1 => return Connected
       2 => return Data(native_event_id(raw), native_event_data(raw))
       3 => return StreamFinished(native_event_id(raw))
       4 => return Closed(native_event_code(raw))
@@ -218,6 +241,11 @@ pub fn Client::next_event(
           Bidirectional
         }
         return StreamStarted(id, direction)
+      }
+      12 => return Datagram(native_event_data(raw))
+      13 => {
+        self.pending_datagram_bytes -= native_event_id(raw).to_int()
+        self.pending_datagrams -= 1
       }
       _ => raise TransportError("event queue failed")
     }

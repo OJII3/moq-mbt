@@ -166,6 +166,17 @@ fn run_subscriber(
           return
         }
       }
+      Datagram(bytes) => {
+        let (notices, _) = drive_session_result(
+          client,
+          session,
+          session.receive(@session.DatagramReceived(bytes)),
+          send_counts,
+        )
+        if handle_subscriber_notices(notices, state) {
+          return
+        }
+      }
       StreamFinished(stream) => {
         let (notices, _) = drive_session_result(
           client,

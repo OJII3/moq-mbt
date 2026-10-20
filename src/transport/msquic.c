@@ -14,6 +14,12 @@ typedef struct event {
     uint8_t data[];
 } event;
 
+typedef struct datagram_send {
+    size_t size;
+    QUIC_BUFFER buffer;
+    uint8_t data[];
+} datagram_send;
+
 typedef struct client {
     const QUIC_API_TABLE *api;
     HQUIC registration, configuration, connection;
@@ -21,6 +27,8 @@ typedef struct client {
     event *head, *tail, *current;
     size_t queued_bytes;
     unsigned queued_events;
+    uint16_t max_datagram_length;
+    int datagram_send_enabled;
     int failed, closed;
 } client;
 
@@ -78,11 +86,28 @@ static QUIC_STATUS QUIC_API stream_cb(HQUIC s, void *ctx, QUIC_STREAM_EVENT *e) 
 static QUIC_STATUS QUIC_API conn_cb(HQUIC conn, void *ctx, QUIC_CONNECTION_EVENT *e) {
     client *c = ctx;
     switch (e->Type) {
+    case QUIC_CONNECTION_EVENT_DATAGRAM_STATE_CHANGED:
+        pthread_mutex_lock(&c->mutex);
+        c->datagram_send_enabled = e->DATAGRAM_STATE_CHANGED.SendEnabled;
+        c->max_datagram_length = e->DATAGRAM_STATE_CHANGED.MaxSendLength;
+        pthread_mutex_unlock(&c->mutex);
+        break;
+    case QUIC_CONNECTION_EVENT_DATAGRAM_RECEIVED:
+        push(c, 12, 0, 0, NULL,
+             e->DATAGRAM_RECEIVED.Buffer->Buffer,
+             e->DATAGRAM_RECEIVED.Buffer->Length);
+        break;
+    case QUIC_CONNECTION_EVENT_DATAGRAM_SEND_STATE_CHANGED:
+        if (QUIC_DATAGRAM_SEND_STATE_IS_FINAL(e->DATAGRAM_SEND_STATE_CHANGED.State)) {
+            datagram_send *send = e->DATAGRAM_SEND_STATE_CHANGED.ClientContext;
+            if (send) {
+                push(c, 13, send->size, 0, NULL, NULL, 0);
+                free(send);
+            }
+        }
+        break;
     case QUIC_CONNECTION_EVENT_CONNECTED: {
-        BOOLEAN dgram = FALSE;
-        uint32_t len = sizeof(dgram);
-        c->api->GetParam(conn, QUIC_PARAM_CONN_DATAGRAM_SEND_ENABLED, &len, &dgram);
-        push(c, 1, 0, dgram ? 1 : 0, NULL, NULL, 0);
+        push(c, 1, 0, 0, NULL, NULL, 0);
         break;
     }
     case QUIC_CONNECTION_EVENT_SHUTDOWN_INITIATED_BY_TRANSPORT:
@@ -191,6 +216,29 @@ int32_t moq_client_abort_send(client *c, HQUIC s, int64_t error_code) {
 
 int32_t moq_client_stop_receiving(client *c, HQUIC s, int64_t error_code) {
     return (int32_t)c->api->StreamShutdown(s, QUIC_STREAM_SHUTDOWN_FLAG_ABORT_RECEIVE, (uint64_t)error_code);
+}
+
+int32_t moq_client_send_datagram(client *c, moonbit_bytes_t data, int32_t len) {
+    if (len < 0) return -1;
+    pthread_mutex_lock(&c->mutex);
+    if (!c->datagram_send_enabled || (uint32_t)len > c->max_datagram_length) {
+        pthread_mutex_unlock(&c->mutex);
+        return -1;
+    }
+    pthread_mutex_unlock(&c->mutex);
+
+    datagram_send *send = malloc(sizeof(*send) + (size_t)len);
+    if (!send) return -1;
+    send->size = (size_t)len;
+    send->buffer = (QUIC_BUFFER){ (uint32_t)len, send->data };
+    if (len) memcpy(send->data, data, (size_t)len);
+    QUIC_STATUS status = c->api->DatagramSend(c->connection, &send->buffer, 1,
+                                               QUIC_SEND_FLAG_NONE, send);
+    if (QUIC_FAILED(status)) {
+        free(send);
+        return (int32_t)status;
+    }
+    return 0;
 }
 
 int32_t moq_client_pop(client *c) {
