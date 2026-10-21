@@ -35,9 +35,11 @@ pub fn ClientSession::publish_track(Self, @protocol.TrackName, UInt64) -> Result
 pub fn ClientSession::receive(Self, ClientSessionEvent) -> Result[Array[ClientSessionAction], ClientSessionError]
 pub fn ClientSession::reject_subscription(Self, Int64, @protocol.RequestErrorMessage) -> Result[Array[ClientSessionAction], ClientSessionError]
 pub fn ClientSession::reject_subscription_update(Self, Int64, UInt64, @protocol.RequestErrorMessage) -> Result[Array[ClientSessionAction], ClientSessionError]
+pub fn ClientSession::send_goaway(Self, UInt64) -> Result[Array[ClientSessionAction], ClientSessionError]
 pub fn ClientSession::send_object(Self, Int64, @protocol.SubgroupFrame) -> Result[Array[ClientSessionAction], ClientSessionError]
 pub fn ClientSession::send_object_datagram(Self, Int64, @protocol.ObjectDatagram) -> Result[Array[ClientSessionAction], ClientSessionError]
 pub fn ClientSession::start(Self) -> Result[Array[ClientSessionAction], ClientSessionError]
+pub fn ClientSession::state(Self) -> ClientSessionState
 pub fn ClientSession::subscribe_track(Self, @protocol.TrackName) -> Result[(UInt64, Array[ClientSessionAction]), ClientSessionError]
 pub fn ClientSession::update_subscription(Self, UInt64, Array[@protocol.MessageParameter]) -> Result[(UInt64, Array[ClientSessionAction]), ClientSessionError]
 
@@ -54,6 +56,15 @@ pub fn ClientSessionAction::equal(Self, Self) -> Bool
 pub fn ClientSessionAction::not_equal(Self, Self) -> Bool
 pub fn ClientSessionAction::to_repr(Self) -> @debug.Repr
 
+pub(all) enum ClientSessionEnd {
+  Local(UInt64, Bytes)
+  Peer(UInt64)
+  Transport(Int64)
+} derive(Eq, @debug.Debug)
+pub fn ClientSessionEnd::equal(Self, Self) -> Bool
+pub fn ClientSessionEnd::not_equal(Self, Self) -> Bool
+pub fn ClientSessionEnd::to_repr(Self) -> @debug.Repr
+
 pub(all) enum ClientSessionError {
   Handshake(HandshakeError)
   Track(TrackSessionError)
@@ -64,6 +75,8 @@ pub(all) enum ClientSessionError {
   DuplicateStream
   UnknownStream
   UnknownRequest
+  SessionDraining
+  SessionClosed
   TrackNotPublished
   AliasInUse
   SubscriptionNotAccepted
@@ -84,6 +97,10 @@ pub(all) enum ClientSessionEvent {
   StreamReset(Int64, UInt64)
   SendStopped(Int64, UInt64)
   SendComplete(Int64, Bool)
+  DatagramSendComplete
+  Clock(UInt64)
+  PeerClosed(UInt64)
+  TransportFailed(Int64)
 } derive(Eq, @debug.Debug)
 pub fn ClientSessionEvent::equal(Self, Self) -> Bool
 pub fn ClientSessionEvent::not_equal(Self, Self) -> Bool
@@ -111,10 +128,22 @@ pub(all) enum ClientSessionNotice {
   GroupFinished(UInt64, UInt64)
   PublishDone(UInt64, @protocol.PublishDoneMessage)
   SendFinished(Int64, Bool)
+  ControlGoAwayReceived(Bytes, UInt64, UInt64)
+  RequestGoAwayReceived(UInt64, Int64, Bytes, UInt64)
+  SessionEnded(ClientSessionEnd)
 } derive(Eq, @debug.Debug)
 pub fn ClientSessionNotice::equal(Self, Self) -> Bool
 pub fn ClientSessionNotice::not_equal(Self, Self) -> Bool
 pub fn ClientSessionNotice::to_repr(Self) -> @debug.Repr
+
+pub(all) enum ClientSessionState {
+  Active
+  Draining
+  Closed
+} derive(Eq, @debug.Debug)
+pub fn ClientSessionState::equal(Self, Self) -> Bool
+pub fn ClientSessionState::not_equal(Self, Self) -> Bool
+pub fn ClientSessionState::to_repr(Self) -> @debug.Repr
 
 pub(all) enum ClientStreamDirection {
   Unidirectional

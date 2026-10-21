@@ -105,6 +105,15 @@ fn handle_publisher_notices(
       }
       @session.PublishRejected(_, error) =>
         fail("PUBLISH rejected (\{error.code})")
+      @session.ControlGoAwayReceived(uri, timeout_ms, request_id) =>
+        eprintln(
+          "session GOAWAY received (URI \{uri.length()} bytes, timeout \{timeout_ms} ms, request ID \{request_id})",
+        )
+      @session.RequestGoAwayReceived(request_id, stream, uri, timeout_ms) =>
+        eprintln(
+          "request GOAWAY received (request \{request_id}, stream \{stream}, URI \{uri.length()} bytes, timeout \{timeout_ms} ms)",
+        )
+      @session.SessionEnded(end) => fail("session ended: \{end.to_repr()}")
       @session.ObjectStreamFinished(stream) =>
         match state.object_stream_groups.get(stream) {
           Some(group_id) => {
@@ -196,7 +205,8 @@ fn run_publisher(
         let (notices, _) = drive_session_result(
           client,
           session,
-          session.receive(
+          receive_session_event(
+            session,
             @session.InboundStreamStarted(
               stream,
               client_stream_direction(direction),
@@ -210,7 +220,7 @@ fn run_publisher(
         let (notices, _) = drive_session_result(
           client,
           session,
-          session.receive(@session.StreamData(stream, bytes)),
+          receive_session_event(session, @session.StreamData(stream, bytes)),
           send_counts,
         )
         handle_publisher_notices(client, session, notices, send_counts, state)
@@ -219,23 +229,26 @@ fn run_publisher(
         let (notices, _) = drive_session_result(
           client,
           session,
-          session.receive(@session.DatagramReceived(bytes)),
+          receive_session_event(session, @session.DatagramReceived(bytes)),
           send_counts,
         )
         handle_publisher_notices(client, session, notices, send_counts, state)
       }
       SendComplete(stream, canceled) => {
         note_send_complete(send_counts, stream)
-        if canceled {
-          fail("publisher send was canceled")
-        }
         let (notices, _) = drive_session_result(
           client,
           session,
-          session.receive(@session.SendComplete(stream, canceled)),
+          receive_session_event(
+            session,
+            @session.SendComplete(stream, canceled),
+          ),
           send_counts,
         )
         handle_publisher_notices(client, session, notices, send_counts, state)
+        if canceled {
+          fail("publisher send was canceled")
+        }
         if state.done_stream == Some(stream) && send_counts.get(stream) is None {
           println("PUBLISH_DONE send completed")
           return
@@ -245,7 +258,7 @@ fn run_publisher(
         let (notices, _) = drive_session_result(
           client,
           session,
-          session.receive(@session.StreamFinished(stream)),
+          receive_session_event(session, @session.StreamFinished(stream)),
           send_counts,
         )
         handle_publisher_notices(client, session, notices, send_counts, state)
@@ -254,7 +267,8 @@ fn run_publisher(
         let (notices, _) = drive_session_result(
           client,
           session,
-          session.receive(
+          receive_session_event(
+            session,
             @session.StreamReset(stream, code.reinterpret_as_uint64()),
           ),
           send_counts,
@@ -265,17 +279,57 @@ fn run_publisher(
         let (notices, _) = drive_session_result(
           client,
           session,
-          session.receive(
+          receive_session_event(
+            session,
             @session.SendStopped(stream, code.reinterpret_as_uint64()),
           ),
           send_counts,
         )
         handle_publisher_notices(client, session, notices, send_counts, state)
       }
-      Closed(code) => fail("peer closed (application code \{code})")
-      TransportClosed(status) => fail("QUIC failed (MsQuic status \{status})")
+      DatagramSendComplete => {
+        let (notices, _) = drive_session_result(
+          client,
+          session,
+          receive_session_event(session, @session.DatagramSendComplete),
+          send_counts,
+        )
+        handle_publisher_notices(client, session, notices, send_counts, state)
+      }
+      Closed(code) => {
+        let (notices, _) = drive_session_result(
+          client,
+          session,
+          receive_session_event(
+            session,
+            @session.PeerClosed(code.reinterpret_as_uint64()),
+          ),
+          send_counts,
+        )
+        handle_publisher_notices(client, session, notices, send_counts, state)
+      }
+      TransportClosed(status) => {
+        let (notices, _) = drive_session_result(
+          client,
+          session,
+          receive_session_event(
+            session,
+            @session.TransportFailed(status.to_int64()),
+          ),
+          send_counts,
+        )
+        handle_publisher_notices(client, session, notices, send_counts, state)
+      }
       QueueOverflow => fail("transport event buffer overflow")
-      Timeout => ()
+      Timeout => {
+        let (notices, _) = drive_session_result(
+          client,
+          session,
+          receive_session_clock(session),
+          send_counts,
+        )
+        handle_publisher_notices(client, session, notices, send_counts, state)
+      }
     }
     if state.publish_accepted &&
       !state.publication_ready &&

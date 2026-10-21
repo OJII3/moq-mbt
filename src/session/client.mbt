@@ -12,6 +12,21 @@ pub(all) enum ClientStreamPurpose {
 } derive(Debug, Eq)
 
 ///|
+pub(all) enum ClientSessionState {
+  Active
+  Draining
+  Closed
+} derive(Debug, Eq)
+
+///|
+pub(all) enum ClientSessionEnd {
+  Local(UInt64, Bytes)
+  Peer(UInt64)
+  Transport(Int64)
+} derive(Debug, Eq)
+
+///|
+/// `Clock` values are monotonic milliseconds supplied by the adapter.
 pub(all) enum ClientSessionEvent {
   InboundStreamStarted(Int64, ClientStreamDirection)
   StreamData(Int64, Bytes)
@@ -21,6 +36,10 @@ pub(all) enum ClientSessionEvent {
   StreamReset(Int64, UInt64)
   SendStopped(Int64, UInt64)
   SendComplete(Int64, Bool)
+  DatagramSendComplete
+  Clock(UInt64)
+  PeerClosed(UInt64)
+  TransportFailed(Int64)
 } derive(Debug, Eq)
 
 ///|
@@ -61,6 +80,9 @@ pub(all) enum ClientSessionNotice {
   GroupFinished(UInt64, UInt64)
   PublishDone(UInt64, @protocol.PublishDoneMessage)
   SendFinished(Int64, Bool)
+  ControlGoAwayReceived(Bytes, UInt64, UInt64)
+  RequestGoAwayReceived(UInt64, Int64, Bytes, UInt64)
+  SessionEnded(ClientSessionEnd)
 } derive(Debug, Eq)
 
 ///|
@@ -85,6 +107,8 @@ pub(all) enum ClientSessionError {
   DuplicateStream
   UnknownStream
   UnknownRequest
+  SessionDraining
+  SessionClosed
   TrackNotPublished
   AliasInUse
   SubscriptionNotAccepted
@@ -108,11 +132,23 @@ pub struct ClientSession {
   priv handshake : ClientHandshake
   priv mut started : Bool
   priv mut ready : Bool
+  priv mut state : ClientSessionState
   priv mut outbound_control_stream : Int64?
   priv mut next_request_id : UInt64
   priv mut next_object_token : UInt64
   priv mut peer_control_stream : Int64?
   priv mut control_buffer : Bytes
+  priv mut control_goaway_sent : Bool
+  priv mut control_goaway_received : Bool
+  priv mut peer_goaway_boundary : UInt64?
+  priv mut control_goaway_deadline : UInt64?
+  priv mut now_ms : UInt64
+  priv mut clock_initialized : Bool
+  priv request_goaway_streams : Map[Int64, Bool]
+  priv request_goaway_deadlines : Map[Int64, UInt64]
+  priv mut max_peer_request_id : UInt64?
+  priv pending_sends : Map[Int64, UInt64]
+  priv mut pending_datagram_sends : UInt64
   priv inbound_stream_kinds : Map[Int64, InboundStreamKind]
   priv inbound_unclassified_buffers : Map[Int64, Bytes]
   priv requests : Map[UInt64, ClientRequest]
@@ -141,11 +177,23 @@ pub fn ClientSession::new(
         handshake,
         started: false,
         ready: false,
+        state: Active,
         outbound_control_stream: None,
         next_request_id: 0UL,
         next_object_token: 0UL,
         peer_control_stream: None,
         control_buffer: b"",
+        control_goaway_sent: false,
+        control_goaway_received: false,
+        peer_goaway_boundary: None,
+        control_goaway_deadline: None,
+        now_ms: 0UL,
+        clock_initialized: false,
+        request_goaway_streams: {},
+        request_goaway_deadlines: {},
+        max_peer_request_id: None,
+        pending_sends: {},
+        pending_datagram_sends: 0UL,
         inbound_stream_kinds: {},
         inbound_unclassified_buffers: {},
         requests: {},
@@ -169,6 +217,9 @@ pub fn ClientSession::new(
 pub fn ClientSession::start(
   self : ClientSession,
 ) -> Result[Array[ClientSessionAction], ClientSessionError] {
+  if self.state == Closed {
+    return Err(SessionClosed)
+  }
   if self.started {
     return Err(UnexpectedMessage)
   }
@@ -181,7 +232,10 @@ pub fn ClientSession::receive(
   self : ClientSession,
   event : ClientSessionEvent,
 ) -> Result[Array[ClientSessionAction], ClientSessionError] {
-  match event {
+  if self.state == Closed {
+    return Ok([])
+  }
+  let result = match event {
     InboundStreamStarted(stream, direction) => {
       if self.inbound_stream_kinds.get(stream) is Some(_) ||
         self.inbound_unclassified_buffers.get(stream) is Some(_) ||
@@ -221,18 +275,35 @@ pub fn ClientSession::receive(
           None => Ok(self.end_request_stream(stream, code, true, false))
         }
       }
-    SendComplete(stream, canceled) => self.send_complete(stream, canceled)
+    SendComplete(stream, canceled) => {
+      self.note_send_complete(stream)
+      self.send_complete(stream, canceled)
+    }
+    DatagramSendComplete => {
+      if self.pending_datagram_sends > 0UL {
+        self.pending_datagram_sends = self.pending_datagram_sends - 1UL
+      }
+      Ok([])
+    }
+    Clock(now_ms) => Ok(self.clock(now_ms))
+    PeerClosed(code) => Ok(self.end_session(Peer(code), None, b""))
+    TransportFailed(status) =>
+      Ok(self.end_session(Transport(status), None, b""))
+  }
+  match result {
+    Ok(actions) => Ok(self.finish_actions(actions))
+    Err(error) => Err(error)
   }
 }
 
 ///|
 /// Request a transport-level connection close.
 pub fn ClientSession::close(
-  _self : ClientSession,
+  self : ClientSession,
   code : UInt64,
   reason : Bytes,
 ) -> Array[ClientSessionAction] {
-  [CloseConnection(code, reason)]
+  self.end_session(Local(code, reason), Some(code), reason)
 }
 
 ///|
@@ -351,8 +422,27 @@ fn ClientSession::decode_control_messages(
       @protocol.Incomplete => return Ok(actions)
       @protocol.Invalid(_) => return Err(UnexpectedMessage)
       @protocol.Complete(message, consumed) => {
-        actions.push(Notify(ControlMessageReceived(message)))
         self.control_buffer = self.control_buffer[consumed:].to_owned()
+        match message {
+          @protocol.GoAwayControl(goaway) => {
+            if self.control_goaway_received || (goaway.request_id & 1UL) != 0UL {
+              for action in self.receive_control_goaway(goaway) {
+                actions.push(action)
+              }
+              self.control_buffer = b""
+              return Ok(actions)
+            }
+            actions.push(Notify(ControlMessageReceived(message)))
+            for action in self.receive_control_goaway(goaway) {
+              actions.push(action)
+            }
+          }
+          _ => actions.push(Notify(ControlMessageReceived(message)))
+        }
+        if self.state == Closed {
+          self.control_buffer = b""
+          return Ok(actions)
+        }
       }
     }
   }

@@ -82,6 +82,53 @@ fn ClientSession::receive_peer_subscription_update(
     Some(value) => value
     None => return Err(SubscriptionNotAccepted)
   }
+  self.peer_request_ids[message.request_id] = stream
+  self.note_peer_request_id(message.request_id)
+  if self.control_goaway_sent {
+    let error : @protocol.RequestErrorMessage = {
+      code: request_error_going_away,
+      retry_interval: 0UL,
+      reason: b"",
+      redirect: b"",
+    }
+    let bytes = match @protocol.encode_request_error(error) {
+      Ok(value) => value
+      Err(value) => return Err(Encoding(value))
+    }
+    let rejected_updates : Array[UInt64] = []
+    for pending in subscription.pending_updates {
+      rejected_updates.push(pending.request_id)
+    }
+    rejected_updates.push(message.request_id)
+    subscription.pending_updates = []
+    match self.inbound_subscriptions.get(stream) {
+      Some(inbound) => inbound.state = Ended
+      None =>
+        match self.requests.get(request_id) {
+          Some(request) => request.terminal = true
+          None => ()
+        }
+    }
+    subscription.pending_failure = Some({
+      code: 8UL,
+      stream_count: subscription.opened_stream_count,
+      reason: b"",
+    })
+    let actions : Array[ClientSessionAction] = []
+    for update_id in rejected_updates {
+      actions.push(Send(stream, bytes, false))
+      actions.push(
+        Notify(SubscriptionUpdateRejected(request_id, update_id, error)),
+      )
+    }
+    for action in self.stop_subscription_object_sends(stream, 0UL) {
+      actions.push(action)
+    }
+    for action in self.finish_failed_subscription(stream) {
+      actions.push(action)
+    }
+    return Ok(actions)
+  }
   let previous = if subscription.pending_updates.is_empty() {
     subscription.parameters
   } else {
@@ -95,7 +142,6 @@ fn ClientSession::receive_peer_subscription_update(
     request_id: message.request_id,
     effective_parameters,
   })
-  self.peer_request_ids[message.request_id] = stream
   Ok([
     Notify(
       SubscriptionUpdateRequested(
@@ -117,6 +163,10 @@ pub fn ClientSession::update_subscription(
   request_id : UInt64,
   parameters : Array[@protocol.MessageParameter],
 ) -> Result[(UInt64, Array[ClientSessionAction]), ClientSessionError] {
+  match self.ensure_new_request_allowed() {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
   let request = match self.requests.get(request_id) {
     Some(value) => value
     None => return Err(UnknownRequest)
@@ -147,7 +197,7 @@ pub fn ClientSession::update_subscription(
       parameters,
     ),
   })
-  Ok((update_id, [Send(stream, bytes, false)]))
+  Ok((update_id, self.finish_actions([Send(stream, bytes, false)])))
 }
 
 ///|
@@ -158,6 +208,10 @@ pub fn ClientSession::accept_subscription_update(
   update_id : UInt64,
   response : @protocol.RequestOkMessage,
 ) -> Result[Array[ClientSessionAction], ClientSessionError] {
+  match self.ensure_open() {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
   let subscription = match self.published_subscriptions.get(stream) {
     Some(value) => value
     None => return Err(UnknownStream)
@@ -192,17 +246,19 @@ pub fn ClientSession::accept_subscription_update(
   }
   let request_id = subscription.request_id
   Ok(
-    actions +
-    [
-      Notify(
-        SubscriptionUpdateApplied(
-          request_id,
-          update_id,
-          stream,
-          subscription.parameters,
+    self.finish_actions(
+      actions +
+      [
+        Notify(
+          SubscriptionUpdateApplied(
+            request_id,
+            update_id,
+            stream,
+            subscription.parameters,
+          ),
         ),
-      ),
-    ],
+      ],
+    ),
   )
 }
 
@@ -214,6 +270,10 @@ pub fn ClientSession::reject_subscription_update(
   update_id : UInt64,
   error : @protocol.RequestErrorMessage,
 ) -> Result[Array[ClientSessionAction], ClientSessionError] {
+  match self.ensure_open() {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
   let subscription = match self.published_subscriptions.get(stream) {
     Some(value) => value
     None => return Err(UnknownStream)
@@ -251,7 +311,7 @@ pub fn ClientSession::reject_subscription_update(
   for action in self.finish_failed_subscription(stream) {
     actions.push(action)
   }
-  Ok(actions)
+  Ok(self.finish_actions(actions))
 }
 
 ///|

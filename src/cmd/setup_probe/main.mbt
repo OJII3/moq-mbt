@@ -35,7 +35,7 @@ fn probe(
         outbound_stream = Some(stream)
         client.send(stream, handshake.outbound_setup())
       }
-      StreamStarted(_, _) | Datagram(_) => ()
+      StreamStarted(_, _) | Datagram(_) | DatagramSendComplete => ()
       Data(stream, bytes) if !setup_received =>
         match handshake.receive(stream, bytes) {
           Ok(Pending) => ()
