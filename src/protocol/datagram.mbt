@@ -1,5 +1,7 @@
 ///|
-/// One Object carried by a Draft 18 OBJECT_DATAGRAM.
+/// One Object carried by a Draft 18 OBJECT_DATAGRAM. A zero object ID and a
+/// nil publisher priority use their omitted wire forms; Normal status is
+/// implicit when the payload is non-empty.
 pub(all) struct ObjectDatagram {
   track_alias : UInt64
   group_id : UInt64
@@ -10,6 +12,19 @@ pub(all) struct ObjectDatagram {
   status : ObjectStatus
   payload : Bytes
 } derive(Debug, Eq)
+
+///|
+/// A datagram received on the MOQT transport.
+pub(all) enum ReceivedDatagram {
+  Object(ObjectDatagram)
+  Padding
+} derive(Debug, Eq)
+
+///|
+pub extend ReceivedDatagram with Debug::{to_repr}
+
+///|
+pub extend ReceivedDatagram with Eq::{equal, not_equal}
 
 ///|
 pub extend ObjectDatagram with Debug::{to_repr}
@@ -24,8 +39,11 @@ pub fn encode_object_datagram(
 ) -> Result[Bytes, CodecError] {
   let has_properties = !datagram.properties.is_empty()
   let has_status = datagram.status != Normal || datagram.payload.is_empty()
+  if has_status && datagram.end_of_group {
+    return Err(InvalidDatagram)
+  }
   if datagram.status != Normal &&
-    (!datagram.payload.is_empty() || has_properties || datagram.end_of_group) {
+    (!datagram.payload.is_empty() || has_properties) {
     return Err(InvalidDatagram)
   }
   let bytes : Array[Byte] = []
@@ -77,11 +95,14 @@ pub fn encode_object_datagram(
 }
 
 ///|
-/// Decode one complete Draft 18 OBJECT_DATAGRAM.
-pub fn decode_object_datagram(input : Bytes) -> DecodeResult[ObjectDatagram] {
+/// Decode one complete Draft 18 OBJECT_DATAGRAM or padding datagram.
+pub fn decode_datagram(input : Bytes) -> DecodeResult[ReceivedDatagram] {
   let (kind, after_kind) = match read_vi64(input, 0, input.length()) {
     Some(value) => value
     None => return Incomplete
+  }
+  if kind == 0x132b3e29UL {
+    return Complete(Padding, input.length())
   }
   if (kind & 0xd0UL) != 0UL ||
     ((kind & 0x20UL) != 0UL && (kind & 0x02UL) != 0UL) {
@@ -161,7 +182,7 @@ pub fn decode_object_datagram(input : Bytes) -> DecodeResult[ObjectDatagram] {
     input[next:].to_owned()
   }
   Complete(
-    {
+    Object({
       track_alias,
       group_id,
       object_id,
@@ -170,7 +191,18 @@ pub fn decode_object_datagram(input : Bytes) -> DecodeResult[ObjectDatagram] {
       properties,
       status,
       payload,
-    },
+    }),
     input.length(),
   )
+}
+
+///|
+/// Decode one complete Draft 18 OBJECT_DATAGRAM.
+pub fn decode_object_datagram(input : Bytes) -> DecodeResult[ObjectDatagram] {
+  match decode_datagram(input) {
+    Complete(Object(datagram), consumed) => Complete(datagram, consumed)
+    Complete(Padding, _) => Invalid(InvalidDatagram)
+    Incomplete => Incomplete
+    Invalid(error) => Invalid(error)
+  }
 }

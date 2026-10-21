@@ -251,6 +251,21 @@ test "unknown, malformed, and post-cancel datagrams do not reach the application
   let subscriber = subscriber_started()
   assert_eq(
     subscriber.receive(
+      @session.DatagramReceived(b"\xf0\x13\x2b\x3e\x29\xff\x80\x01"),
+    ),
+    Ok([]),
+  )
+  // These two datagrams form a valid wire only if their bytes are combined.
+  assert_eq(
+    subscriber.receive(@session.DatagramReceived(b"\x0c\x01")),
+    Err(@session.UnexpectedMessage),
+  )
+  assert_eq(
+    subscriber.receive(@session.DatagramReceived(b"\x02\x04")),
+    Err(@session.UnexpectedMessage),
+  )
+  assert_eq(
+    subscriber.receive(
       @session.DatagramReceived(
         @protocol.encode_object_datagram(update_datagram(99, 1, b"unknown")).unwrap(),
       ),
