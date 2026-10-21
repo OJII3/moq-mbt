@@ -13,12 +13,7 @@ priv struct ClientRequest {
   mut response_buffer : Bytes
   mut accepted : Bool
   mut terminal : Bool
-  mut cancelled : Bool
-  mut send_closed : Bool
-  mut receive_closed : Bool
-  mut end_notified : Bool
-  mut cancel_error_code : UInt64?
-  mut publish_done_received : Bool
+  lifetime : RequestLifetime
   mut observed_object_streams : UInt64
   mut active_object_streams : UInt64
   mut pending_publish_done : @protocol.PublishDoneMessage?
@@ -39,9 +34,7 @@ priv struct InboundSubscription {
   publisher_request_id : UInt64
   mut state : SubscriptionState
   parameters : Array[@protocol.MessageParameter]
-  mut cancelled : Bool
-  mut send_closed : Bool
-  mut receive_closed : Bool
+  lifetime : RequestLifetime
 }
 
 ///|
@@ -103,13 +96,13 @@ fn ClientSession::receive_response(
   bytes : Bytes,
 ) -> Result[Array[ClientSessionAction], ClientSessionError] {
   let request = self.requests.get(request_id).unwrap()
-  if request.cancelled {
+  if request.lifetime.cancelled {
     if request.kind == Subscribing && request.track_alias is None {
       self.remember_cancelled_subscribe_alias(request_id, request, bytes)
     }
     return Ok([])
   }
-  if request.receive_closed {
+  if request.lifetime.peer_send_closed {
     return Ok([])
   }
   if request.terminal {
@@ -260,7 +253,6 @@ fn ClientSession::receive_publish_done(
   }
   request.terminal = true
   request.pending_local_update = None
-  request.publish_done_received = true
   request.pending_publish_done = Some(message)
   match self.take_ready_publish_done(request_id) {
     Some(done) => Ok([Notify(PublishDone(request_id, done))])
@@ -297,8 +289,8 @@ fn ClientSession::receive_peer_request(
   bytes : Bytes,
 ) -> Result[Array[ClientSessionAction], ClientSessionError] {
   match self.inbound_subscriptions.get(stream) {
-    Some(inbound) if inbound.cancelled || inbound.receive_closed =>
-      return Ok([])
+    Some(inbound) if inbound.lifetime.cancelled ||
+      inbound.lifetime.peer_send_closed => return Ok([])
     _ => ()
   }
   let buffer = match self.inbound_buffers.get(stream) {
@@ -353,9 +345,7 @@ fn ClientSession::receive_peer_request(
                 publisher_request_id,
                 state: Pending,
                 parameters: request.parameters,
-                cancelled: false,
-                send_closed: false,
-                receive_closed: false,
+                lifetime: RequestLifetime::new(),
               }
               actions.push(
                 Notify(
@@ -409,6 +399,27 @@ fn ClientSession::find_publisher(
 }
 
 ///|
+fn ClientSession::note_request_local_fin(
+  self : ClientSession,
+  stream : Int64,
+) -> Unit {
+  match self.inbound_subscriptions.get(stream) {
+    Some(inbound) => ignore(inbound.lifetime.transition(LocalFin, true))
+    None =>
+      match self.request_streams.get(stream) {
+        Some(request_id) =>
+          ignore(
+            self.requests.get(request_id).unwrap().lifetime.transition(
+              LocalFin,
+              true,
+            ),
+          )
+        None => ()
+      }
+  }
+}
+
+///|
 /// Start a local PUBLISH request. IDs are shared with SUBSCRIBE and increase by
 /// two, starting at the client-reserved even ID 0.
 pub fn ClientSession::publish_track(
@@ -439,12 +450,7 @@ pub fn ClientSession::publish_track(
     response_buffer: b"",
     accepted: false,
     terminal: false,
-    cancelled: false,
-    send_closed: false,
-    receive_closed: false,
-    end_notified: false,
-    cancel_error_code: None,
-    publish_done_received: false,
+    lifetime: RequestLifetime::new(),
     observed_object_streams: 0UL,
     active_object_streams: 0UL,
     pending_publish_done: None,
@@ -483,12 +489,7 @@ pub fn ClientSession::subscribe_track(
     response_buffer: b"",
     accepted: false,
     terminal: false,
-    cancelled: false,
-    send_closed: false,
-    receive_closed: false,
-    end_notified: false,
-    cancel_error_code: None,
-    publish_done_received: false,
+    lifetime: RequestLifetime::new(),
     observed_object_streams: 0UL,
     active_object_streams: 0UL,
     pending_publish_done: None,
@@ -577,6 +578,7 @@ pub fn ClientSession::reject_subscription(
     Err(error) => return Err(Encoding(error))
   }
   inbound.state = Ended
+  self.note_request_local_fin(stream)
   Ok(
     self.finish_actions([
       Send(stream, response, true),
@@ -599,24 +601,22 @@ pub fn ClientSession::cancel_request(
   }
   match self.requests.get(request_id) {
     Some(request) => {
-      let pending_failure = match request.stream {
+      let publisher_pending_publish_done = match request.stream {
         Some(stream) => self.has_pending_publish_done(stream)
         None => false
       }
-      if request.cancelled || (request.terminal && !pending_failure) {
+      let pending_publish_done = request.pending_publish_done is Some(_) ||
+        publisher_pending_publish_done
+      if request.lifetime.cancelled ||
+        (request.terminal && !pending_publish_done) {
         return Ok([])
       }
       match request.stream {
         Some(stream) =>
-          Ok(
-            self.finish_actions(
-              self.end_request_stream(stream, 1UL, false, false),
-            ),
-          )
+          Ok(self.finish_actions(self.end_request_stream(stream, Cancel(1UL))))
         None => {
           request.terminal = true
-          request.cancelled = true
-          request.cancel_error_code = Some(1UL)
+          ignore(request.lifetime.transition(Cancel(1UL), false))
           request.response_buffer = b""
           request.pending_local_update = None
           Ok(self.finish_actions([]))
@@ -626,11 +626,7 @@ pub fn ClientSession::cancel_request(
     None =>
       match self.peer_request_ids.get(request_id) {
         Some(stream) =>
-          Ok(
-            self.finish_actions(
-              self.end_request_stream(stream, 1UL, false, false),
-            ),
-          )
+          Ok(self.finish_actions(self.end_request_stream(stream, Cancel(1UL))))
         None => Err(UnknownRequest)
       }
   }
@@ -640,16 +636,11 @@ pub fn ClientSession::cancel_request(
 fn ClientSession::end_request_stream(
   self : ClientSession,
   stream : Int64,
-  error_code : UInt64,
-  send_stopped : Bool,
-  receive_ended : Bool,
+  event : RequestLifetimeEvent,
 ) -> Array[ClientSessionAction] {
   self.request_goaway_deadlines.remove(stream)
   match self.inbound_subscriptions.get(stream) {
-    Some(_) =>
-      return self.end_inbound_subscription(
-        stream, error_code, send_stopped, receive_ended,
-      )
+    Some(_) => return self.end_inbound_subscription(stream, event)
     None => ()
   }
   let request_id = match self.request_streams.get(stream) {
@@ -657,32 +648,31 @@ fn ClientSession::end_request_stream(
     None => return []
   }
   let request = self.requests.get(request_id).unwrap()
-  if send_stopped {
-    request.send_closed = true
-  }
-  if receive_ended {
-    request.receive_closed = true
-  }
-  if request.cancelled ||
-    (request.terminal && !self.has_pending_publish_done(stream)) {
+  let publisher_pending_publish_done = self.has_pending_publish_done(stream)
+  let pending_publish_done = request.pending_publish_done is Some(_) ||
+    publisher_pending_publish_done
+  if request.terminal && !pending_publish_done && !request.lifetime.cancelled {
     return []
   }
+  let effects = request.lifetime.transition(event, true)
+  if !effects.abort_send && !effects.stop_receiving && !effects.notify_end {
+    return []
+  }
+  let error_code = request.lifetime.cancel_error_code.unwrap()
   request.terminal = true
-  request.cancelled = true
-  request.cancel_error_code = Some(error_code)
-  if request.kind != Subscribing || request.accepted || receive_ended {
+  if request.kind != Subscribing ||
+    request.accepted ||
+    request.lifetime.peer_send_closed {
     request.response_buffer = b""
   }
   request.pending_local_update = None
   request.pending_publish_done = None
 
   let actions : Array[ClientSessionAction] = []
-  if !request.send_closed {
-    request.send_closed = true
+  if effects.abort_send {
     actions.push(AbortSend(stream, error_code))
   }
-  if !request.receive_closed {
-    request.receive_closed = true
+  if effects.stop_receiving {
     actions.push(StopReceiving(stream, error_code))
   }
   for action in self.cancel_outgoing_object_streams(stream, error_code) {
@@ -704,14 +694,14 @@ fn ClientSession::end_request_stream(
     for child_stream in child_streams {
       for
         action in self.end_inbound_subscription(
-          child_stream, error_code, false, false,
+          child_stream,
+          Cancel(error_code),
         ) {
         actions.push(action)
       }
     }
   }
-  if !request.end_notified {
-    request.end_notified = true
+  if effects.notify_end {
     actions.push(Notify(SubscriptionEnded(request_id, stream)))
   }
   actions
@@ -721,41 +711,38 @@ fn ClientSession::end_request_stream(
 fn ClientSession::end_inbound_subscription(
   self : ClientSession,
   stream : Int64,
-  error_code : UInt64,
-  send_stopped : Bool,
-  receive_ended : Bool,
+  event : RequestLifetimeEvent,
 ) -> Array[ClientSessionAction] {
   self.request_goaway_deadlines.remove(stream)
   let inbound = match self.inbound_subscriptions.get(stream) {
     Some(value) => value
     None => return []
   }
-  if send_stopped {
-    inbound.send_closed = true
-  }
-  if receive_ended {
-    inbound.receive_closed = true
-  }
-  if inbound.cancelled ||
-    (inbound.state == Ended && !self.has_pending_publish_done(stream)) {
+  if inbound.state == Ended &&
+    !self.has_pending_publish_done(stream) &&
+    !inbound.lifetime.cancelled {
     return []
   }
+  let effects = inbound.lifetime.transition(event, true)
+  if !effects.abort_send && !effects.stop_receiving && !effects.notify_end {
+    return []
+  }
+  let error_code = inbound.lifetime.cancel_error_code.unwrap()
   inbound.state = Ended
-  inbound.cancelled = true
   self.inbound_buffers.remove(stream)
   let actions : Array[ClientSessionAction] = []
-  if !inbound.send_closed {
-    inbound.send_closed = true
+  if effects.abort_send {
     actions.push(AbortSend(stream, error_code))
   }
-  if !inbound.receive_closed {
-    inbound.receive_closed = true
+  if effects.stop_receiving {
     actions.push(StopReceiving(stream, error_code))
   }
   for action in self.cancel_outgoing_object_streams(stream, error_code) {
     actions.push(action)
   }
-  actions.push(Notify(SubscriptionEnded(inbound.request_id, stream)))
+  if effects.notify_end {
+    actions.push(Notify(SubscriptionEnded(inbound.request_id, stream)))
+  }
   actions
 }
 

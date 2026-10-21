@@ -365,6 +365,7 @@ fn ClientSession::finish_failed_subscription(
     Ok(value) => value
     Err(_) => return []
   }
+  self.note_request_local_fin(stream)
   [
     Send(stream, bytes, true),
     Notify(PublishDone(subscription.request_id, done)),
