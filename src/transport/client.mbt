@@ -277,6 +277,7 @@ pub fn Client::next_event(
           self.streams.remove(id)
           native_stream_close(raw, stream)
         }
+        return StreamClosed(id)
       }
       11 => {
         let id = native_event_id(raw)

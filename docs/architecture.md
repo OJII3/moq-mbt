@@ -40,6 +40,8 @@ request stream の ID 索引は session の存続中 tombstone として保持�
 
 Draft 18 では `MAX_REQUEST_ID` / `REQUESTS_BLOCKED` と独立したキャンセルメッセージが削除されている。購読更新には `REQUEST_UPDATE`、キャンセルには開いているストリーム方向への `STOP_SENDING` / reset を使う。仕様の [§3.3.2](https://www.ietf.org/archive/id/draft-ietf-moq-transport-18.html#section-3.3.2)、[§10.9](https://www.ietf.org/archive/id/draft-ietf-moq-transport-18.html#section-10.9)、[Appendix A.2](https://www.ietf.org/archive/id/draft-ietf-moq-transport-18.html#appendix-A.2) を参照する。
 
+`scripts/check-interop.sh` は固定 moq5 relay に対して更新の FORWARD 切替、stream shutdown が完了する購読解除、独立した track の継続、Object Datagram と Subgroup の混在を確認する。Datagram は QUIC 上で順序や配送を保証しないため、通常 payload のサンプル受信以外は全件・順序を成功条件にしない。relay CLI で再現できない更新拒否と relay 発 GOAWAY は session の Sans-I/O テストで確認し、ネットワークで確認した範囲と区別する。
+
 ## 追加する構成
 
 ```text

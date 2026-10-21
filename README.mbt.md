@@ -20,11 +20,12 @@ MoQ (Media over QUIC Transport) implementation in [MoonBit](https://www.moonbitl
 ## Status
 
 This project is currently under early and active development. The current
-Draft 18 implementation supports SETUP and one publisher/subscriber pair for a
-track, with multiple Objects delivered across reliable Subgroup streams:
+Draft 18 implementation supports SETUP, multi-track requests, subscription
+updates and cancellation, GOAWAY draining, reliable Subgroup streams, and
+Object Datagrams:
 
 - `protocol`: vi64 integers, SETUP and request framing, Subgroup objects.
-- `session`: incremental handshake, multiple track requests, and multiple Object streams.
+- `session`: incremental handshake, multiple track requests, subscription lifecycle, and multiple Object streams.
 - `transport`: native MsQuic client using the `moqt-18` ALPN.
 - `cmd/setup_probe`: a client that exchanges SETUP with an external relay.
 - `cmd/track_probe`: publisher and subscriber probes for configurable Object counts across Groups.
@@ -40,10 +41,11 @@ Run the local Draft 18 interoperability check with:
 nix develop -c bash scripts/check-interop.sh
 ```
 
-The check starts a relay on `127.0.0.1:4443`, exchanges SETUP, publishes a
-single track with multiple Objects across multiple Groups, and verifies Object
-order, payloads, Group completion, `PUBLISH_DONE`, and the relay's SETUP
-acknowledgements. It then cleans up the relay and temporary certificates.
+The check starts pinned moq5 and moq-rs relays on `127.0.0.1:4443`. It verifies
+SETUP, multi-Object/Group delivery, `PUBLISH_DONE`, moq5 subscription updates,
+unsubscription with an independent track continuing, and Object Datagram
+fields. Refusal and relay-originated GOAWAY cases use deterministic Sans-I/O
+session tests because the relay CLI cannot trigger them.
 See [interop notes](docs/interop.md) for details and connecting to another relay.
 
 ## References

@@ -152,9 +152,10 @@ run_interop() {
     echo "$relay subscriber did not verify all $expected_objects Objects and PUBLISH_DONE" >&2
     return 1
   fi
-  if [[ "$relay" == moq5 ]] && ! grep -Fq 'Received Object Datagram' "$prefix-subscriber.log"; then
+  if [[ "$relay" == moq5 ]] && \
+    ! grep -Fq 'Received Object Datagram (normal payload)' "$prefix-subscriber.log"; then
     cat "$prefix-publisher.log" "$prefix-subscriber.log" "$prefix-relay.log" >&2
-    echo "$relay subscriber did not receive the Object Datagram alongside stream Objects" >&2
+    echo "$relay subscriber did not receive the sample Object Datagram alongside stream Objects" >&2
     return 1
   fi
   for group in 0 1 2; do
@@ -182,5 +183,34 @@ run_interop() {
   stop_relay
 }
 
+run_lifecycle_interop() {
+  local prefix="$task_tmp/moq5-lifecycle"
+  echo "Checking Draft 18 update and cancellation interoperability with moq5"
+  start_relay moq5
+  if ! moon run --release --target native src/cmd/track_probe -- \
+    lifecycle 127.0.0.1 4443 /moq --insecure >"$prefix.log" 2>&1; then
+    cat "$prefix.log" "$task_tmp/moq5-relay.log" >&2
+    return 1
+  fi
+  for expected in \
+    'REQUEST_UPDATE FORWARD=0 accepted' \
+    'REQUEST_UPDATE FORWARD=1 accepted' \
+    'Received track B group 0 while track A was paused' \
+    'Received track A group 0 after forwarding resumed' \
+    'Track A subscription cancelled' \
+    'Track A request stream shutdown completed' \
+    'Received track B group 1 after track A cancellation' \
+    'Lifecycle and independent-track scenario passed'; do
+    if ! grep -Fq "$expected" "$prefix.log"; then
+      cat "$prefix.log" "$task_tmp/moq5-relay.log" >&2
+      echo "moq5 lifecycle probe did not report: $expected" >&2
+      return 1
+    fi
+  done
+  cat "$prefix.log"
+  stop_relay
+}
+
 run_interop moq5
+run_lifecycle_interop
 run_interop moq-rs

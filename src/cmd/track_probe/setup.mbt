@@ -253,8 +253,10 @@ fn setup_client(
           )
           ignore(notices)
         }
-      StreamFinished(_) | StreamReset(_, _) | SendStopped(_, _) =>
-        fail("peer control stream ended during SETUP")
+      StreamFinished(_)
+      | StreamClosed(_)
+      | StreamReset(_, _)
+      | SendStopped(_, _) => fail("peer control stream ended during SETUP")
       Closed(code) => {
         let (notices, _) = drive_session_result(
           client,
