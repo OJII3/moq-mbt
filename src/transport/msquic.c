@@ -15,7 +15,8 @@ typedef struct event {
 } event;
 
 typedef struct datagram_send {
-    size_t size;
+    struct datagram_send *next;
+    uint64_t id;
     QUIC_BUFFER buffer;
     uint8_t data[];
 } datagram_send;
@@ -24,13 +25,28 @@ typedef struct client {
     const QUIC_API_TABLE *api;
     HQUIC registration, configuration, connection;
     pthread_mutex_t mutex;
+    pthread_cond_t shutdown_complete;
     event *head, *tail, *current;
+    datagram_send *pending_datagrams;
     size_t queued_bytes;
     unsigned queued_events;
     uint16_t max_datagram_length;
     int datagram_send_enabled;
+    int connection_started;
     int failed, closed;
 } client;
+
+static int unlink_datagram_locked(client *c, datagram_send *send) {
+    datagram_send **link = &c->pending_datagrams;
+    while (*link) {
+        if (*link == send) {
+            *link = send->next;
+            return 1;
+        }
+        link = &(*link)->next;
+    }
+    return 0;
+}
 
 static void push(client *c, int type, uint64_t id, uint64_t code, HQUIC stream, const uint8_t *data, size_t size) {
     pthread_mutex_lock(&c->mutex);
@@ -91,6 +107,8 @@ static QUIC_STATUS QUIC_API conn_cb(HQUIC conn, void *ctx, QUIC_CONNECTION_EVENT
         c->datagram_send_enabled = e->DATAGRAM_STATE_CHANGED.SendEnabled;
         c->max_datagram_length = e->DATAGRAM_STATE_CHANGED.MaxSendLength;
         pthread_mutex_unlock(&c->mutex);
+        push(c, 14, e->DATAGRAM_STATE_CHANGED.SendEnabled,
+             e->DATAGRAM_STATE_CHANGED.MaxSendLength, NULL, NULL, 0);
         break;
     case QUIC_CONNECTION_EVENT_DATAGRAM_RECEIVED:
         push(c, 12, 0, 0, NULL,
@@ -98,11 +116,16 @@ static QUIC_STATUS QUIC_API conn_cb(HQUIC conn, void *ctx, QUIC_CONNECTION_EVENT
              e->DATAGRAM_RECEIVED.Buffer->Length);
         break;
     case QUIC_CONNECTION_EVENT_DATAGRAM_SEND_STATE_CHANGED:
-        if (QUIC_DATAGRAM_SEND_STATE_IS_FINAL(e->DATAGRAM_SEND_STATE_CHANGED.State)) {
+        {
             datagram_send *send = e->DATAGRAM_SEND_STATE_CHANGED.ClientContext;
             if (send) {
-                push(c, 13, send->size, 0, NULL, NULL, 0);
-                free(send);
+                push(c, 13, send->id, e->DATAGRAM_SEND_STATE_CHANGED.State, NULL, NULL, 0);
+                if (QUIC_DATAGRAM_SEND_STATE_IS_FINAL(e->DATAGRAM_SEND_STATE_CHANGED.State)) {
+                    pthread_mutex_lock(&c->mutex);
+                    unlink_datagram_locked(c, send);
+                    pthread_mutex_unlock(&c->mutex);
+                    free(send);
+                }
             }
         }
         break;
@@ -116,11 +139,22 @@ static QUIC_STATUS QUIC_API conn_cb(HQUIC conn, void *ctx, QUIC_CONNECTION_EVENT
     case QUIC_CONNECTION_EVENT_SHUTDOWN_INITIATED_BY_PEER:
         push(c, 4, 0, e->SHUTDOWN_INITIATED_BY_PEER.ErrorCode, NULL, NULL, 0);
         break;
-    case QUIC_CONNECTION_EVENT_SHUTDOWN_COMPLETE:
+    case QUIC_CONNECTION_EVENT_SHUTDOWN_COMPLETE: {
+        pthread_mutex_lock(&c->mutex);
+        datagram_send *pending = c->pending_datagrams;
+        c->pending_datagrams = NULL;
+        pthread_mutex_unlock(&c->mutex);
+        while (pending) {
+            datagram_send *next = pending->next;
+            free(pending);
+            pending = next;
+        }
         pthread_mutex_lock(&c->mutex);
         c->closed = 1;
+        pthread_cond_broadcast(&c->shutdown_complete);
         pthread_mutex_unlock(&c->mutex);
         break;
+    }
     case QUIC_CONNECTION_EVENT_PEER_STREAM_STARTED: {
         HQUIC stream = e->PEER_STREAM_STARTED.Stream;
         uint64_t id = 0;
@@ -145,14 +179,38 @@ void moq_client_shutdown(client *c, int64_t code) {
         c->api->ConnectionShutdown(c->connection, QUIC_CONNECTION_SHUTDOWN_FLAG_NONE, (uint64_t)code & QUIC_UINT62_MAX);
 }
 
+int32_t moq_client_shutdown_complete(client *c) {
+    if (!c) return 1;
+    pthread_mutex_lock(&c->mutex);
+    int complete = c->closed;
+    pthread_mutex_unlock(&c->mutex);
+    return complete;
+}
+
 void moq_client_free(client *c) {
     if (!c) return;
+    if (c->connection && c->connection_started) {
+        pthread_mutex_lock(&c->mutex);
+        int complete = c->closed;
+        pthread_mutex_unlock(&c->mutex);
+        if (!complete) {
+            c->api->ConnectionShutdown(c->connection, QUIC_CONNECTION_SHUTDOWN_FLAG_NONE, 0);
+            pthread_mutex_lock(&c->mutex);
+            while (!c->closed) pthread_cond_wait(&c->shutdown_complete, &c->mutex);
+            pthread_mutex_unlock(&c->mutex);
+        }
+    }
     if (c->connection) c->api->ConnectionClose(c->connection);
     if (c->configuration) c->api->ConfigurationClose(c->configuration);
     if (c->registration) c->api->RegistrationClose(c->registration);
     if (c->api) MsQuicClose(c->api);
     for (event *e = c->head, *next; e; e = next) { next = e->next; free(e); }
     free(c->current);
+    for (datagram_send *send = c->pending_datagrams, *next; send; send = next) {
+        next = send->next;
+        free(send);
+    }
+    pthread_cond_destroy(&c->shutdown_complete);
     pthread_mutex_destroy(&c->mutex);
     free(c);
 }
@@ -161,6 +219,7 @@ client *moq_client_connect(moonbit_bytes_t host, int32_t port, moonbit_bytes_t a
     client *c = calloc(1, sizeof(*c));
     if (!c) return NULL;
     pthread_mutex_init(&c->mutex, NULL);
+    pthread_cond_init(&c->shutdown_complete, NULL);
     QUIC_REGISTRATION_CONFIG reg = { "moq-mbt", QUIC_EXECUTION_PROFILE_LOW_LATENCY };
     QUIC_BUFFER alpn_buf = { (uint32_t)alpn_len, alpn };
     QUIC_SETTINGS settings = {
@@ -172,11 +231,16 @@ client *moq_client_connect(moonbit_bytes_t host, int32_t port, moonbit_bytes_t a
         QUIC_FAILED(c->api->RegistrationOpen(&reg, &c->registration)) ||
         QUIC_FAILED(c->api->ConfigurationOpen(c->registration, &alpn_buf, 1, &settings, sizeof(settings), NULL, &c->configuration)) ||
         QUIC_FAILED(c->api->ConfigurationLoadCredential(c->configuration, &cred)) ||
-        QUIC_FAILED(c->api->ConnectionOpen(c->registration, conn_cb, c, &c->connection)) ||
-        QUIC_FAILED(c->api->ConnectionStart(c->connection, c->configuration, QUIC_ADDRESS_FAMILY_UNSPEC, (const char *)host, (uint16_t)port))) {
+        QUIC_FAILED(c->api->ConnectionOpen(c->registration, conn_cb, c, &c->connection))) {
         moq_client_free(c);
         return NULL;
     }
+    QUIC_STATUS status = c->api->ConnectionStart(c->connection, c->configuration, QUIC_ADDRESS_FAMILY_UNSPEC, (const char *)host, (uint16_t)port);
+    if (QUIC_FAILED(status)) {
+        moq_client_free(c);
+        return NULL;
+    }
+    c->connection_started = 1;
     return c;
 }
 
@@ -218,27 +282,41 @@ int32_t moq_client_stop_receiving(client *c, HQUIC s, int64_t error_code) {
     return (int32_t)c->api->StreamShutdown(s, QUIC_STREAM_SHUTDOWN_FLAG_ABORT_RECEIVE, (uint64_t)error_code);
 }
 
-int32_t moq_client_send_datagram(client *c, moonbit_bytes_t data, int32_t len) {
+int32_t moq_client_send_datagram(client *c, moonbit_bytes_t data, int32_t len, int64_t id) {
     if (len < 0) return -1;
     pthread_mutex_lock(&c->mutex);
-    if (!c->datagram_send_enabled || (uint32_t)len > c->max_datagram_length) {
-        pthread_mutex_unlock(&c->mutex);
-        return -1;
-    }
+    int enabled = c->datagram_send_enabled;
+    uint16_t max_length = c->max_datagram_length;
     pthread_mutex_unlock(&c->mutex);
+    if (!enabled) return 1;
+    if ((uint32_t)len > max_length) return 2;
 
     datagram_send *send = malloc(sizeof(*send) + (size_t)len);
-    if (!send) return -1;
-    send->size = (size_t)len;
+    if (!send) return 3;
+    send->id = (uint64_t)id;
     send->buffer = (QUIC_BUFFER){ (uint32_t)len, send->data };
     if (len) memcpy(send->data, data, (size_t)len);
+    pthread_mutex_lock(&c->mutex);
+    send->next = c->pending_datagrams;
+    c->pending_datagrams = send;
+    pthread_mutex_unlock(&c->mutex);
     QUIC_STATUS status = c->api->DatagramSend(c->connection, &send->buffer, 1,
                                                QUIC_SEND_FLAG_NONE, send);
     if (QUIC_FAILED(status)) {
+        pthread_mutex_lock(&c->mutex);
+        unlink_datagram_locked(c, send);
+        pthread_mutex_unlock(&c->mutex);
         free(send);
         return (int32_t)status;
     }
     return 0;
+}
+
+int64_t moq_client_datagram_state(client *c) {
+    pthread_mutex_lock(&c->mutex);
+    int64_t state = ((int64_t)c->max_datagram_length << 1) | (c->datagram_send_enabled ? 1 : 0);
+    pthread_mutex_unlock(&c->mutex);
+    return state;
 }
 
 int32_t moq_client_pop(client *c) {

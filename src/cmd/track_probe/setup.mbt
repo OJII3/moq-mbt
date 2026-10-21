@@ -53,7 +53,7 @@ fn drive_session_actions(
         }
         send_counts[stream] = count + 1UL
       }
-      @session.SendDatagram(bytes) => client.send_datagram(bytes)
+      @session.SendDatagram(bytes) => ignore(client.send_datagram(bytes))
       @session.AbortSend(stream, error_code) =>
         client.abort_send(stream, error_code.reinterpret_as_int64())
       @session.StopReceiving(stream, error_code) =>
@@ -219,15 +219,17 @@ fn setup_client(
           setup_acknowledged = true
         }
       }
-      DatagramSendComplete => {
-        let (notices, _) = drive_session_result(
-          client,
-          session,
-          receive_session_event(session, @session.DatagramSendComplete),
-          send_counts,
-        )
-        ignore(notices)
-      }
+      DatagramStateChanged(_) => ()
+      DatagramSendStateChanged(_, state) =>
+        if state.is_final() {
+          let (notices, _) = drive_session_result(
+            client,
+            session,
+            receive_session_event(session, @session.DatagramSendComplete),
+            send_counts,
+          )
+          ignore(notices)
+        }
       StreamFinished(_) | StreamReset(_, _) | SendStopped(_, _) =>
         fail("peer control stream ended during SETUP")
       Closed(code) => {

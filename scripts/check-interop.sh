@@ -103,8 +103,25 @@ run_interop() {
   fi
   cat "$prefix-probe.log"
 
+  local datagram_flags=()
+  if [[ "$relay" == moq5 ]]; then
+    if ! moon run --release --target native src/cmd/track_probe -- \
+      datagram-smoke 127.0.0.1 4443 /moq --insecure >"$prefix-datagram.log" 2>&1; then
+      cat "$prefix-datagram.log" "$prefix-relay.log" >&2
+      return 1
+    fi
+    if ! grep -Fq 'Maximum-size boundary accepted; one byte over was rejected' "$prefix-datagram.log" || \
+      ! grep -Fq 'Datagram send queue limit enforced' "$prefix-datagram.log"; then
+      cat "$prefix-datagram.log" "$prefix-relay.log" >&2
+      echo "$relay did not pass the datagram boundary and queue checks" >&2
+      return 1
+    fi
+    datagram_flags=(--datagrams)
+    cat "$prefix-datagram.log"
+  fi
+
   moon run --release --target native src/cmd/track_probe -- \
-    publish 127.0.0.1 4443 /moq interop multi-object 3 2 --insecure \
+    publish 127.0.0.1 4443 /moq interop multi-object 3 2 "${datagram_flags[@]}" --insecure \
     >"$prefix-publisher.log" 2>&1 &
   publisher_pid=$!
   for ((attempt = 0; attempt < 100; attempt++)); do
@@ -120,7 +137,7 @@ run_interop() {
   done
 
   if ! moon run --release --target native src/cmd/track_probe -- \
-    subscribe 127.0.0.1 4443 /moq interop multi-object 3 2 --insecure \
+    subscribe 127.0.0.1 4443 /moq interop multi-object 3 2 "${datagram_flags[@]}" --insecure \
     >"$prefix-subscriber.log" 2>&1; then
     cat "$prefix-publisher.log" "$prefix-subscriber.log" "$prefix-relay.log" >&2
     return 1
@@ -128,11 +145,16 @@ run_interop() {
 
   local expected_objects=6
   local received_objects
-  received_objects=$(awk '/^Received Object / { count++ } END { print count+0 }' "$prefix-subscriber.log")
+  received_objects=$(awk '/^Received Object \(group / { count++ } END { print count+0 }' "$prefix-subscriber.log")
   if [[ "$received_objects" != "$expected_objects" ]] || \
     ! grep -Fq 'Verified 6 Objects across 3 groups; PUBLISH_DONE received' "$prefix-subscriber.log"; then
     cat "$prefix-publisher.log" "$prefix-subscriber.log" "$prefix-relay.log" >&2
     echo "$relay subscriber did not verify all $expected_objects Objects and PUBLISH_DONE" >&2
+    return 1
+  fi
+  if [[ "$relay" == moq5 ]] && ! grep -Fq 'Received Object Datagram' "$prefix-subscriber.log"; then
+    cat "$prefix-publisher.log" "$prefix-subscriber.log" "$prefix-relay.log" >&2
+    echo "$relay subscriber did not receive the Object Datagram alongside stream Objects" >&2
     return 1
   fi
   for group in 0 1 2; do

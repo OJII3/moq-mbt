@@ -1,6 +1,11 @@
 ///|
 pub(all) suberror TransportError {
   TransportError(String)
+  DatagramSendUnavailable
+  DatagramTooLarge(Int32, Int32)
+  DatagramSendQueueFull
+  DatagramSendAllocationFailed
+  DatagramSendFailed(Int32)
 } derive(Debug)
 
 ///|
@@ -19,16 +24,67 @@ pub extend StreamDirection with @moonbitlang/core/debug.Debug::{to_repr}
 pub extend StreamDirection with Eq::{equal, not_equal}
 
 ///|
+pub(all) struct DatagramSendCapability {
+  enabled : Bool
+  max_length : Int32
+} derive(Debug, Eq)
+
+///|
+pub extend DatagramSendCapability with @moonbitlang/core/debug.Debug::{to_repr}
+
+///|
+pub extend DatagramSendCapability with Eq::{equal, not_equal}
+
+///|
+pub(all) enum DatagramSendState {
+  Unknown(Int32)
+  Sent
+  LostSuspect
+  LostDiscarded
+  Acknowledged
+  AcknowledgedSpurious
+  Canceled
+} derive(Debug, Eq)
+
+///|
+pub extend DatagramSendState with @moonbitlang/core/debug.Debug::{to_repr}
+
+///|
+pub extend DatagramSendState with Eq::{equal, not_equal}
+
+///|
+pub fn DatagramSendState::is_final(self : DatagramSendState) -> Bool {
+  match self {
+    LostDiscarded | Acknowledged | AcknowledgedSpurious | Canceled => true
+    Unknown(_) | Sent | LostSuspect => false
+  }
+}
+
+///|
+fn datagram_send_state_from_code(code : Int32) -> DatagramSendState {
+  match code {
+    1 => Sent
+    2 => LostSuspect
+    3 => LostDiscarded
+    4 => Acknowledged
+    5 => AcknowledgedSpurious
+    6 => Canceled
+    _ => Unknown(code)
+  }
+}
+
+///|
 pub(all) enum Event {
   Connected
   StreamStarted(Int64, StreamDirection)
   Data(Int64, Bytes)
   Datagram(Bytes)
+  DatagramStateChanged(DatagramSendCapability)
+  DatagramSendStateChanged(Int64, DatagramSendState)
   StreamFinished(Int64)
   StreamReset(Int64, Int64)
   SendStopped(Int64, Int64)
   SendComplete(Int64, Bool)
-  DatagramSendComplete
   Closed(Int64)
   TransportClosed(Int32)
   QueueOverflow

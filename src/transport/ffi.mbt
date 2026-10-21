@@ -64,7 +64,11 @@ extern "C" fn native_send_datagram(
   client : RawClient,
   data : Bytes,
   length : Int32,
+  id : Int64,
 ) -> Int32 = "moq_client_send_datagram"
+
+///|
+extern "C" fn native_datagram_state(client : RawClient) -> Int64 = "moq_client_datagram_state"
 
 ///|
 extern "C" fn native_pop(client : RawClient) -> Int32 = "moq_client_pop"
@@ -83,6 +87,9 @@ extern "C" fn native_event_stream(client : RawClient) -> RawStream = "moq_client
 
 ///|
 extern "C" fn native_shutdown(client : RawClient, error_code : Int64) -> Unit = "moq_client_shutdown"
+
+///|
+extern "C" fn native_shutdown_complete(client : RawClient) -> Bool = "moq_client_shutdown_complete"
 
 ///|
 extern "C" fn native_free(client : RawClient) -> Unit = "moq_client_free"
