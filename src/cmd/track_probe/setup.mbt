@@ -151,7 +151,9 @@ fn drive_session_actions(
             return (notices, opened)
           }
         }
-        if !accepted {
+        if accepted {
+          ignore(driver.pending.remove(0))
+        } else {
           blocked = true
         }
       }
