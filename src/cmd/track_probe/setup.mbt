@@ -63,6 +63,29 @@ fn SessionActionDriver::send_head(
 }
 
 ///|
+fn SessionActionDriver::send_datagram_head(
+  self : SessionActionDriver,
+  send : (Bytes) -> Unit raise @transport.TransportError,
+) -> Bool raise @transport.TransportError {
+  match self.pending[0] {
+    @session.SendDatagram(bytes) => {
+      let accepted = try {
+        send(bytes)
+        true
+      } catch {
+        @transport.DatagramSendQueueFull => false
+        error => raise error
+      }
+      if accepted {
+        ignore(self.pending.remove(0))
+      }
+      accepted
+    }
+    _ => false
+  }
+}
+
+///|
 fn end_driver_session(
   client : @transport.Client,
   session : @session.ClientSession,
@@ -139,21 +162,19 @@ fn drive_session_actions(
           blocked = true
         }
       }
-      @session.SendDatagram(bytes) => {
-        let accepted = try {
-          ignore(client.send_datagram(bytes))
-          true
-        } catch {
-          @transport.DatagramSendQueueFull => false
+      @session.SendDatagram(_) => {
+        let accepted = driver.send_datagram_head(fn(
+          b : Bytes,
+        ) raise @transport.TransportError {
+          ignore(client.send_datagram(b))
+        }) catch {
           _ => {
             driver.pending = []
             notices = notices + end_driver_session(client, session)
             return (notices, opened)
           }
         }
-        if accepted {
-          ignore(driver.pending.remove(0))
-        } else {
+        if !accepted {
           blocked = true
         }
       }

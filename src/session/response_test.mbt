@@ -59,14 +59,22 @@ test "ClientSession rejects a second initial response after either request is ac
     let session = publisher_announced()
     assert_eq(
       session.receive(@session.StreamData(20, response)),
-      Err(@session.UnexpectedMessage),
+      Ok([
+        @session.AbortSend(20, 3),
+        @session.StopReceiving(20, 3),
+        @session.Notify(@session.SubscriptionEnded(0, 20)),
+      ]),
     )
   }
   for response in [subscribe_ok, rejected] {
     let session = subscriber_started()
     assert_eq(
       session.receive(@session.StreamData(30, response)),
-      Err(@session.UnexpectedMessage),
+      Ok([
+        @session.AbortSend(30, 3),
+        @session.StopReceiving(30, 3),
+        @session.Notify(@session.SubscriptionEnded(0, 30)),
+      ]),
     )
   }
 }

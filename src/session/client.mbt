@@ -126,6 +126,7 @@ priv enum InboundStreamKind {
   Request
   Subgroup
   Padding
+  Discarded
 }
 
 ///|
@@ -374,7 +375,8 @@ fn ClientSession::protocol_error_actions(
           }
           None => ()
         }
-        self.inbound_stream_kinds.remove(stream)
+        // Retain a tombstone until FIN/reset so already queued data is ignored.
+        self.inbound_stream_kinds[stream] = Discarded
         actions.push(StopReceiving(stream, code))
         Some(actions)
       } else {
@@ -479,7 +481,7 @@ fn ClientSession::receive_stream_data(
         Some(Control) => self.receive_control(stream, bytes)
         Some(Request) => self.receive_request(stream, bytes)
         Some(Subgroup) => self.receive_subgroup(stream, bytes)
-        Some(Padding) => Ok([])
+        Some(Padding) | Some(Discarded) => Ok([])
         None =>
           match self.request_streams.get(stream) {
             Some(_) => self.receive_request(stream, bytes)

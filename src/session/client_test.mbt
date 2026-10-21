@@ -459,7 +459,7 @@ test "ClientSession shares even request IDs across tracks and routes interleaved
 }
 
 ///|
-test "ClientSession validates peer request IDs and preserves SETUP trailing control bytes" {
+test "ClientSession preserves SETUP trailing control bytes" {
   let client = @session.ClientSession::new(@session.Draft18, { options: [], }).unwrap()
   assert_eq(
     client.receive(@session.InboundStreamStarted(11, @session.Unidirectional)),
@@ -482,89 +482,90 @@ test "ClientSession validates peer request IDs and preserves SETUP trailing cont
       @session.Notify(@session.SessionEnded(@session.Local(0UL, b""))),
     ]),
   )
+}
 
-  let publisher = client_session_ready()
-  let track = client_track(b"video")
-  let (request_id, _) = publisher.publish_track(track, 1).unwrap()
-  assert_eq(request_id, 0UL)
+///|
+test "peer request ID parity and duplicate violations close the session" {
+  let track = publisher_track()
+  let invalid = publisher_announced()
   assert_eq(
-    publisher.receive(@session.StreamOpened(@session.Request(0), 20)),
-    Ok([
-      @session.Send(
-        20,
-        @protocol.encode_publish({
-          request_id: 0,
-          track,
-          track_alias: 1,
-          parameters: [],
-          properties: b"",
-        }).unwrap(),
-        false,
-      ),
-    ]),
-  )
-  assert_eq(
-    publisher.receive(
-      @session.StreamData(
-        20,
-        @protocol.encode_request_ok({ parameters: [], properties: b"", }).unwrap(),
-      ),
-    ),
-    Ok([@session.Notify(@session.PublishAccepted(0))]),
-  )
-  assert_eq(
-    publisher.receive(@session.InboundStreamStarted(44, @session.Bidirectional)),
+    invalid.receive(@session.InboundStreamStarted(40, @session.Bidirectional)),
     Ok([]),
   )
   assert_eq(
-    publisher.receive(
+    invalid.receive(
       @session.StreamData(
-        44,
+        40,
         @protocol.encode_subscribe({ request_id: 2, track, parameters: [], }).unwrap(),
       ),
     ),
-    Err(@session.InvalidRequestId),
+    Ok([
+      @session.CloseConnection(4, b""),
+      @session.Notify(@session.SessionEnded(@session.Local(4, b""))),
+    ]),
+  )
+  assert_eq(invalid.receive(@session.StreamData(40, b"")), Ok([]))
+  assert_eq(invalid.state(), @session.Closed)
+
+  let duplicate = publisher_announced()
+  assert_eq(
+    duplicate.receive(@session.InboundStreamStarted(40, @session.Bidirectional)),
+    Ok([]),
+  )
+  let first = @protocol.encode_subscribe({
+    request_id: 1,
+    track,
+    parameters: [],
+  }).unwrap()
+  assert_eq(
+    duplicate.receive(@session.StreamData(40, first)),
+    Ok([@session.Notify(@session.SubscriptionRequested(1, 40, track))]),
   )
   assert_eq(
-    publisher.receive(
-      @session.StreamData(
-        44,
-        @protocol.encode_subscribe({ request_id: 1, track, parameters: [], }).unwrap(),
-      ),
-    ),
-    Ok([@session.Notify(@session.SubscriptionRequested(1, 44, track))]),
-  )
-  assert_eq(
-    publisher.receive(@session.InboundStreamStarted(45, @session.Bidirectional)),
+    duplicate.receive(@session.InboundStreamStarted(41, @session.Bidirectional)),
     Ok([]),
   )
   assert_eq(
-    publisher.receive(
-      @session.StreamData(
-        45,
-        @protocol.encode_subscribe({ request_id: 1, track, parameters: [], }).unwrap(),
+    duplicate.receive(@session.StreamData(41, first)),
+    Ok([
+      @session.CloseConnection(4, b""),
+      @session.Notify(@session.SessionEnded(@session.Local(4, b""))),
+    ]),
+  )
+  assert_eq(duplicate.receive(@session.StreamData(41, b"")), Ok([]))
+  assert_eq(duplicate.state(), @session.Closed)
+}
+
+///|
+test "peer request ID parity accepts distinct odd IDs" {
+  let publisher = publisher_announced()
+  let track = publisher_track()
+  for (stream, request_id) in [(40L, 1UL), (41L, 3UL)] {
+    assert_eq(
+      publisher.receive(
+        @session.InboundStreamStarted(stream, @session.Bidirectional),
       ),
-    ),
-    Err(@session.DuplicateRequestId),
-  )
-  assert_eq(
-    publisher.receive(@session.InboundStreamStarted(46, @session.Bidirectional)),
-    Ok([]),
-  )
-  assert_eq(
-    publisher.receive(
-      @session.StreamData(
-        46,
-        @protocol.encode_subscribe({ request_id: 3, track, parameters: [], }).unwrap(),
+      Ok([]),
+    )
+    assert_eq(
+      publisher.receive(
+        @session.StreamData(
+          stream,
+          @protocol.encode_subscribe({ request_id, track, parameters: [], }).unwrap(),
+        ),
       ),
-    ),
-    Ok([@session.Notify(@session.SubscriptionRequested(3, 46, track))]),
-  )
+      Ok([
+        @session.Notify(
+          @session.SubscriptionRequested(request_id, stream, track),
+        ),
+      ]),
+    )
+  }
   assert_eq(
-    publisher.accept_subscription(44),
+    publisher.accept_subscription(40),
     Ok([
       @session.Send(
-        44,
+        40,
         @protocol.encode_subscribe_ok({
           track_alias: 1,
           parameters: [],
@@ -572,14 +573,14 @@ test "ClientSession validates peer request IDs and preserves SETUP trailing cont
         }).unwrap(),
         false,
       ),
-      @session.Notify(@session.SubscriptionAccepted(1, 44, 1)),
+      @session.Notify(@session.SubscriptionAccepted(1, 40, 1)),
     ]),
   )
   assert_eq(
-    publisher.accept_subscription(46),
+    publisher.accept_subscription(41),
     Ok([
       @session.Send(
-        46,
+        41,
         @protocol.encode_subscribe_ok({
           track_alias: 1,
           parameters: [],
@@ -587,7 +588,7 @@ test "ClientSession validates peer request IDs and preserves SETUP trailing cont
         }).unwrap(),
         false,
       ),
-      @session.Notify(@session.SubscriptionAccepted(3, 46, 1)),
+      @session.Notify(@session.SubscriptionAccepted(3, 41, 1)),
     ]),
   )
 }

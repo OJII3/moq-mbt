@@ -169,7 +169,7 @@ test "subscriber rejects unknown aliases and invalid object status" {
   let alias_wire = @protocol.encode_subgroup_header(bad_alias) + b"\x00\x01x"
   assert_eq(
     subscriber.receive(@session.StreamData(40, alias_wire)),
-    Err(@session.UnknownRequest),
+    Ok([@session.StopReceiving(40, 3)]),
   )
   subscriber_start_stream(subscriber, 41)
   let invalid_status = @protocol.encode_subgroup_header(
@@ -178,8 +178,11 @@ test "subscriber rejects unknown aliases and invalid object status" {
     b"\x00\x00\x01"
   assert_eq(
     subscriber.receive(@session.StreamData(41, invalid_status)),
-    Err(@session.Track(@session.InvalidControlMessage)),
+    Ok([@session.StopReceiving(41, 3)]),
   )
+  assert_eq(subscriber.receive(@session.StreamData(41, b"queued")), Ok([]))
+  assert_eq(subscriber.receive(@session.StreamReset(41, 1)), Ok([]))
+  assert_eq(subscriber.state(), @session.Active)
 }
 
 ///|
@@ -215,16 +218,22 @@ test "subscriber distinguishes FIN, reset, and incomplete frames" {
   )
   assert_eq(
     subscriber.receive(@session.StreamFinished(42)),
-    Err(@session.Track(@session.IncompleteObjectStream)),
+    Ok([
+      @session.CloseConnection(3, b""),
+      @session.Notify(@session.SessionEnded(@session.Local(3, b""))),
+    ]),
   )
-  subscriber_start_stream(subscriber, 43)
+  let malformed_subscriber = subscriber_started()
+  subscriber_start_stream(malformed_subscriber, 43)
   assert_eq(
-    subscriber.receive(@session.StreamData(43, header_bytes + b"\x00\x02x")),
+    malformed_subscriber.receive(
+      @session.StreamData(43, header_bytes + b"\x00\x02x"),
+    ),
     Ok([]),
   )
   assert_eq(
-    subscriber.receive(@session.StreamFinished(43)),
-    Err(@session.Track(@session.IncompleteObjectStream)),
+    malformed_subscriber.receive(@session.StreamFinished(43)),
+    Ok([@session.StopReceiving(43, 3)]),
   )
 }
 
@@ -348,12 +357,9 @@ test "subscriber can reset an incomplete object stream after FIN validation fail
   )
   assert_eq(
     subscriber.receive(@session.StreamFinished(40)),
-    Err(@session.Track(@session.IncompleteObjectStream)),
+    Ok([@session.StopReceiving(40, 3)]),
   )
-  assert_eq(
-    subscriber.receive(@session.StreamReset(40, 1)),
-    Ok([@session.Notify(@session.ObjectStreamReset(0, 40))]),
-  )
+  assert_eq(subscriber.receive(@session.StreamReset(40, 1)), Ok([]))
   let done : @protocol.PublishDoneMessage = {
     code: 3,
     stream_count: 1,
