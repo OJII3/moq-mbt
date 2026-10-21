@@ -262,7 +262,10 @@ test "subscriber accepts concatenated SUBSCRIBE_OK and PUBLISH_DONE while object
         b"\x04\x00\x02\x01\x00" + @protocol.encode_publish_done(done).unwrap(),
       ),
     ),
-    Ok([@session.Notify(@session.SubscribeEstablished(0, 1))]),
+    Ok([
+      @session.Notify(@session.SubscribeEstablished(0, 1)),
+      @session.Send(30, b"", true),
+    ]),
   )
   let header = subscriber_header(1, true)
   let frames = [subscriber_frame(0, b"last")]
@@ -321,7 +324,7 @@ test "subscriber resets incomplete subgroup headers without counting an unbound 
     subscriber.receive(
       @session.StreamData(30, @protocol.encode_publish_done(done).unwrap()),
     ),
-    Ok([]),
+    Ok([@session.Send(30, b"", true)]),
   )
   assert_eq(
     subscriber.receive(@session.StreamFinished(41)),
@@ -360,6 +363,9 @@ test "subscriber can reset an incomplete object stream after FIN validation fail
     subscriber.receive(
       @session.StreamData(30, @protocol.encode_publish_done(done).unwrap()),
     ),
-    Ok([@session.Notify(@session.PublishDone(0, done))]),
+    Ok([
+      @session.Send(30, b"", true),
+      @session.Notify(@session.PublishDone(0, done)),
+    ]),
   )
 }

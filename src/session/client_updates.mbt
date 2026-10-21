@@ -141,6 +141,7 @@ fn ClientSession::receive_peer_subscription_update(
   subscription.pending_updates.push({
     request_id: message.request_id,
     effective_parameters,
+    filter_updated: subscription_filter_parameter(message.parameters) is Some(_),
   })
   Ok([
     Notify(
@@ -173,12 +174,18 @@ pub fn ClientSession::update_subscription(
   }
   if request.kind != Subscribing ||
     !request.accepted ||
+    request.lifetime.local_send_closed ||
     request.terminal ||
     request.update_failed {
     return Err(SubscriptionNotAccepted)
   }
   if request.pending_local_update is Some(_) {
     return Err(RequestUpdatePending)
+  }
+  for parameter in parameters {
+    if parameter.kind == 0x32 && !request.dynamic_groups {
+      return Err(Encoding(@protocol.InvalidParameterValue(0x32)))
+    }
   }
   let stream = match request.stream {
     Some(value) => value
@@ -196,6 +203,7 @@ pub fn ClientSession::update_subscription(
       request.parameters,
       parameters,
     ),
+    filter_updated: subscription_filter_parameter(parameters) is Some(_),
   })
   Ok((update_id, self.finish_actions([Send(stream, bytes, false)])))
 }
@@ -224,6 +232,33 @@ pub fn ClientSession::accept_subscription_update(
     return Err(RequestUpdatePending)
   }
   let pending = subscription.pending_updates[0]
+  let filter_was_updated = pending.filter_updated
+  let publisher_request_id = match self.inbound_subscriptions.get(stream) {
+    Some(inbound) => inbound.publisher_request_id
+    None => self.request_streams.get(stream).unwrap()
+  }
+  let response_largest = match
+    subscription_largest_location(response.parameters) {
+    Some(value) => Some(value)
+    None => self.largest_published_locations.get(publisher_request_id)
+  }
+  let mut response_parameters = response.parameters
+  if filter_was_updated &&
+    subscription_has_relative_filter(pending.effective_parameters) &&
+    subscription_largest_location(response.parameters) is None {
+    match response_largest {
+      Some((group_id, object_id)) =>
+        response_parameters = merge_subscription_parameters(
+          response_parameters,
+          [{ kind: 0x09UL, value: @protocol.Location(group_id, object_id), }],
+        )
+      None => ()
+    }
+  }
+  let response : @protocol.RequestOkMessage = {
+    parameters: response_parameters,
+    properties: response.properties,
+  }
   let response_bytes = match
     @protocol.encode_request_ok_for(
       response,
@@ -236,6 +271,12 @@ pub fn ClientSession::accept_subscription_update(
   let forwarding = subscription_forward(pending.effective_parameters)
   ignore(subscription.pending_updates.remove(0))
   subscription.parameters = pending.effective_parameters
+  if filter_was_updated {
+    subscription.resolved_filter = resolve_subscription_filter(
+      subscription.parameters,
+      response_largest,
+    )
+  }
   let actions : Array[ClientSessionAction] = [
     Send(stream, response_bytes, false),
   ]
@@ -353,11 +394,17 @@ fn ClientSession::finish_failed_subscription(
     Some(value) => value
     None => return []
   }
-  if subscription.open_stream_count != 0UL {
+  if subscription.open_stream_count != 0UL ||
+    self.has_pending_object_streams(stream) {
     return []
   }
-  let done = match subscription.pending_failure {
-    Some(value) => value
+  let done : @protocol.PublishDoneMessage = match subscription.pending_failure {
+    Some(value) =>
+      {
+        code: value.code,
+        stream_count: subscription.opened_stream_count,
+        reason: value.reason,
+      }
     None => return []
   }
   subscription.pending_failure = None

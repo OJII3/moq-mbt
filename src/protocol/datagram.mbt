@@ -37,6 +37,9 @@ pub extend ObjectDatagram with Eq::{equal, not_equal}
 pub fn encode_object_datagram(
   datagram : ObjectDatagram,
 ) -> Result[Bytes, CodecError] {
+  if !valid_object_properties(datagram.properties) {
+    return Err(InvalidDatagram)
+  }
   let has_properties = !datagram.properties.is_empty()
   let has_status = datagram.status != Normal || datagram.payload.is_empty()
   if has_status && datagram.end_of_group {
@@ -102,14 +105,10 @@ pub fn decode_datagram(input : Bytes) -> DecodeResult[ReceivedDatagram] {
     None => return Incomplete
   }
   if kind == 0x132b3e29UL {
-    for byte in input[after_kind:] {
-      if byte != 0 {
-        return Invalid(InvalidDatagram)
-      }
-    }
     return Complete(Padding, input.length())
   }
-  if (kind & 0xd0UL) != 0UL ||
+  if kind > 0x2fUL ||
+    (kind & 0xd0UL) != 0UL ||
     ((kind & 0x20UL) != 0UL && (kind & 0x02UL) != 0UL) {
     return Invalid(InvalidDatagram)
   }
@@ -153,6 +152,9 @@ pub fn decode_datagram(input : Bytes) -> DecodeResult[ReceivedDatagram] {
       return Invalid(InvalidDatagram)
     }
     let end = after_length + length.to_int()
+    if !valid_object_properties(input[after_length:end].to_owned()) {
+      return Invalid(InvalidDatagram)
+    }
     next = end
     input[after_length:end].to_owned()
   } else {
@@ -199,6 +201,45 @@ pub fn decode_datagram(input : Bytes) -> DecodeResult[ReceivedDatagram] {
     }),
     input.length(),
   )
+}
+
+///|
+/// Validate the generic Key-Value-Pair syntax used by Object Properties.
+/// Unknown property types remain valid when their wire structure is valid.
+fn valid_object_properties(input : Bytes) -> Bool {
+  let mut next = 0
+  let mut previous = 0UL
+  while next < input.length() {
+    let (delta, after_delta) = match read_vi64(input, next, input.length()) {
+      Some(value) => value
+      None => return false
+    }
+    if delta > 0xffffffffffffffffUL - previous {
+      return false
+    }
+    let kind = previous + delta
+    next = after_delta
+    if (kind & 1UL) == 0UL {
+      let (_, after_value) = match read_vi64(input, next, input.length()) {
+        Some(value) => value
+        None => return false
+      }
+      next = after_value
+    } else {
+      let (length, after_length) = match
+        read_vi64(input, next, input.length()) {
+        Some(value) => value
+        None => return false
+      }
+      if length > 65535UL ||
+        length > (input.length() - after_length).to_uint64() {
+        return false
+      }
+      next = after_length + length.to_int()
+    }
+    previous = kind
+  }
+  true
 }
 
 ///|

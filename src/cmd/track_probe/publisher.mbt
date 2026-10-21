@@ -439,7 +439,7 @@ fn run_publisher(
       let (notices, _) = drive_session_result(
         client,
         session,
-        session.publish_done(state.publish_stream, 3, b""),
+        session.publish_done(state.publish_stream, 2, b""),
         send_counts,
       )
       handle_publisher_notices(client, session, notices, send_counts, state)

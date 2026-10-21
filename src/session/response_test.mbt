@@ -100,10 +100,16 @@ test "ClientSession routes fragmented request rejections by request kind" {
   )
   assert_eq(
     session.receive(@session.StreamData(20, wire[last:].to_owned())),
-    Ok([@session.Notify(@session.PublishRejected(0, error))]),
+    Ok([
+      @session.Send(20, b"", true),
+      @session.Notify(@session.PublishRejected(0, error)),
+    ]),
   )
   assert_eq(
     session.receive(@session.StreamData(30, wire[last:].to_owned())),
-    Ok([@session.Notify(@session.SubscribeRejected(2, error))]),
+    Ok([
+      @session.Send(30, b"", true),
+      @session.Notify(@session.SubscribeRejected(2, error)),
+    ]),
   )
 }

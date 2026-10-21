@@ -403,7 +403,7 @@ test "cancelling a SUBSCRIBE while PUBLISH_DONE waits for Object streams" {
         }).unwrap(),
       ),
     ),
-    Ok([]),
+    Ok([@session.Send(30, b"", true)]),
   )
   assert_eq(
     subscriber.receive(
@@ -421,7 +421,6 @@ test "cancelling a SUBSCRIBE while PUBLISH_DONE waits for Object streams" {
   assert_eq(
     subscriber.cancel_request(request_id),
     Ok([
-      @session.AbortSend(30, 1UL),
       @session.StopReceiving(30, 1UL),
       @session.StopReceiving(40, 1UL),
       @session.Notify(@session.SubscriptionEnded(request_id, 30)),
@@ -522,7 +521,7 @@ test "SUBSCRIBE Alias remains reserved until PUBLISH_DONE Object drain completes
     subscriber.receive(
       @session.StreamData(30, @protocol.encode_publish_done(done).unwrap()),
     ),
-    Ok([]),
+    Ok([@session.Send(30, b"", true)]),
   )
   let (next_request_id, _) = subscriber
     .subscribe_track(client_track(b"next"))
