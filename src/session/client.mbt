@@ -306,7 +306,62 @@ pub fn ClientSession::receive(
   }
   match result {
     Ok(actions) => Ok(self.finish_actions(actions))
-    Err(error) => Err(error)
+    Err(error) =>
+      match self.protocol_error_actions(event, error) {
+        Some(actions) => Ok(self.finish_actions(actions))
+        None => Err(error)
+      }
+  }
+}
+
+///|
+/// Convert peer protocol violations into session actions. Errors from local
+/// API methods remain errors; adapters only execute the actions returned here.
+fn ClientSession::protocol_error_actions(
+  self : ClientSession,
+  event : ClientSessionEvent,
+  error : ClientSessionError,
+) -> Array[ClientSessionAction]? {
+  let code = match error {
+    Handshake(handshake_error) => handshake_error.close_code()
+    UnexpectedMessage
+    | Track(_)
+    | UnknownStream
+    | UnknownRequest
+    | InvalidRequestId
+    | DuplicateRequestId
+    | DuplicateStream
+    | SubscriptionNotAccepted
+    | BufferLimitExceeded => close_protocol_violation
+    _ => return None
+  }
+  match event {
+    StreamData(stream, _)
+    | StreamFinished(stream)
+    | StreamReset(stream, _)
+    | SendStopped(stream, _) => {
+      let kind = self.inbound_stream_kinds.get(stream)
+      if self.peer_control_stream == Some(stream) || kind is Some(Control) {
+        Some(self.end_session(Local(code, b""), Some(code), b""))
+      } else if self.request_streams.get(stream) is Some(_) ||
+        self.inbound_subscriptions.get(stream) is Some(_) {
+        Some(self.end_request_stream(stream, Cancel(code)))
+      } else if kind is Some(Request) {
+        self.inbound_buffers.remove(stream)
+        Some([AbortSend(stream, code), StopReceiving(stream, code)])
+      } else if kind is Some(Subgroup) {
+        self.incoming_object_streams.remove(stream)
+        self.inbound_stream_kinds.remove(stream)
+        Some([StopReceiving(stream, code)])
+      } else {
+        Some(self.end_session(Local(code, b""), Some(code), b""))
+      }
+    }
+    DatagramReceived(_) =>
+      Some(self.end_session(Local(code, b""), Some(code), b""))
+    InboundStreamStarted(_, _) =>
+      Some(self.end_session(Local(code, b""), Some(code), b""))
+    _ => None
   }
 }
 
