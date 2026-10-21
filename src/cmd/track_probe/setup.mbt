@@ -95,6 +95,28 @@ fn drive_session_result(
 }
 
 ///|
+fn receive_session_event(
+  session : @session.ClientSession,
+  event : @session.ClientSessionEvent,
+) -> Result[Array[@session.ClientSessionAction], @session.ClientSessionError] {
+  match session.receive(@session.Clock(@env.now())) {
+    Err(error) => Err(error)
+    Ok(clock_actions) =>
+      match session.receive(event) {
+        Err(error) => Err(error)
+        Ok(actions) => Ok(clock_actions + actions)
+      }
+  }
+}
+
+///|
+fn receive_session_clock(
+  session : @session.ClientSession,
+) -> Result[Array[@session.ClientSessionAction], @session.ClientSessionError] {
+  session.receive(@session.Clock(@env.now()))
+}
+
+///|
 fn setup_client(
   host : String,
   port : Int32,
@@ -139,7 +161,8 @@ fn setup_client(
         let (notices, _) = drive_session_result(
           client,
           session,
-          session.receive(
+          receive_session_event(
+            session,
             @session.InboundStreamStarted(
               stream,
               client_stream_direction(direction),
@@ -153,7 +176,7 @@ fn setup_client(
         let (notices, _) = drive_session_result(
           client,
           session,
-          session.receive(@session.StreamData(stream, bytes)),
+          receive_session_event(session, @session.StreamData(stream, bytes)),
           send_counts,
         )
         for notice in notices {
@@ -172,7 +195,7 @@ fn setup_client(
         let (notices, _) = drive_session_result(
           client,
           session,
-          session.receive(@session.DatagramReceived(bytes)),
+          receive_session_event(session, @session.DatagramReceived(bytes)),
           send_counts,
         )
         ignore(notices)
@@ -182,7 +205,10 @@ fn setup_client(
         let (notices, _) = drive_session_result(
           client,
           session,
-          session.receive(@session.SendComplete(stream, canceled)),
+          receive_session_event(
+            session,
+            @session.SendComplete(stream, canceled),
+          ),
           send_counts,
         )
         ignore(notices)
@@ -193,14 +219,53 @@ fn setup_client(
           setup_acknowledged = true
         }
       }
+      DatagramSendComplete => {
+        let (notices, _) = drive_session_result(
+          client,
+          session,
+          receive_session_event(session, @session.DatagramSendComplete),
+          send_counts,
+        )
+        ignore(notices)
+      }
       StreamFinished(_) | StreamReset(_, _) | SendStopped(_, _) =>
         fail("peer control stream ended during SETUP")
-      Closed(code) =>
+      Closed(code) => {
+        let (notices, _) = drive_session_result(
+          client,
+          session,
+          receive_session_event(
+            session,
+            @session.PeerClosed(code.reinterpret_as_uint64()),
+          ),
+          send_counts,
+        )
+        ignore(notices)
         fail("peer closed during SETUP (application code \{code})")
-      TransportClosed(status) =>
+      }
+      TransportClosed(status) => {
+        let (notices, _) = drive_session_result(
+          client,
+          session,
+          receive_session_event(
+            session,
+            @session.TransportFailed(status.to_int64()),
+          ),
+          send_counts,
+        )
+        ignore(notices)
         fail("QUIC failed during SETUP (MsQuic status \{status})")
+      }
       QueueOverflow => fail("transport event buffer overflow")
-      Timeout => ()
+      Timeout => {
+        let (notices, _) = drive_session_result(
+          client,
+          session,
+          receive_session_clock(session),
+          send_counts,
+        )
+        ignore(notices)
+      }
     }
     if setup_received && setup_acknowledged {
       return (client, session)

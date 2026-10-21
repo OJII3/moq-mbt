@@ -21,6 +21,15 @@ fn handle_subscriber_notices(
       }
       @session.SubscribeRejected(_, error) =>
         fail("SUBSCRIBE rejected (\{error.code})")
+      @session.ControlGoAwayReceived(uri, timeout_ms, request_id) =>
+        eprintln(
+          "session GOAWAY received (URI \{uri.length()} bytes, timeout \{timeout_ms} ms, request ID \{request_id})",
+        )
+      @session.RequestGoAwayReceived(request_id, stream, uri, timeout_ms) =>
+        eprintln(
+          "request GOAWAY received (request \{request_id}, stream \{stream}, URI \{uri.length()} bytes, timeout \{timeout_ms} ms)",
+        )
+      @session.SessionEnded(end) => fail("session ended: \{end.to_repr()}")
       @session.ObjectReceived(_, header, frames) => {
         guard header.group_id < state.group_count else {
           fail("received unexpected group \{header.group_id}")
@@ -143,7 +152,8 @@ fn run_subscriber(
         let (notices, _) = drive_session_result(
           client,
           session,
-          session.receive(
+          receive_session_event(
+            session,
             @session.InboundStreamStarted(
               stream,
               client_stream_direction(direction),
@@ -159,7 +169,7 @@ fn run_subscriber(
         let (notices, _) = drive_session_result(
           client,
           session,
-          session.receive(@session.StreamData(stream, bytes)),
+          receive_session_event(session, @session.StreamData(stream, bytes)),
           send_counts,
         )
         if handle_subscriber_notices(notices, state) {
@@ -170,7 +180,7 @@ fn run_subscriber(
         let (notices, _) = drive_session_result(
           client,
           session,
-          session.receive(@session.DatagramReceived(bytes)),
+          receive_session_event(session, @session.DatagramReceived(bytes)),
           send_counts,
         )
         if handle_subscriber_notices(notices, state) {
@@ -181,7 +191,7 @@ fn run_subscriber(
         let (notices, _) = drive_session_result(
           client,
           session,
-          session.receive(@session.StreamFinished(stream)),
+          receive_session_event(session, @session.StreamFinished(stream)),
           send_counts,
         )
         if handle_subscriber_notices(notices, state) {
@@ -192,7 +202,8 @@ fn run_subscriber(
         let (notices, _) = drive_session_result(
           client,
           session,
-          session.receive(
+          receive_session_event(
+            session,
             @session.StreamReset(stream, code.reinterpret_as_uint64()),
           ),
           send_counts,
@@ -203,24 +214,28 @@ fn run_subscriber(
       }
       SendComplete(stream, canceled) => {
         note_send_complete(send_counts, stream)
-        if canceled && stream == request_stream {
-          fail("SUBSCRIBE send was canceled")
-        }
         let (notices, _) = drive_session_result(
           client,
           session,
-          session.receive(@session.SendComplete(stream, canceled)),
+          receive_session_event(
+            session,
+            @session.SendComplete(stream, canceled),
+          ),
           send_counts,
         )
         if handle_subscriber_notices(notices, state) {
           return
+        }
+        if canceled && stream == request_stream {
+          fail("SUBSCRIBE send was canceled")
         }
       }
       SendStopped(stream, code) => {
         let (notices, _) = drive_session_result(
           client,
           session,
-          session.receive(
+          receive_session_event(
+            session,
             @session.SendStopped(stream, code.reinterpret_as_uint64()),
           ),
           send_counts,
@@ -229,10 +244,57 @@ fn run_subscriber(
           return
         }
       }
-      Closed(code) => fail("peer closed (application code \{code})")
-      TransportClosed(status) => fail("QUIC failed (MsQuic status \{status})")
+      DatagramSendComplete => {
+        let (notices, _) = drive_session_result(
+          client,
+          session,
+          receive_session_event(session, @session.DatagramSendComplete),
+          send_counts,
+        )
+        if handle_subscriber_notices(notices, state) {
+          return
+        }
+      }
+      Closed(code) => {
+        let (notices, _) = drive_session_result(
+          client,
+          session,
+          receive_session_event(
+            session,
+            @session.PeerClosed(code.reinterpret_as_uint64()),
+          ),
+          send_counts,
+        )
+        if handle_subscriber_notices(notices, state) {
+          return
+        }
+      }
+      TransportClosed(status) => {
+        let (notices, _) = drive_session_result(
+          client,
+          session,
+          receive_session_event(
+            session,
+            @session.TransportFailed(status.to_int64()),
+          ),
+          send_counts,
+        )
+        if handle_subscriber_notices(notices, state) {
+          return
+        }
+      }
       QueueOverflow => fail("transport event buffer overflow")
-      Timeout => ()
+      Timeout => {
+        let (notices, _) = drive_session_result(
+          client,
+          session,
+          receive_session_clock(session),
+          send_counts,
+        )
+        if handle_subscriber_notices(notices, state) {
+          return
+        }
+      }
     }
   }
   fail(

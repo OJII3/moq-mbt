@@ -17,6 +17,7 @@ fn client_session_ready() -> @session.ClientSession raise {
     client.receive(@session.StreamData(11, b"\xaf\x00\x00\x00")),
     Ok([@session.Notify(@session.HandshakeComplete({ options: [], }))]),
   )
+  ignore(client.receive(@session.SendComplete(10, false)))
   client
 }
 
@@ -472,6 +473,9 @@ test "ClientSession validates peer request IDs and preserves SETUP trailing cont
           @protocol.GoAwayControl({ uri: b"", timeout_ms: 0, request_id: 0, }),
         ),
       ),
+      @session.Notify(@session.ControlGoAwayReceived(b"", 0UL, 0UL)),
+      @session.CloseConnection(0UL, b""),
+      @session.Notify(@session.SessionEnded(@session.Local(0UL, b""))),
     ]),
   )
 

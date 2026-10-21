@@ -208,6 +208,10 @@ pub fn ClientSession::open_object_stream(
   subscription_stream : Int64,
   header : @protocol.SubgroupHeader,
 ) -> Result[Array[ClientSessionAction], ClientSessionError] {
+  match self.ensure_open() {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
   let publisher_request_id = match
     self.inbound_subscriptions.get(subscription_stream) {
     Some(inbound) => {
@@ -242,7 +246,7 @@ pub fn ClientSession::open_object_stream(
     header,
     cancelled_error_code: None,
   }
-  Ok([OpenStream(Unidirectional, Object(token))])
+  Ok(self.finish_actions([OpenStream(Unidirectional, Object(token))]))
 }
 
 ///|
@@ -252,6 +256,10 @@ pub fn ClientSession::send_object(
   stream : Int64,
   frame : @protocol.SubgroupFrame,
 ) -> Result[Array[ClientSessionAction], ClientSessionError] {
+  match self.ensure_open() {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
   let outgoing = match self.outgoing_object_streams.get(stream) {
     Some(value) => value
     None => return Err(UnknownStream)
@@ -267,7 +275,7 @@ pub fn ClientSession::send_object(
     Err(error) => return Err(Track(error))
   }
   outgoing.pending_send_count = outgoing.pending_send_count + 1UL
-  Ok([Send(stream, bytes, false)])
+  Ok(self.finish_actions([Send(stream, bytes, false)]))
 }
 
 ///|
@@ -277,6 +285,10 @@ pub fn ClientSession::send_object_datagram(
   subscription_stream : Int64,
   datagram : @protocol.ObjectDatagram,
 ) -> Result[Array[ClientSessionAction], ClientSessionError] {
+  match self.ensure_open() {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
   if !self.subscription_is_active(subscription_stream) {
     return Err(SubscriptionNotAccepted)
   }
@@ -304,7 +316,7 @@ pub fn ClientSession::send_object_datagram(
     Ok(value) => value
     Err(error) => return Err(Encoding(error))
   }
-  Ok([SendDatagram(bytes)])
+  Ok(self.finish_actions([SendDatagram(bytes)]))
 }
 
 ///|
@@ -313,6 +325,10 @@ pub fn ClientSession::finish_object_stream(
   self : ClientSession,
   stream : Int64,
 ) -> Result[Array[ClientSessionAction], ClientSessionError] {
+  match self.ensure_open() {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
   let outgoing = match self.outgoing_object_streams.get(stream) {
     Some(value) => value
     None => return Err(UnknownStream)
@@ -322,7 +338,7 @@ pub fn ClientSession::finish_object_stream(
   }
   outgoing.finishing = true
   outgoing.pending_send_count = outgoing.pending_send_count + 1UL
-  Ok([Send(stream, b"", true)])
+  Ok(self.finish_actions([Send(stream, b"", true)]))
 }
 
 ///|
@@ -333,6 +349,10 @@ pub fn ClientSession::publish_done(
   code : UInt64,
   reason : Bytes,
 ) -> Result[Array[ClientSessionAction], ClientSessionError] {
+  match self.ensure_open() {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
   let (request_id, local_publish) = match
     self.inbound_subscriptions.get(subscription_stream) {
     Some(inbound) => {
@@ -378,8 +398,10 @@ pub fn ClientSession::publish_done(
   } else {
     self.inbound_subscriptions.get(subscription_stream).unwrap().state = Ended
   }
-  Ok([
-    Send(subscription_stream, bytes, true),
-    Notify(PublishDone(request_id, message)),
-  ])
+  Ok(
+    self.finish_actions([
+      Send(subscription_stream, bytes, true),
+      Notify(PublishDone(request_id, message)),
+    ]),
+  )
 }

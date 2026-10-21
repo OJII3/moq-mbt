@@ -198,6 +198,8 @@ fn ClientSession::receive_response(
             Ok(values) => values
             Err(error) => return Err(error)
           }
+        (_, @protocol.GoAwayRequest(goaway)) =>
+          self.receive_request_goaway(stream, goaway)
         _ => return Err(UnexpectedMessage)
       }
       if trailing.is_empty() {
@@ -326,26 +328,54 @@ fn ClientSession::receive_peer_request(
             if self.peer_request_ids.get(request.request_id) is Some(_) {
               return Err(DuplicateRequestId)
             }
-            let publisher_request_id = match
-              self.find_publisher(request.track) {
-              Some(value) => value
-              None => return Err(TrackNotPublished)
-            }
             self.peer_request_ids[request.request_id] = stream
-            self.inbound_subscriptions[stream] = {
-              request_id: request.request_id,
-              publisher_request_id,
-              state: Pending,
-              parameters: request.parameters,
-              cancelled: false,
-              send_closed: false,
-              receive_closed: false,
+            self.note_peer_request_id(request.request_id)
+            if self.control_goaway_sent {
+              let error = match
+                @protocol.encode_request_error({
+                  code: request_error_going_away,
+                  retry_interval: 0UL,
+                  reason: b"",
+                  redirect: b"",
+                }) {
+                Ok(value) => value
+                Err(error) => return Err(Encoding(error))
+              }
+              actions.push(Send(stream, error, true))
+            } else {
+              let publisher_request_id = match
+                self.find_publisher(request.track) {
+                Some(value) => value
+                None => return Err(TrackNotPublished)
+              }
+              self.inbound_subscriptions[stream] = {
+                request_id: request.request_id,
+                publisher_request_id,
+                state: Pending,
+                parameters: request.parameters,
+                cancelled: false,
+                send_closed: false,
+                receive_closed: false,
+              }
+              actions.push(
+                Notify(
+                  SubscriptionRequested(
+                    request.request_id,
+                    stream,
+                    request.track,
+                  ),
+                ),
+              )
             }
-            actions.push(
-              Notify(
-                SubscriptionRequested(request.request_id, stream, request.track),
-              ),
-            )
+          }
+          (Some(inbound), @protocol.GoAwayRequest(goaway)) => {
+            for action in self.receive_request_goaway(stream, goaway) {
+              actions.push(action)
+            }
+            if self.state == Closed {
+              return Ok(actions)
+            }
+            ignore(inbound)
           }
           (Some(_), @protocol.RequestUpdate(update)) =>
             match self.receive_peer_subscription_update(stream, update) {
@@ -386,6 +416,10 @@ pub fn ClientSession::publish_track(
   track : @protocol.TrackName,
   track_alias : UInt64,
 ) -> Result[(UInt64, Array[ClientSessionAction]), ClientSessionError] {
+  match self.ensure_new_request_allowed() {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
   if !self.ready {
     return Err(HandshakeNotComplete)
   }
@@ -419,7 +453,12 @@ pub fn ClientSession::publish_track(
     update_failed: false,
   }
   self.published_requests.push(request_id)
-  Ok((request_id, [OpenStream(Bidirectional, Request(request_id))]))
+  Ok(
+    (
+      request_id,
+      self.finish_actions([OpenStream(Bidirectional, Request(request_id))]),
+    ),
+  )
 }
 
 ///|
@@ -428,6 +467,10 @@ pub fn ClientSession::subscribe_track(
   self : ClientSession,
   track : @protocol.TrackName,
 ) -> Result[(UInt64, Array[ClientSessionAction]), ClientSessionError] {
+  match self.ensure_new_request_allowed() {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
   if !self.ready {
     return Err(HandshakeNotComplete)
   }
@@ -453,7 +496,12 @@ pub fn ClientSession::subscribe_track(
     pending_local_update: None,
     update_failed: false,
   }
-  Ok((request_id, [OpenStream(Bidirectional, Request(request_id))]))
+  Ok(
+    (
+      request_id,
+      self.finish_actions([OpenStream(Bidirectional, Request(request_id))]),
+    ),
+  )
 }
 
 ///|
@@ -462,6 +510,10 @@ pub fn ClientSession::accept_subscription(
   self : ClientSession,
   stream : Int64,
 ) -> Result[Array[ClientSessionAction], ClientSessionError] {
+  match self.ensure_open() {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
   let inbound = match self.inbound_subscriptions.get(stream) {
     Some(value) => value
     None => return Err(UnknownStream)
@@ -488,16 +540,18 @@ pub fn ClientSession::accept_subscription(
     pending_failure: None,
     request_id: inbound.request_id,
   }
-  Ok([
-    Send(stream, response, false),
-    Notify(
-      SubscriptionAccepted(
-        inbound.request_id,
-        stream,
-        request.track_alias.unwrap(),
+  Ok(
+    self.finish_actions([
+      Send(stream, response, false),
+      Notify(
+        SubscriptionAccepted(
+          inbound.request_id,
+          stream,
+          request.track_alias.unwrap(),
+        ),
       ),
-    ),
-  ])
+    ]),
+  )
 }
 
 ///|
@@ -507,6 +561,10 @@ pub fn ClientSession::reject_subscription(
   stream : Int64,
   error : @protocol.RequestErrorMessage,
 ) -> Result[Array[ClientSessionAction], ClientSessionError] {
+  match self.ensure_open() {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
   let inbound = match self.inbound_subscriptions.get(stream) {
     Some(value) => value
     None => return Err(UnknownStream)
@@ -519,10 +577,12 @@ pub fn ClientSession::reject_subscription(
     Err(error) => return Err(Encoding(error))
   }
   inbound.state = Ended
-  Ok([
-    Send(stream, response, true),
-    Notify(SubscriptionRejected(inbound.request_id, stream)),
-  ])
+  Ok(
+    self.finish_actions([
+      Send(stream, response, true),
+      Notify(SubscriptionRejected(inbound.request_id, stream)),
+    ]),
+  )
 }
 
 ///|
@@ -533,6 +593,10 @@ pub fn ClientSession::cancel_request(
   self : ClientSession,
   request_id : UInt64,
 ) -> Result[Array[ClientSessionAction], ClientSessionError] {
+  match self.ensure_open() {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
   match self.requests.get(request_id) {
     Some(request) => {
       let pending_failure = match request.stream {
@@ -543,20 +607,30 @@ pub fn ClientSession::cancel_request(
         return Ok([])
       }
       match request.stream {
-        Some(stream) => Ok(self.end_request_stream(stream, 1UL, false, false))
+        Some(stream) =>
+          Ok(
+            self.finish_actions(
+              self.end_request_stream(stream, 1UL, false, false),
+            ),
+          )
         None => {
           request.terminal = true
           request.cancelled = true
           request.cancel_error_code = Some(1UL)
           request.response_buffer = b""
           request.pending_local_update = None
-          Ok([])
+          Ok(self.finish_actions([]))
         }
       }
     }
     None =>
       match self.peer_request_ids.get(request_id) {
-        Some(stream) => Ok(self.end_request_stream(stream, 1UL, false, false))
+        Some(stream) =>
+          Ok(
+            self.finish_actions(
+              self.end_request_stream(stream, 1UL, false, false),
+            ),
+          )
         None => Err(UnknownRequest)
       }
   }
@@ -570,6 +644,7 @@ fn ClientSession::end_request_stream(
   send_stopped : Bool,
   receive_ended : Bool,
 ) -> Array[ClientSessionAction] {
+  self.request_goaway_deadlines.remove(stream)
   match self.inbound_subscriptions.get(stream) {
     Some(_) =>
       return self.end_inbound_subscription(
@@ -650,6 +725,7 @@ fn ClientSession::end_inbound_subscription(
   send_stopped : Bool,
   receive_ended : Bool,
 ) -> Array[ClientSessionAction] {
+  self.request_goaway_deadlines.remove(stream)
   let inbound = match self.inbound_subscriptions.get(stream) {
     Some(value) => value
     None => return []

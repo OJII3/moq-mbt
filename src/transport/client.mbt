@@ -246,6 +246,7 @@ pub fn Client::next_event(
       13 => {
         self.pending_datagram_bytes -= native_event_id(raw).to_int()
         self.pending_datagrams -= 1
+        return DatagramSendComplete
       }
       _ => raise TransportError("event queue failed")
     }
