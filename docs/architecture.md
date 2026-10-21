@@ -28,6 +28,12 @@
 
 Subgroup の reader / writer と送信完了待ちの状態は private なストリーム状態として管理し、処理を責務ごとのファイルへ分割する。Publisher / Subscriber の利便 API が必要になった場合は、`ClientSession` の操作と通知を使う上位のラッパーとして構築する。
 
+## Request stream lifetime
+
+local PUBLISH、local SUBSCRIBE、peer SUBSCRIBE は同じ `RequestLifetime` で local send と peer send の終了を記録する。FIN は peer send 方向だけを閉じ、request の取消や Object stream の終了にはしない。RESET、STOP_SENDING、明示取消は共通遷移を通し、まだ開いている方向への transport action と `SubscriptionEnded` を一度だけ返す。`PUBLISH_DONE` の受信と Subgroup/Object stream の drain は request cancellation とは別に管理する。
+
+request stream の ID 索引は session の存続中 tombstone として保持する。終了後に遅れて届いた event を新しい peer request として誤配送しないため、解放は session が破棄される時とする。Object stream tombstone はその stream の FIN または RESET で解放する。通常の SUBSCRIBE Alias は、`PUBLISH_DONE` の stream 数と観測済み stream 数が一致し、active Object stream がなくなった時に解放する。cancel で `PUBLISH_DONE` を待てなくなった Alias は session 終了まで保持し、遅れて到着する Object stream を同じ request に結び付けて破棄できるようにする。
+
 ## M3 の Draft 18 スコープ
 
 [M3](https://github.com/OJII3/moq-mbt/milestone/3) では `REQUEST_UPDATE` とその応答、リクエストストリームのキャンセルによる購読解除、`GOAWAY` とセッション終了、および Datagram Object の送受信を追加する。Datagram と Subgroup stream は同じ購読・Alias の状態を参照する。

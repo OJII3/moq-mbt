@@ -118,7 +118,7 @@ fn ClientSession::receive_subgroup(
             None => return Err(UnknownRequest)
           }
           let request = self.requests.get(request_id).unwrap()
-          if request.terminal && !request.publish_done_received {
+          if request.lifetime.cancelled {
             // Cancellation retains the alias so delayed Object streams can be
             // attributed to this request and discarded.
             self.incoming_object_streams.remove(stream)
@@ -394,10 +394,13 @@ pub fn ClientSession::publish_done(
     Err(error) => return Err(Encoding(error))
   }
   if local_publish {
-    self.requests.get(request_id).unwrap().terminal = true
+    let request = self.requests.get(request_id).unwrap()
+    request.terminal = true
   } else {
-    self.inbound_subscriptions.get(subscription_stream).unwrap().state = Ended
+    let inbound = self.inbound_subscriptions.get(subscription_stream).unwrap()
+    inbound.state = Ended
   }
+  self.note_request_local_fin(subscription_stream)
   Ok(
     self.finish_actions([
       Send(subscription_stream, bytes, true),

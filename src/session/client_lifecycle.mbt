@@ -151,7 +151,8 @@ fn ClientSession::clock(
     self.request_goaway_deadlines.remove(stream)
     for
       action in self.end_request_stream(
-        stream, request_reset_going_away, false, false,
+        stream,
+        Cancel(request_reset_going_away),
       ) {
       actions.push(action)
     }
@@ -235,8 +236,10 @@ fn ClientSession::reject_local_request_for_goaway(
     return []
   }
   request.terminal = true
-  request.cancelled = true
-  request.cancel_error_code = Some(request_reset_going_away)
+  let effects = request.lifetime.transition(
+    Cancel(request_reset_going_away),
+    request.stream is Some(_),
+  )
   request.response_buffer = b""
   request.pending_local_update = None
   let error : @protocol.RequestErrorMessage = {
@@ -248,25 +251,22 @@ fn ClientSession::reject_local_request_for_goaway(
   let actions : Array[ClientSessionAction] = []
   match request.stream {
     Some(stream) => {
-      if !request.send_closed {
-        request.send_closed = true
+      if effects.abort_send {
         actions.push(AbortSend(stream, request_reset_going_away))
       }
-      if !request.receive_closed {
-        request.receive_closed = true
+      if effects.stop_receiving {
         actions.push(StopReceiving(stream, request_reset_going_away))
       }
     }
     None => ()
   }
-  if !request.end_notified {
-    request.end_notified = true
+  if effects.notify_end || !request.lifetime.end_notified {
     match request.kind {
       Publishing => actions.push(Notify(PublishRejected(request_id, error)))
       Subscribing => actions.push(Notify(SubscribeRejected(request_id, error)))
     }
+    request.lifetime.end_notified = true
   }
-  request.end_notified = true
   actions
 }
 
