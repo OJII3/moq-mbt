@@ -10,6 +10,8 @@ pub fn decode_control(Bytes) -> DecodeResult[ControlMessage]
 
 pub fn decode_control_with_context(Bytes, ControlStreamContext) -> DecodeResult[ControlMessage]
 
+pub fn decode_datagram(Bytes) -> DecodeResult[ReceivedDatagram]
+
 pub fn decode_object_datagram(Bytes) -> DecodeResult[ObjectDatagram]
 
 pub fn decode_setup(Bytes) -> DecodeResult[Setup]
@@ -196,6 +198,14 @@ pub(all) struct PublishMessage {
 pub fn PublishMessage::equal(Self, Self) -> Bool
 pub fn PublishMessage::not_equal(Self, Self) -> Bool
 pub fn PublishMessage::to_repr(Self) -> @debug.Repr
+
+pub(all) enum ReceivedDatagram {
+  Object(ObjectDatagram)
+  Padding
+} derive(Eq, @debug.Debug)
+pub fn ReceivedDatagram::equal(Self, Self) -> Bool
+pub fn ReceivedDatagram::not_equal(Self, Self) -> Bool
+pub fn ReceivedDatagram::to_repr(Self) -> @debug.Repr
 
 pub(all) struct RequestErrorMessage {
   code : UInt64

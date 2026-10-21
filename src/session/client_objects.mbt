@@ -181,8 +181,19 @@ fn ClientSession::receive_object_datagram(
   self : ClientSession,
   bytes : Bytes,
 ) -> Result[Array[ClientSessionAction], ClientSessionError] {
-  let datagram = match @protocol.decode_object_datagram(bytes) {
-    @protocol.Complete(value, consumed) if consumed == bytes.length() => value
+  let datagram = match @protocol.decode_datagram(bytes) {
+    @protocol.Complete(@protocol.Object(value), consumed) =>
+      if consumed == bytes.length() {
+        value
+      } else {
+        return Err(UnexpectedMessage)
+      }
+    @protocol.Complete(@protocol.Padding, consumed) =>
+      if consumed == bytes.length() {
+        return Ok([])
+      } else {
+        return Err(UnexpectedMessage)
+      }
     _ => return Err(UnexpectedMessage)
   }
   let request_id = match self.aliases.get(datagram.track_alias) {
