@@ -8,6 +8,12 @@ let max_events : Int32 = 256
 let max_streams : Int32 = 16
 
 ///|
+let handshake_timeout_ms : Int32 = 10000
+
+///|
+let idle_timeout_ms : Int32 = 30000
+
+///|
 let max_datagram_sends : Int32 = 64
 
 ///|
@@ -58,7 +64,18 @@ pub fn Client::connect(
   }
   let host_cstr = @utf8.encode(host) + b"\x00"
   let alpn = b"moqt-18"
-  let raw = native_connect(host_cstr, port, alpn, alpn.length(), insecure)
+  let raw = native_connect(
+    host_cstr,
+    port,
+    alpn,
+    alpn.length(),
+    insecure,
+    max_bytes,
+    max_events,
+    max_streams,
+    handshake_timeout_ms,
+    idle_timeout_ms,
+  )
   if !native_valid(raw) {
     raise TransportError("MsQuic connection initialization failed")
   }
