@@ -14,27 +14,103 @@ fn client_stream_direction(
 }
 
 ///|
+priv struct SessionActionDriver {
+  send_counts : Map[Int64, UInt64]
+  mut pending : Array[@session.ClientSessionAction]
+}
+
+///|
+fn SessionActionDriver::new() -> SessionActionDriver {
+  { send_counts: Map([]), pending: [], }
+}
+
+///|
+fn attempt_stream_send(
+  stream : Int64,
+  bytes : Bytes,
+  fin : Bool,
+  send : (Int64, Bytes, Bool) -> Unit raise @transport.TransportError,
+) -> Bool raise @transport.TransportError {
+  try {
+    send(stream, bytes, fin)
+    true
+  } catch {
+    @transport.SendQueueFull => false
+    error => raise error
+  }
+}
+
+///|
+fn SessionActionDriver::send_head(
+  self : SessionActionDriver,
+  send : (Int64, Bytes, Bool) -> Unit raise @transport.TransportError,
+) -> Bool raise @transport.TransportError {
+  match self.pending[0] {
+    @session.Send(stream, bytes, fin) => {
+      let accepted = attempt_stream_send(stream, bytes, fin, send)
+      if accepted {
+        ignore(self.pending.remove(0))
+        let count = match self.send_counts.get(stream) {
+          Some(value) => value
+          None => 0UL
+        }
+        self.send_counts[stream] = count + 1UL
+      }
+      accepted
+    }
+    _ => false
+  }
+}
+
+///|
+fn end_driver_session(
+  client : @transport.Client,
+  session : @session.ClientSession,
+) -> Array[@session.ClientSessionNotice] {
+  client.close()
+  let notices : Array[@session.ClientSessionNotice] = []
+  match session.receive(@session.TransportFailed(-1L)) {
+    Ok(actions) =>
+      for action in actions {
+        match action {
+          @session.Notify(notice) => notices.push(notice)
+          _ => ()
+        }
+      }
+    Err(_) => ()
+  }
+  notices
+}
+
+///|
 fn drive_session_actions(
   client : @transport.Client,
   session : @session.ClientSession,
   initial : Array[@session.ClientSessionAction],
-  send_counts : Map[Int64, UInt64],
+  driver : SessionActionDriver,
 ) -> (
   Array[@session.ClientSessionNotice],
   Array[(@session.ClientStreamPurpose, Int64)],
 ) raise {
-  let notices : Array[@session.ClientSessionNotice] = []
+  let mut notices : Array[@session.ClientSessionNotice] = []
   let opened : Array[(@session.ClientStreamPurpose, Int64)] = []
-  let mut pending = initial
-  let mut index = 0
-  while index < pending.length() {
-    let action = pending[index]
-    index += 1
+  driver.pending = driver.pending + initial
+  let mut blocked = false
+  while driver.pending.length() > 0 && !blocked {
+    let action = driver.pending[0]
     match action {
       @session.OpenStream(direction, purpose) => {
-        let stream = match direction {
-          @session.Unidirectional => client.open_uni()
-          @session.Bidirectional => client.open_bidi()
+        let stream = try {
+          match direction {
+            @session.Unidirectional => client.open_uni()
+            @session.Bidirectional => client.open_bidi()
+          }
+        } catch {
+          _ => {
+            driver.pending = []
+            notices = notices + end_driver_session(client, session)
+            return (notices, opened)
+          }
         }
         opened.push((purpose, stream))
         let next = match
@@ -43,34 +119,76 @@ fn drive_session_actions(
           Err(error) =>
             fail("client session rejected opened stream: \{error.to_repr()}")
         }
-        pending = pending + next
+        driver.pending = driver.pending + next
       }
-      @session.Send(stream, bytes, fin) => {
-        client.send(stream, bytes, fin~)
-        let count = match send_counts.get(stream) {
-          Some(value) => value
-          None => 0UL
+      @session.Send(_, _, _) => {
+        let accepted = driver.send_head(fn(
+          s,
+          b,
+          f,
+        ) raise @transport.TransportError {
+          client.send(s, b, fin=f)
+        }) catch {
+          _ => {
+            driver.pending = []
+            notices = notices + end_driver_session(client, session)
+            return (notices, opened)
+          }
         }
-        send_counts[stream] = count + 1UL
+        if !accepted {
+          blocked = true
+        }
       }
-      @session.SendDatagram(bytes) => ignore(client.send_datagram(bytes))
+      @session.SendDatagram(bytes) => {
+        let accepted = try {
+          ignore(client.send_datagram(bytes))
+          true
+        } catch {
+          @transport.DatagramSendQueueFull => false
+          _ => {
+            driver.pending = []
+            notices = notices + end_driver_session(client, session)
+            return (notices, opened)
+          }
+        }
+        if !accepted {
+          blocked = true
+        }
+      }
       @session.AbortSend(stream, error_code) =>
-        client.abort_send(stream, error_code.reinterpret_as_int64())
+        client.abort_send(stream, error_code.reinterpret_as_int64()) catch {
+          _ => {
+            driver.pending = []
+            notices = notices + end_driver_session(client, session)
+            return (notices, opened)
+          }
+        }
       @session.StopReceiving(stream, error_code) =>
-        client.stop_receiving(stream, error_code.reinterpret_as_int64())
+        client.stop_receiving(stream, error_code.reinterpret_as_int64()) catch {
+          _ => {
+            driver.pending = []
+            notices = notices + end_driver_session(client, session)
+            return (notices, opened)
+          }
+        }
       @session.CloseConnection(code, _reason) =>
         client.close(error_code=code.reinterpret_as_int64())
       @session.Notify(notice) => notices.push(notice)
+    }
+    if !blocked &&
+      !(action is @session.Send(_, _, _)) &&
+      !(action is @session.SendDatagram(_)) {
+      ignore(driver.pending.remove(0))
     }
   }
   (notices, opened)
 }
 
 ///|
-fn note_send_complete(send_counts : Map[Int64, UInt64], stream : Int64) -> Unit {
-  match send_counts.get(stream) {
-    Some(count) if count > 1UL => send_counts[stream] = count - 1UL
-    Some(_) => send_counts.remove(stream)
+fn note_send_complete(driver : SessionActionDriver, stream : Int64) -> Unit {
+  match driver.send_counts.get(stream) {
+    Some(count) if count > 1UL => driver.send_counts[stream] = count - 1UL
+    Some(_) => driver.send_counts.remove(stream)
     None => ()
   }
 }
@@ -83,13 +201,13 @@ fn drive_session_result(
     Array[@session.ClientSessionAction],
     @session.ClientSessionError,
   ],
-  send_counts : Map[Int64, UInt64],
+  driver : SessionActionDriver,
 ) -> (
   Array[@session.ClientSessionNotice],
   Array[(@session.ClientStreamPurpose, Int64)],
 ) raise {
   match result {
-    Ok(actions) => drive_session_actions(client, session, actions, send_counts)
+    Ok(actions) => drive_session_actions(client, session, actions, driver)
     Err(error) => fail("client session error: \{error.to_repr()}")
   }
 }
@@ -145,7 +263,7 @@ fn setup_client(
       ),
     ),
   )
-  let send_counts : Map[Int64, UInt64] = Map([])
+  let driver = SessionActionDriver::new()
   let mut setup_stream : Int64? = None
   let mut setup_received = false
   let mut setup_acknowledged = false
@@ -157,7 +275,7 @@ fn setup_client(
           client,
           session,
           session.start().unwrap(),
-          send_counts,
+          driver,
         )
         ignore(notices)
         for (purpose, stream) in opened {
@@ -177,7 +295,7 @@ fn setup_client(
               client_stream_direction(direction),
             ),
           ),
-          send_counts,
+          driver,
         )
         ignore(notices)
       }
@@ -186,7 +304,7 @@ fn setup_client(
           client,
           session,
           receive_session_event(session, @session.StreamData(stream, bytes)),
-          send_counts,
+          driver,
         )
         for notice in notices {
           match notice {
@@ -205,12 +323,12 @@ fn setup_client(
           client,
           session,
           receive_session_event(session, @session.DatagramReceived(bytes)),
-          send_counts,
+          driver,
         )
         ignore(notices)
       }
       SendComplete(stream, canceled) => {
-        note_send_complete(send_counts, stream)
+        note_send_complete(driver, stream)
         let (notices, _) = drive_session_result(
           client,
           session,
@@ -218,7 +336,7 @@ fn setup_client(
             session,
             @session.SendComplete(stream, canceled),
           ),
-          send_counts,
+          driver,
         )
         ignore(notices)
         if setup_stream == Some(stream) {
@@ -239,7 +357,7 @@ fn setup_client(
               capability.max_length,
             ),
           ),
-          send_counts,
+          driver,
         )
         ignore(notices)
       }
@@ -249,7 +367,7 @@ fn setup_client(
             client,
             session,
             receive_session_event(session, @session.DatagramSendComplete),
-            send_counts,
+            driver,
           )
           ignore(notices)
         }
@@ -265,7 +383,7 @@ fn setup_client(
             session,
             @session.PeerClosed(code.reinterpret_as_uint64()),
           ),
-          send_counts,
+          driver,
         )
         ignore(notices)
         fail("peer closed during SETUP (application code \{code})")
@@ -278,7 +396,7 @@ fn setup_client(
             session,
             @session.TransportFailed(status.to_int64()),
           ),
-          send_counts,
+          driver,
         )
         ignore(notices)
         fail("QUIC failed during SETUP (MsQuic status \{status})")
@@ -289,7 +407,7 @@ fn setup_client(
           client,
           session,
           receive_session_clock(session),
-          send_counts,
+          driver,
         )
         ignore(notices)
       }

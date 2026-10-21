@@ -177,10 +177,10 @@ fn run_subscriber(
   }
   let (client, session) = setup_client(host, port, path, insecure)
   defer client.close()
-  let send_counts : Map[Int64, UInt64] = Map([])
+  let driver = SessionActionDriver::new()
   let (request_id, actions) = session.subscribe_track(track).unwrap()
   let (notices, opened) = drive_session_actions(
-    client, session, actions, send_counts,
+    client, session, actions, driver,
   )
   let state : SubscriberProbeState = {
     request_id,
@@ -208,7 +208,7 @@ fn run_subscriber(
     client,
     session,
     session.finish_subscription_updates(request_id),
-    send_counts,
+    driver,
   )
   if handle_subscriber_notices(notices, state) {
     return
@@ -228,7 +228,7 @@ fn run_subscriber(
               client_stream_direction(direction),
             ),
           ),
-          send_counts,
+          driver,
         )
         if handle_subscriber_notices(notices, state) {
           return
@@ -239,7 +239,7 @@ fn run_subscriber(
           client,
           session,
           receive_session_event(session, @session.StreamData(stream, bytes)),
-          send_counts,
+          driver,
         )
         if handle_subscriber_notices(notices, state) {
           return
@@ -250,7 +250,7 @@ fn run_subscriber(
           client,
           session,
           receive_session_event(session, @session.DatagramReceived(bytes)),
-          send_counts,
+          driver,
         )
         if handle_subscriber_notices(notices, state) {
           return
@@ -261,7 +261,7 @@ fn run_subscriber(
           client,
           session,
           receive_session_event(session, @session.StreamFinished(stream)),
-          send_counts,
+          driver,
         )
         if handle_subscriber_notices(notices, state) {
           return
@@ -276,14 +276,14 @@ fn run_subscriber(
             session,
             @session.StreamReset(stream, code.reinterpret_as_uint64()),
           ),
-          send_counts,
+          driver,
         )
         if handle_subscriber_notices(notices, state) {
           return
         }
       }
       SendComplete(stream, canceled) => {
-        note_send_complete(send_counts, stream)
+        note_send_complete(driver, stream)
         let (notices, _) = drive_session_result(
           client,
           session,
@@ -291,7 +291,7 @@ fn run_subscriber(
             session,
             @session.SendComplete(stream, canceled),
           ),
-          send_counts,
+          driver,
         )
         if handle_subscriber_notices(notices, state) {
           return
@@ -308,7 +308,7 @@ fn run_subscriber(
             session,
             @session.SendStopped(stream, code.reinterpret_as_uint64()),
           ),
-          send_counts,
+          driver,
         )
         if handle_subscriber_notices(notices, state) {
           return
@@ -325,7 +325,7 @@ fn run_subscriber(
               capability.max_length,
             ),
           ),
-          send_counts,
+          driver,
         )
         if handle_subscriber_notices(notices, state) {
           return
@@ -337,7 +337,7 @@ fn run_subscriber(
             client,
             session,
             receive_session_event(session, @session.DatagramSendComplete),
-            send_counts,
+            driver,
           )
           if handle_subscriber_notices(notices, state) {
             return
@@ -351,7 +351,7 @@ fn run_subscriber(
             session,
             @session.PeerClosed(code.reinterpret_as_uint64()),
           ),
-          send_counts,
+          driver,
         )
         if handle_subscriber_notices(notices, state) {
           return
@@ -365,7 +365,7 @@ fn run_subscriber(
             session,
             @session.TransportFailed(status.to_int64()),
           ),
-          send_counts,
+          driver,
         )
         if handle_subscriber_notices(notices, state) {
           return
@@ -377,7 +377,7 @@ fn run_subscriber(
           client,
           session,
           receive_session_clock(session),
-          send_counts,
+          driver,
         )
         if handle_subscriber_notices(notices, state) {
           return

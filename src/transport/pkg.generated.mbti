@@ -10,6 +10,8 @@ import {
 // Errors
 pub(all) suberror TransportError {
   TransportError(String)
+  SendQueueFull
+  SendTooLarge(Int, Int)
   DatagramSendUnavailable
   DatagramTooLarge(Int, Int)
   DatagramSendQueueFull

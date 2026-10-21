@@ -21,7 +21,7 @@ priv struct PublisherProbeState {
 fn start_probe_group(
   client : @transport.Client,
   session : @session.ClientSession,
-  send_counts : Map[Int64, UInt64],
+  driver : SessionActionDriver,
   state : PublisherProbeState,
   group_index : Int32,
 ) -> Array[@session.ClientSessionNotice] raise {
@@ -40,7 +40,7 @@ fn start_probe_group(
     client,
     session,
     session.open_object_stream(state.publish_stream, header),
-    send_counts,
+    driver,
   )
   for notice in more {
     notices.push(notice)
@@ -65,7 +65,7 @@ fn start_probe_group(
       client,
       session,
       session.send_object(object_stream, frame),
-      send_counts,
+      driver,
     )
     for notice in object_notices {
       notices.push(notice)
@@ -75,7 +75,7 @@ fn start_probe_group(
     client,
     session,
     session.finish_object_stream(object_stream),
-    send_counts,
+    driver,
   )
   for notice in finish_notices {
     notices.push(notice)
@@ -136,7 +136,7 @@ fn handle_publisher_notices(
   _client : @transport.Client,
   _session : @session.ClientSession,
   notices : Array[@session.ClientSessionNotice],
-  _send_counts : Map[Int64, UInt64],
+  _driver : SessionActionDriver,
   state : PublisherProbeState,
 ) -> Unit raise {
   for notice in notices {
@@ -202,10 +202,10 @@ fn run_publisher(
   }
   let (client, session) = setup_client(host, port, path, insecure)
   defer client.close()
-  let send_counts : Map[Int64, UInt64] = Map([])
+  let driver = SessionActionDriver::new()
   let (request_id, actions) = session.publish_track(track, 1).unwrap()
   let (notices, opened) = drive_session_actions(
-    client, session, actions, send_counts,
+    client, session, actions, driver,
   )
   eprintln("PUBLISH request sent")
   let mut request_stream : Int64? = None
@@ -233,7 +233,7 @@ fn run_publisher(
     next_group_index: 0,
     publish_done_sent: false,
   }
-  handle_publisher_notices(client, session, notices, send_counts, state)
+  handle_publisher_notices(client, session, notices, driver, state)
   let deadline = @env.now() + 60000
   while @env.now() < deadline {
     match client.next_event(100) {
@@ -249,30 +249,30 @@ fn run_publisher(
               client_stream_direction(direction),
             ),
           ),
-          send_counts,
+          driver,
         )
-        handle_publisher_notices(client, session, notices, send_counts, state)
+        handle_publisher_notices(client, session, notices, driver, state)
       }
       Data(stream, bytes) => {
         let (notices, _) = drive_session_result(
           client,
           session,
           receive_session_event(session, @session.StreamData(stream, bytes)),
-          send_counts,
+          driver,
         )
-        handle_publisher_notices(client, session, notices, send_counts, state)
+        handle_publisher_notices(client, session, notices, driver, state)
       }
       Datagram(bytes) => {
         let (notices, _) = drive_session_result(
           client,
           session,
           receive_session_event(session, @session.DatagramReceived(bytes)),
-          send_counts,
+          driver,
         )
-        handle_publisher_notices(client, session, notices, send_counts, state)
+        handle_publisher_notices(client, session, notices, driver, state)
       }
       SendComplete(stream, canceled) => {
-        note_send_complete(send_counts, stream)
+        note_send_complete(driver, stream)
         let (notices, _) = drive_session_result(
           client,
           session,
@@ -280,14 +280,14 @@ fn run_publisher(
             session,
             @session.SendComplete(stream, canceled),
           ),
-          send_counts,
+          driver,
         )
-        handle_publisher_notices(client, session, notices, send_counts, state)
+        handle_publisher_notices(client, session, notices, driver, state)
         if canceled {
           fail("publisher send was canceled")
         }
         if state.done_stream == Some(stream) &&
-          send_counts.get(stream) is None &&
+          driver.send_counts.get(stream) is None &&
           (
             !state.datagrams ||
             state.datagram_send_final_count == state.datagram_send_count
@@ -301,9 +301,9 @@ fn run_publisher(
           client,
           session,
           receive_session_event(session, @session.StreamFinished(stream)),
-          send_counts,
+          driver,
         )
-        handle_publisher_notices(client, session, notices, send_counts, state)
+        handle_publisher_notices(client, session, notices, driver, state)
       }
       StreamClosed(_) => ()
       StreamReset(stream, code) => {
@@ -314,9 +314,9 @@ fn run_publisher(
             session,
             @session.StreamReset(stream, code.reinterpret_as_uint64()),
           ),
-          send_counts,
+          driver,
         )
-        handle_publisher_notices(client, session, notices, send_counts, state)
+        handle_publisher_notices(client, session, notices, driver, state)
       }
       SendStopped(stream, code) => {
         let (notices, _) = drive_session_result(
@@ -326,9 +326,9 @@ fn run_publisher(
             session,
             @session.SendStopped(stream, code.reinterpret_as_uint64()),
           ),
-          send_counts,
+          driver,
         )
-        handle_publisher_notices(client, session, notices, send_counts, state)
+        handle_publisher_notices(client, session, notices, driver, state)
       }
       DatagramStateChanged(capability) => {
         let (notices, _) = drive_session_result(
@@ -341,9 +341,9 @@ fn run_publisher(
               capability.max_length,
             ),
           ),
-          send_counts,
+          driver,
         )
-        handle_publisher_notices(client, session, notices, send_counts, state)
+        handle_publisher_notices(client, session, notices, driver, state)
       }
       DatagramSendStateChanged(id, send_state) => {
         println("Datagram send \{id} state: \{send_state.to_repr()}")
@@ -356,9 +356,9 @@ fn run_publisher(
             client,
             session,
             receive_session_event(session, @session.DatagramSendComplete),
-            send_counts,
+            driver,
           )
-          handle_publisher_notices(client, session, notices, send_counts, state)
+          handle_publisher_notices(client, session, notices, driver, state)
         }
       }
       Closed(code) => {
@@ -369,9 +369,9 @@ fn run_publisher(
             session,
             @session.PeerClosed(code.reinterpret_as_uint64()),
           ),
-          send_counts,
+          driver,
         )
-        handle_publisher_notices(client, session, notices, send_counts, state)
+        handle_publisher_notices(client, session, notices, driver, state)
       }
       TransportClosed(status) => {
         let (notices, _) = drive_session_result(
@@ -381,9 +381,9 @@ fn run_publisher(
             session,
             @session.TransportFailed(status.to_int64()),
           ),
-          send_counts,
+          driver,
         )
-        handle_publisher_notices(client, session, notices, send_counts, state)
+        handle_publisher_notices(client, session, notices, driver, state)
       }
       QueueOverflow => fail("transport event buffer overflow")
       Timeout => {
@@ -391,9 +391,9 @@ fn run_publisher(
           client,
           session,
           receive_session_clock(session),
-          send_counts,
+          driver,
         )
-        handle_publisher_notices(client, session, notices, send_counts, state)
+        handle_publisher_notices(client, session, notices, driver, state)
       }
     }
     if state.publish_accepted &&
@@ -409,9 +409,9 @@ fn run_publisher(
           client,
           session,
           session.send_object_datagram(state.publish_stream, datagram),
-          send_counts,
+          driver,
         )
-        handle_publisher_notices(client, session, notices, send_counts, state)
+        handle_publisher_notices(client, session, notices, driver, state)
         state.datagram_send_count = state.datagram_send_count + 1UL
       }
       println("Sent four Object Datagrams (best effort)")
@@ -422,11 +422,11 @@ fn run_publisher(
       let notices = start_probe_group(
         client,
         session,
-        send_counts,
+        driver,
         state,
         state.next_group_index,
       )
-      handle_publisher_notices(client, session, notices, send_counts, state)
+      handle_publisher_notices(client, session, notices, driver, state)
     }
     if !state.publish_done_sent &&
       state.finished_stream_count == state.group_count &&
@@ -440,9 +440,9 @@ fn run_publisher(
         client,
         session,
         session.publish_done(state.publish_stream, 2, b""),
-        send_counts,
+        driver,
       )
-      handle_publisher_notices(client, session, notices, send_counts, state)
+      handle_publisher_notices(client, session, notices, driver, state)
     }
   }
   fail("timed out waiting for a subscriber (PUBLISH request \{request_id})")

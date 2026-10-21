@@ -145,9 +145,12 @@ pub fn Client::send(
 ) -> Unit raise TransportError {
   let raw = self.handle()
   let length = data.length()
+  if length > max_bytes {
+    raise SendTooLarge(length, max_bytes)
+  }
   if length > max_bytes - self.pending_send_bytes ||
     self.send_sizes.length() >= max_events {
-    raise TransportError("send buffer overflow")
+    raise SendQueueFull
   }
   guard self.streams.get(stream) is Some(handle) else {
     raise TransportError("unknown stream \{stream}")
