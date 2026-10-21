@@ -203,7 +203,8 @@ fn ClientSession::receive_object_datagram(
   let request = self.requests.get(request_id).unwrap()
   if request.kind != Subscribing ||
     !request.accepted ||
-    request.terminal ||
+    (request.terminal && request.pending_publish_done is None) ||
+    request.lifetime.cancelled ||
     request.update_failed ||
     !subscription_forward(request.parameters) {
     return Ok([])
@@ -326,6 +327,12 @@ pub fn ClientSession::send_object_datagram(
   let bytes = match @protocol.encode_object_datagram(datagram) {
     Ok(value) => value
     Err(error) => return Err(Encoding(error))
+  }
+  if !self.datagram_send_enabled {
+    return Err(DatagramSendUnavailable)
+  }
+  if bytes.length() > self.max_datagram_length {
+    return Err(DatagramTooLarge(bytes.length(), self.max_datagram_length))
   }
   Ok(self.finish_actions([SendDatagram(bytes)]))
 }

@@ -2,6 +2,10 @@
 fn client_session_ready() -> @session.ClientSession raise {
   let client = @session.ClientSession::new(@session.Draft18, { options: [], }).unwrap()
   assert_eq(
+    client.receive(@session.DatagramSendCapabilityChanged(true, 65535)),
+    Ok([]),
+  )
+  assert_eq(
     client.start(),
     Ok([@session.OpenStream(@session.Unidirectional, @session.Control)]),
   )

@@ -251,9 +251,13 @@ test "unknown, malformed, and post-cancel datagrams do not reach the application
   let subscriber = subscriber_started()
   assert_eq(
     subscriber.receive(
-      @session.DatagramReceived(b"\xf0\x13\x2b\x3e\x29\xff\x80\x01"),
+      @session.DatagramReceived(b"\xf0\x13\x2b\x3e\x29\x00\x00"),
     ),
     Ok([]),
+  )
+  assert_eq(
+    subscriber.receive(@session.DatagramReceived(b"\xf0\x13\x2b\x3e\x29\x01")),
+    Err(@session.UnexpectedMessage),
   )
   // These two datagrams form a valid wire only if their bytes are combined.
   assert_eq(
@@ -655,5 +659,290 @@ test "request FIN closes the update direction without ending the local PUBLISH s
       @session.StreamData(40, request_update_bytes(3, forward_off)),
     ),
     Ok([]),
+  )
+}
+
+///|
+test "datagrams route across aliases without ordered object ID state" {
+  let subscriber = subscriber_started()
+  let track_b : @protocol.TrackName = {
+    namespace_fields: [b"demo"],
+    name: b"audio",
+  }
+  let (request_b, actions) = subscriber.subscribe_track(track_b).unwrap()
+  assert_eq(request_b, 2UL)
+  assert_eq(actions, [
+    @session.OpenStream(@session.Bidirectional, @session.Request(2)),
+  ])
+  ignore(
+    subscriber.receive(@session.StreamOpened(@session.Request(2), 31)).unwrap(),
+  )
+  assert_eq(
+    subscriber.receive(
+      @session.StreamData(
+        31,
+        @protocol.encode_subscribe_ok({
+          track_alias: 2,
+          parameters: [],
+          properties: b"",
+        }).unwrap(),
+      ),
+    ),
+    Ok([@session.Notify(@session.SubscribeEstablished(2, 2))]),
+  )
+
+  let late_a = update_datagram(1, 9, b"a9")
+  let early_b = update_datagram(2, 0, b"b0")
+  let reordered_a = update_datagram(1, 3, b"a3")
+  assert_eq(
+    subscriber.receive(
+      @session.DatagramReceived(
+        @protocol.encode_object_datagram(late_a).unwrap(),
+      ),
+    ),
+    Ok([@session.Notify(@session.ObjectDatagramReceived(0, late_a))]),
+  )
+  assert_eq(
+    subscriber.receive(
+      @session.DatagramReceived(
+        @protocol.encode_object_datagram(early_b).unwrap(),
+      ),
+    ),
+    Ok([@session.Notify(@session.ObjectDatagramReceived(2, early_b))]),
+  )
+  assert_eq(
+    subscriber.receive(
+      @session.DatagramReceived(
+        @protocol.encode_object_datagram(late_a).unwrap(),
+      ),
+    ),
+    Ok([@session.Notify(@session.ObjectDatagramReceived(0, late_a))]),
+  )
+  assert_eq(
+    subscriber.receive(
+      @session.DatagramReceived(
+        @protocol.encode_object_datagram(reordered_a).unwrap(),
+      ),
+    ),
+    Ok([@session.Notify(@session.ObjectDatagramReceived(0, reordered_a))]),
+  )
+}
+
+///|
+test "datagram object notices preserve forwarding mode, status, properties, and priority" {
+  let subscriber = subscriber_started()
+  let normal_with_properties : @protocol.ObjectDatagram = {
+    track_alias: 1,
+    group_id: 7,
+    object_id: 4,
+    publisher_priority: None,
+    end_of_group: false,
+    properties: b"\x02\x2a",
+    status: @protocol.Normal,
+    payload: b"payload",
+  }
+  let group_end : @protocol.ObjectDatagram = {
+    track_alias: 1,
+    group_id: 7,
+    object_id: 5,
+    publisher_priority: Some(9),
+    end_of_group: true,
+    properties: b"",
+    status: @protocol.Normal,
+    payload: b"last in group",
+  }
+  let end_of_group : @protocol.ObjectDatagram = {
+    track_alias: 1,
+    group_id: 7,
+    object_id: 6,
+    publisher_priority: None,
+    end_of_group: false,
+    properties: b"",
+    status: @protocol.EndOfGroup,
+    payload: b"",
+  }
+  let end_of_track : @protocol.ObjectDatagram = {
+    track_alias: 1,
+    group_id: 7,
+    object_id: 0,
+    publisher_priority: None,
+    end_of_group: false,
+    properties: b"",
+    status: @protocol.EndOfTrack,
+    payload: b"",
+  }
+  for
+    datagram in [normal_with_properties, group_end, end_of_group, end_of_track] {
+    assert_eq(
+      subscriber.receive(
+        @session.DatagramReceived(
+          @protocol.encode_object_datagram(datagram).unwrap(),
+        ),
+      ),
+      Ok([@session.Notify(@session.ObjectDatagramReceived(0, datagram))]),
+    )
+  }
+}
+
+///|
+test "datagrams do not count toward PUBLISH_DONE and can arrive while streams drain" {
+  let datagram_only = subscriber_started()
+  let object = update_datagram(1, 4, b"datagram")
+  assert_eq(
+    datagram_only.receive(
+      @session.DatagramReceived(
+        @protocol.encode_object_datagram(object).unwrap(),
+      ),
+    ),
+    Ok([@session.Notify(@session.ObjectDatagramReceived(0, object))]),
+  )
+  let empty_done : @protocol.PublishDoneMessage = {
+    code: 3,
+    stream_count: 0,
+    reason: b"",
+  }
+  assert_eq(
+    datagram_only.receive(
+      @session.StreamData(
+        30,
+        @protocol.encode_publish_done(empty_done).unwrap(),
+      ),
+    ),
+    Ok([@session.Notify(@session.PublishDone(0, empty_done))]),
+  )
+  assert_eq(
+    datagram_only.receive(
+      @session.DatagramReceived(
+        @protocol.encode_object_datagram(object).unwrap(),
+      ),
+    ),
+    Ok([]),
+  )
+
+  let mixed = subscriber_started()
+  let header : @protocol.SubgroupHeader = {
+    track_alias: 1,
+    group_id: 8,
+    subgroup_id_mode: @protocol.Zero,
+    publisher_priority: None,
+    end_of_group: false,
+    first_object: true,
+    has_properties: false,
+  }
+  assert_eq(
+    mixed.receive(@session.InboundStreamStarted(41, @session.Unidirectional)),
+    Ok([]),
+  )
+  assert_eq(
+    mixed.receive(
+      @session.StreamData(
+        41,
+        @protocol.encode_subgroup_stream(header, [
+          {
+            object_id: 0,
+            status: @protocol.Normal,
+            properties: b"",
+            payload: b"stream",
+          },
+        ]).unwrap(),
+      ),
+    ),
+    Ok([
+      @session.Notify(
+        @session.ObjectReceived(0, header, [
+          {
+            object_id: 0,
+            status: @protocol.Normal,
+            properties: b"",
+            payload: b"stream",
+          },
+        ]),
+      ),
+    ]),
+  )
+  let mixed_done : @protocol.PublishDoneMessage = {
+    code: 3,
+    stream_count: 1,
+    reason: b"",
+  }
+  assert_eq(
+    mixed.receive(
+      @session.StreamData(
+        30,
+        @protocol.encode_publish_done(mixed_done).unwrap(),
+      ),
+    ),
+    Ok([]),
+  )
+  assert_eq(
+    mixed.receive(
+      @session.DatagramReceived(
+        @protocol.encode_object_datagram(object).unwrap(),
+      ),
+    ),
+    Ok([@session.Notify(@session.ObjectDatagramReceived(0, object))]),
+  )
+  assert_eq(
+    mixed.receive(@session.StreamFinished(41)),
+    Ok([@session.Notify(@session.PublishDone(0, mixed_done))]),
+  )
+}
+
+///|
+test "object datagram sending reports local capability and maximum length" {
+  let publisher = publisher_started()
+  let datagram = update_datagram(1, 2, b"payload")
+  let encoded = @protocol.encode_object_datagram(datagram).unwrap()
+  assert_eq(
+    publisher.receive(@session.DatagramSendCapabilityChanged(false, 0)),
+    Ok([]),
+  )
+  assert_eq(
+    publisher.send_object_datagram(40, datagram),
+    Err(@session.DatagramSendUnavailable),
+  )
+  assert_eq(
+    publisher.receive(
+      @session.DatagramSendCapabilityChanged(true, encoded.length()),
+    ),
+    Ok([]),
+  )
+  assert_eq(
+    publisher.send_object_datagram(40, datagram),
+    Ok([@session.SendDatagram(encoded)]),
+  )
+  assert_eq(
+    publisher.receive(
+      @session.DatagramSendCapabilityChanged(true, encoded.length() - 1),
+    ),
+    Ok([]),
+  )
+  assert_eq(
+    publisher.send_object_datagram(40, datagram),
+    Err(@session.DatagramTooLarge(encoded.length(), encoded.length() - 1)),
+  )
+}
+
+///|
+test "datagram-only publisher completion reports zero opened Object streams" {
+  let publisher = publisher_started()
+  let datagram = update_datagram(1, 2, b"payload")
+  assert_eq(
+    publisher.send_object_datagram(40, datagram),
+    Ok([
+      @session.SendDatagram(@protocol.encode_object_datagram(datagram).unwrap()),
+    ]),
+  )
+  let done : @protocol.PublishDoneMessage = {
+    code: 3,
+    stream_count: 0,
+    reason: b"",
+  }
+  assert_eq(
+    publisher.publish_done(40, done.code, done.reason),
+    Ok([
+      @session.Send(40, @protocol.encode_publish_done(done).unwrap(), true),
+      @session.Notify(@session.PublishDone(1, done)),
+    ]),
   )
 }

@@ -102,6 +102,11 @@ pub fn decode_datagram(input : Bytes) -> DecodeResult[ReceivedDatagram] {
     None => return Incomplete
   }
   if kind == 0x132b3e29UL {
+    for byte in input[after_kind:] {
+      if byte != 0 {
+        return Invalid(InvalidDatagram)
+      }
+    }
     return Complete(Padding, input.length())
   }
   if (kind & 0xd0UL) != 0UL ||
