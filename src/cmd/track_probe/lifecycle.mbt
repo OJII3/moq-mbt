@@ -2,7 +2,7 @@
 priv struct LifecyclePeer {
   client : @transport.Client
   session : @session.ClientSession
-  send_counts : Map[Int64, UInt64]
+  driver : SessionActionDriver
   closed_streams : Map[Int64, Bool]
 }
 
@@ -107,7 +107,7 @@ fn lifecycle_poll(
             client_stream_direction(direction),
           ),
         ),
-        peer.send_counts,
+        peer.driver,
       )
       notices
     }
@@ -116,7 +116,7 @@ fn lifecycle_poll(
         peer.client,
         peer.session,
         receive_session_event(peer.session, @session.StreamData(stream, bytes)),
-        peer.send_counts,
+        peer.driver,
       )
       notices
     }
@@ -125,7 +125,7 @@ fn lifecycle_poll(
         peer.client,
         peer.session,
         receive_session_event(peer.session, @session.DatagramReceived(bytes)),
-        peer.send_counts,
+        peer.driver,
       )
       notices
     }
@@ -134,7 +134,7 @@ fn lifecycle_poll(
         peer.client,
         peer.session,
         receive_session_event(peer.session, @session.StreamFinished(stream)),
-        peer.send_counts,
+        peer.driver,
       )
       notices
     }
@@ -150,12 +150,12 @@ fn lifecycle_poll(
           peer.session,
           @session.StreamReset(stream, code.reinterpret_as_uint64()),
         ),
-        peer.send_counts,
+        peer.driver,
       )
       notices
     }
     SendComplete(stream, canceled) => {
-      note_send_complete(peer.send_counts, stream)
+      note_send_complete(peer.driver, stream)
       let (notices, _) = drive_session_result(
         peer.client,
         peer.session,
@@ -163,7 +163,7 @@ fn lifecycle_poll(
           peer.session,
           @session.SendComplete(stream, canceled),
         ),
-        peer.send_counts,
+        peer.driver,
       )
       notices
     }
@@ -175,7 +175,7 @@ fn lifecycle_poll(
           peer.session,
           @session.SendStopped(stream, code.reinterpret_as_uint64()),
         ),
-        peer.send_counts,
+        peer.driver,
       )
       notices
     }
@@ -190,7 +190,7 @@ fn lifecycle_poll(
             capability.max_length,
           ),
         ),
-        peer.send_counts,
+        peer.driver,
       )
       notices
     }
@@ -199,7 +199,7 @@ fn lifecycle_poll(
         peer.client,
         peer.session,
         receive_session_event(peer.session, @session.DatagramSendComplete),
-        peer.send_counts,
+        peer.driver,
       )
       notices
     }
@@ -212,7 +212,7 @@ fn lifecycle_poll(
           peer.session,
           @session.PeerClosed(code.reinterpret_as_uint64()),
         ),
-        peer.send_counts,
+        peer.driver,
       )
       notices
     }
@@ -224,7 +224,7 @@ fn lifecycle_poll(
           peer.session,
           @session.TransportFailed(status.to_int64()),
         ),
-        peer.send_counts,
+        peer.driver,
       )
       notices
     }
@@ -234,7 +234,7 @@ fn lifecycle_poll(
         peer.client,
         peer.session,
         receive_session_clock(peer.session),
-        peer.send_counts,
+        peer.driver,
       )
       notices
     }
@@ -261,7 +261,7 @@ fn LifecycleState::observe_publisher(
       @session.SendFinished(stream, canceled) if self.done_b_sent &&
         stream == self.publish_stream_b => {
         guard !canceled else { fail("track B PUBLISH_DONE send was canceled") }
-        if peer.send_counts.get(stream) is None {
+        if peer.driver.send_counts.get(stream) is None {
           self.done_b_send_completed = true
         }
       }
@@ -451,7 +451,7 @@ fn send_lifecycle_group(
     peer.client,
     peer.session,
     peer.session.open_object_stream(publish_stream, header),
-    peer.send_counts,
+    peer.driver,
   )
   let mut object_stream : Int64? = None
   for (purpose, stream) in opened {
@@ -473,7 +473,7 @@ fn send_lifecycle_group(
       peer.client,
       peer.session,
       peer.session.send_object(object_stream, frame),
-      peer.send_counts,
+      peer.driver,
     ),
   )
   ignore(
@@ -481,7 +481,7 @@ fn send_lifecycle_group(
       peer.client,
       peer.session,
       peer.session.finish_object_stream(object_stream),
-      peer.send_counts,
+      peer.driver,
     ),
   )
 }
@@ -500,7 +500,7 @@ pub fn run_lifecycle(
   let publisher : LifecyclePeer = {
     client: publisher_client,
     session: publisher_session,
-    send_counts: Map([]),
+    driver: SessionActionDriver::new(),
     closed_streams: {},
   }
   let (publish_a, publish_a_actions) = publisher_session
@@ -510,7 +510,7 @@ pub fn run_lifecycle(
     publisher_client,
     publisher_session,
     publish_a_actions,
-    publisher.send_counts,
+    publisher.driver,
   )
   let publish_stream_a = lifecycle_request_stream(publish_a_opened, publish_a)
   let (publish_b, publish_b_actions) = publisher_session
@@ -520,7 +520,7 @@ pub fn run_lifecycle(
     publisher_client,
     publisher_session,
     publish_b_actions,
-    publisher.send_counts,
+    publisher.driver,
   )
   let publish_stream_b = lifecycle_request_stream(publish_b_opened, publish_b)
   wait_lifecycle_publishes(publisher, publish_a, publish_b)
@@ -532,7 +532,7 @@ pub fn run_lifecycle(
   let subscriber : LifecyclePeer = {
     client: subscriber_client,
     session: subscriber_session,
-    send_counts: Map([]),
+    driver: SessionActionDriver::new(),
     closed_streams: {},
   }
   let (subscribe_a, subscribe_a_actions) = subscriber_session
@@ -542,7 +542,7 @@ pub fn run_lifecycle(
     subscriber_client,
     subscriber_session,
     subscribe_a_actions,
-    subscriber.send_counts,
+    subscriber.driver,
   )
   let subscribe_stream_a = lifecycle_request_stream(
     subscribe_a_opened, subscribe_a,
@@ -555,7 +555,7 @@ pub fn run_lifecycle(
       subscriber_client,
       subscriber_session,
       subscribe_b_actions,
-      subscriber.send_counts,
+      subscriber.driver,
     ),
   )
   let state : LifecycleState = {
@@ -601,7 +601,7 @@ pub fn run_lifecycle(
     subscriber_client,
     subscriber_session,
     Ok(update_off_actions),
-    subscriber.send_counts,
+    subscriber.driver,
   )
   state.observe_subscriber(update_off_notices)
   wait_lifecycle_stage(publisher, subscriber, state, ForwardingPaused)
@@ -627,7 +627,7 @@ pub fn run_lifecycle(
     subscriber_client,
     subscriber_session,
     Ok(update_on_actions),
-    subscriber.send_counts,
+    subscriber.driver,
   )
   state.observe_subscriber(update_on_notices)
   wait_lifecycle_stage(publisher, subscriber, state, ForwardingResumed)
@@ -651,7 +651,7 @@ pub fn run_lifecycle(
     subscriber_client,
     subscriber_session,
     Ok(cancel_actions),
-    subscriber.send_counts,
+    subscriber.driver,
   )
   state.observe_subscriber(cancel_notices)
   wait_lifecycle_stage(publisher, subscriber, state, TrackACancelled)
@@ -672,7 +672,7 @@ pub fn run_lifecycle(
     publisher_client,
     publisher_session,
     done_actions,
-    publisher.send_counts,
+    publisher.driver,
   )
   state.observe_publisher(publisher, done_notices)
   wait_lifecycle_stage(publisher, subscriber, state, TrackBFinished)

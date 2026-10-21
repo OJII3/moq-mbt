@@ -1,6 +1,8 @@
 ///|
 pub(all) suberror TransportError {
   TransportError(String)
+  SendQueueFull
+  SendTooLarge(Int32, Int32)
   DatagramSendUnavailable
   DatagramTooLarge(Int32, Int32)
   DatagramSendQueueFull
