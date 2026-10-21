@@ -323,17 +323,21 @@ fn ClientSession::protocol_error_actions(
   error : ClientSessionError,
 ) -> Array[ClientSessionAction]? {
   let code = match error {
+    InvalidRequestId | DuplicateRequestId => close_invalid_request_id
     Handshake(handshake_error) => handshake_error.close_code()
     UnexpectedMessage
     | Track(_)
     | UnknownStream
     | UnknownRequest
-    | InvalidRequestId
-    | DuplicateRequestId
     | DuplicateStream
     | SubscriptionNotAccepted
     | BufferLimitExceeded => close_protocol_violation
     _ => return None
+  }
+  match error {
+    InvalidRequestId | DuplicateRequestId =>
+      return Some(self.end_session(Local(code, b""), Some(code), b""))
+    _ => ()
   }
   match event {
     StreamData(stream, _)
@@ -350,9 +354,29 @@ fn ClientSession::protocol_error_actions(
         self.inbound_buffers.remove(stream)
         Some([AbortSend(stream, code), StopReceiving(stream, code)])
       } else if kind is Some(Subgroup) {
-        self.incoming_object_streams.remove(stream)
+        let actions : Array[ClientSessionAction] = []
+        match self.incoming_object_streams.get(stream) {
+          Some(state) => {
+            match state.request_id {
+              Some(request_id) => {
+                let request = self.requests.get(request_id).unwrap()
+                request.active_object_streams = request.active_object_streams -
+                  1UL
+                match self.take_ready_publish_done(request_id) {
+                  Some(done) =>
+                    actions.push(Notify(PublishDone(request_id, done)))
+                  None => ()
+                }
+              }
+              None => ()
+            }
+            self.incoming_object_streams.remove(stream)
+          }
+          None => ()
+        }
         self.inbound_stream_kinds.remove(stream)
-        Some([StopReceiving(stream, code)])
+        actions.push(StopReceiving(stream, code))
+        Some(actions)
       } else {
         Some(self.end_session(Local(code, b""), Some(code), b""))
       }
