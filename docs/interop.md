@@ -1,6 +1,10 @@
-# Draft 18 multi-object / multi-group 疎通
+# Draft 18 相互接続
 
-Native QUIC 上で Draft 18 の SETUP 交換、単一トラックの publish/subscribe、複数 Group にまたがる複数 Object の配送を確認する。probe は各 Group を信頼性のある Subgroup stream に載せ、Object ID の順序、payload の一致、Group の終了、PUBLISH_DONE の stream 数を検証する。moq5 では同じ connection で Object Datagram も送り、stream と混在した受信を確認する。Datagram smoke は MsQuic が通知した最大長、1 byte 超過、送信 queue 上限、pending send がある状態での close を検証する。protocol は vi64、control message framing、SUBSCRIBE/PUBLISH と Subgroup object を扱う。session は複数 track request と複数 Object stream を管理し、分割受信を組み立てる。
+Native QUIC 上で Draft 18 の SETUP、複数 Group/Object の publish/subscribe、`PUBLISH_DONE`、REQUEST_UPDATE、購読解除、Object Datagram を確認する。各 Group の Subgroup stream では Object ID、payload、Group 終端、stream 数を検証する。moq5 の lifecycle probe は2つの track を購読し、track A の `FORWARD=0/1` 更新応答、track A を再開後の Object 配送、track A の解除、解除後も続く track B の配送を確認する。FORWARD 停止中のデータ抑止や更新失敗後の `PUBLISH_DONE(UPDATE_FAILED)` は Sans-I/O テストで決定的に確認する。
+
+Datagram probe は stream Object と同じ track 上で Object Datagram を送受信し、Alias、payload、通常 Object の Group 終端、`EndOfGroup`、`EndOfTrack` status を検証する。通常 payload のサンプルを少なくとも1つ受信したことを確認する。Datagram の追加マーカーは受信したものを検証するが、全件受信や順序は成功条件にしない。Datagram は Subgroup stream と混在させ、`PUBLISH_DONE` の stream 数には加えない。
+
+`moq5-relay` の CLI では購読更新拒否や relay 発の GOAWAY を誘発できない。更新拒否と `REQUEST_ERROR` / `PUBLISH_DONE(UPDATE_FAILED)`、GOAWAY 受信後の新規要求抑止・既存処理の drain・close は既存の Sans-I/O session tests で確認する。moq-rs 経路は従来どおり stream の複数 Object / Group 回帰に使う。
 
 仕様は [Draft 18](https://www.ietf.org/archive/id/draft-ietf-moq-transport-18.txt) に固定する。vi64 は QUIC の 62-bit varint と異なり、1〜9 bytes で UInt64 全域を表現する。SETUP の type 0x2f00 は制御ストリームの type も兼ねるので、別のストリームヘッダーを付けない。制御ストリームは SETUP の後も開いたままにする。
 
@@ -13,25 +17,17 @@ nix develop -c moon test --target js
 nix develop -c bash scripts/check-interop.sh
 ~~~
 
-疎通スクリプトは 127.0.0.1:4443 を使う。実行中のリレーがある場合は終了してから実行する。証明書検証に失敗する接続を確認したあと、SETUP、track 登録、object 配送を確認する。成功時には stream と Object Datagram の両方が配送される。
+疎通スクリプトは 127.0.0.1:4443 を使う。実行中のリレーがある場合は終了してから実行する。証明書検証に失敗する接続を確認したあと、SETUP、track 登録、Object 配送、moq5 の更新・解除シナリオを確認する。Datagram は best effort として扱い、Normal payload のサンプル受信を確認する一方、追加 Datagram の全件受信や順序は要求しない。
 
 ~~~text
-QUIC connected: ALPN moqt-18, DATAGRAM negotiated
-MoQT Draft 18 SETUP complete (0 options)
-PUBLISH request accepted
-Subscription accepted (track alias 1)
-Sent group 0 (2 Objects)
-Sent group 1 (2 Objects)
-Sent group 2 (2 Objects)
-PUBLISH_DONE send completed
-Received Object (group 0, object 0, 16 bytes)
-Received Object (group 0, object 1, 16 bytes)
-Received Object (group 1, object 0, 16 bytes)
-Received Object (group 1, object 1, 16 bytes)
-Received Object (group 2, object 0, 16 bytes)
-Received Object (group 2, object 1, 16 bytes)
-Verified 6 Objects across 3 groups; PUBLISH_DONE received
-Client and relay SETUP exchange completed
+REQUEST_UPDATE FORWARD=0 accepted
+Received track B group 0 while track A was paused
+REQUEST_UPDATE FORWARD=1 accepted
+Received track A group 0 after forwarding resumed
+Track A subscription cancelled
+Received track B group 1 after track A cancellation
+Verified track B PUBLISH_DONE (2 object streams)
+Lifecycle and independent-track scenario passed
 ~~~
 
 Datagram smoke を個別に実行するには、moq5-relay が 127.0.0.1:4443 で待ち受けている状態で次を実行する。
@@ -58,6 +54,8 @@ nix develop -c moon run --release --target native src/cmd/track_probe -- \
 CLI の末尾には Group 数と各 Group の Object 数を指定する。probe は `group-<group id>-object-<object id>` 形式の payload を生成し、subscriber 側で各 Group の Object ID 順と payload を照合する。SETUP はどちらのピアからも先に送れるため、probe は相手 SETUP の受信と、自分の SETUP の QUIC ACK の両方を待つ。続く PUBLISH_OK と SUBSCRIBE_OK も確認し、control request が relay を通ることを検証する。publisher は全 Subgroup stream の ACK 後に PUBLISH_DONE を送り、subscriber は Object 数、Group 終了、PUBLISH_DONE の stream 数がそろった時点で成功する。
 
 publisher は PUBLISH_OK 後に 1 秒待ってから有限 batch を送る。この間に別プロセスの subscriber が relay に接続し、PUBLISH_DONE を含む完了通知を受け取れる。
+
+`lifecycle` probe は publisher と subscriber の接続を一つのプロセスで駆動し、各操作を SUBSCRIBE_OK、REQUEST_OK、Group 完了、PUBLISH_DONE などの通知に合わせて進める。track A の解除では request stream に STOP_SENDING / reset を送り、MsQuic の stream shutdown 完了を確認してから track B の次の Group を送る。更新失敗や relay 発 GOAWAY の再現には時間待ちを使わず、Sans-I/O の session tests を使う。
 
 ## 接続先と参照実装
 

@@ -2,6 +2,7 @@
 package "ojii3/moq-mbt/cmd/track_probe"
 
 // Values
+pub fn run_lifecycle(String, Int, String, Bool) -> Unit raise
 
 // Errors
 

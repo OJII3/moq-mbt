@@ -11,8 +11,8 @@ priv struct PublisherProbeState {
   mut publish_accepted : Bool
   mut publication_ready : Bool
   datagrams : Bool
-  mut datagram_sent : Bool
-  mut datagram_send_final : Bool
+  mut datagram_send_count : UInt64
+  mut datagram_send_final_count : UInt64
   mut next_group_index : Int32
   mut publish_done_sent : Bool
 }
@@ -86,18 +86,60 @@ fn start_probe_group(
 }
 
 ///|
+fn probe_datagrams(group_count : UInt64) -> Array[@protocol.ObjectDatagram] {
+  [
+    {
+      track_alias: 1UL,
+      group_id: group_count,
+      object_id: 0UL,
+      publisher_priority: None,
+      end_of_group: false,
+      properties: b"",
+      status: @protocol.Normal,
+      payload: b"track-probe-object-datagram",
+    },
+    {
+      track_alias: 1UL,
+      group_id: group_count,
+      object_id: 1UL,
+      publisher_priority: None,
+      end_of_group: true,
+      properties: b"",
+      status: @protocol.Normal,
+      payload: b"track-probe-last-in-group",
+    },
+    {
+      track_alias: 1UL,
+      group_id: group_count + 1UL,
+      object_id: 0UL,
+      publisher_priority: None,
+      end_of_group: false,
+      properties: b"",
+      status: @protocol.EndOfGroup,
+      payload: b"",
+    },
+    {
+      track_alias: 1UL,
+      group_id: group_count + 2UL,
+      object_id: 0UL,
+      publisher_priority: None,
+      end_of_group: false,
+      properties: b"",
+      status: @protocol.EndOfTrack,
+      payload: b"",
+    },
+  ]
+}
+
+///|
 fn handle_publisher_notices(
-  client : @transport.Client,
-  session : @session.ClientSession,
+  _client : @transport.Client,
+  _session : @session.ClientSession,
   notices : Array[@session.ClientSessionNotice],
-  send_counts : Map[Int64, UInt64],
+  _send_counts : Map[Int64, UInt64],
   state : PublisherProbeState,
 ) -> Unit raise {
-  let mut pending = notices
-  let mut index = 0
-  while index < pending.length() {
-    let notice = pending[index]
-    index += 1
+  for notice in notices {
     match notice {
       @session.PublishAccepted(_) => {
         eprintln("PUBLISH request accepted")
@@ -126,18 +168,6 @@ fn handle_publisher_notices(
             state.finished_object_streams[stream] = true
             state.finished_stream_count = state.finished_stream_count + 1UL
             println("Group stream finished (group \{group_id})")
-            if state.finished_stream_count == state.group_count &&
-              !state.publish_done_sent {
-              let (more, _) = drive_session_result(
-                client,
-                session,
-                session.publish_done(state.publish_stream, 3, b""),
-                send_counts,
-              )
-              pending = pending + more
-              state.publish_done_sent = true
-              state.done_stream = Some(state.publish_stream)
-            }
           }
           None => fail("unknown object stream finished")
         }
@@ -198,8 +228,8 @@ fn run_publisher(
     publish_after: 0UL,
     publish_accepted: false,
     publication_ready: false,
-    datagram_sent: false,
-    datagram_send_final: false,
+    datagram_send_count: 0UL,
+    datagram_send_final_count: 0UL,
     next_group_index: 0,
     publish_done_sent: false,
   }
@@ -258,7 +288,10 @@ fn run_publisher(
         }
         if state.done_stream == Some(stream) &&
           send_counts.get(stream) is None &&
-          (!state.datagrams || state.datagram_send_final) {
+          (
+            !state.datagrams ||
+            state.datagram_send_final_count == state.datagram_send_count
+          ) {
           println("PUBLISH_DONE send completed")
           return
         }
@@ -272,6 +305,7 @@ fn run_publisher(
         )
         handle_publisher_notices(client, session, notices, send_counts, state)
       }
+      StreamClosed(_) => ()
       StreamReset(stream, code) => {
         let (notices, _) = drive_session_result(
           client,
@@ -315,7 +349,8 @@ fn run_publisher(
         println("Datagram send \{id} state: \{send_state.to_repr()}")
         if send_state.is_final() {
           if state.datagrams {
-            state.datagram_send_final = true
+            state.datagram_send_final_count = state.datagram_send_final_count +
+              1UL
           }
           let (notices, _) = drive_session_result(
             client,
@@ -366,26 +401,20 @@ fn run_publisher(
       @env.now() >= state.publish_after {
       state.publication_ready = true
     }
-    if state.publication_ready && state.datagrams && !state.datagram_sent {
-      let datagram : @protocol.ObjectDatagram = {
-        track_alias: 1UL,
-        group_id: state.group_count,
-        object_id: 0UL,
-        publisher_priority: None,
-        end_of_group: false,
-        properties: b"",
-        status: @protocol.Normal,
-        payload: b"track-probe-object-datagram",
+    if state.publication_ready &&
+      state.datagrams &&
+      state.datagram_send_count == 0UL {
+      for datagram in probe_datagrams(state.group_count) {
+        let (notices, _) = drive_session_result(
+          client,
+          session,
+          session.send_object_datagram(state.publish_stream, datagram),
+          send_counts,
+        )
+        handle_publisher_notices(client, session, notices, send_counts, state)
+        state.datagram_send_count = state.datagram_send_count + 1UL
       }
-      let (notices, _) = drive_session_result(
-        client,
-        session,
-        session.send_object_datagram(state.publish_stream, datagram),
-        send_counts,
-      )
-      handle_publisher_notices(client, session, notices, send_counts, state)
-      state.datagram_sent = true
-      println("Sent Object Datagram")
+      println("Sent four Object Datagrams (best effort)")
     }
     if state.publication_ready &&
       state.next_group_index < state.group_count.to_int() &&
@@ -396,6 +425,22 @@ fn run_publisher(
         send_counts,
         state,
         state.next_group_index,
+      )
+      handle_publisher_notices(client, session, notices, send_counts, state)
+    }
+    if !state.publish_done_sent &&
+      state.finished_stream_count == state.group_count &&
+      (
+        !state.datagrams ||
+        state.datagram_send_final_count == state.datagram_send_count
+      ) {
+      state.publish_done_sent = true
+      state.done_stream = Some(state.publish_stream)
+      let (notices, _) = drive_session_result(
+        client,
+        session,
+        session.publish_done(state.publish_stream, 3, b""),
+        send_counts,
       )
       handle_publisher_notices(client, session, notices, send_counts, state)
     }

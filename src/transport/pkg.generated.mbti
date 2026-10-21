@@ -64,6 +64,7 @@ pub(all) enum Event {
   DatagramStateChanged(DatagramSendCapability)
   DatagramSendStateChanged(Int64, DatagramSendState)
   StreamFinished(Int64)
+  StreamClosed(Int64)
   StreamReset(Int64, Int64)
   SendStopped(Int64, Int64)
   SendComplete(Int64, Bool)

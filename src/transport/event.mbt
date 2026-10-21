@@ -82,6 +82,8 @@ pub(all) enum Event {
   DatagramStateChanged(DatagramSendCapability)
   DatagramSendStateChanged(Int64, DatagramSendState)
   StreamFinished(Int64)
+  /// MsQuic reported QUIC_STREAM_EVENT_SHUTDOWN_COMPLETE for the stream.
+  StreamClosed(Int64)
   StreamReset(Int64, Int64)
   SendStopped(Int64, Int64)
   SendComplete(Int64, Bool)

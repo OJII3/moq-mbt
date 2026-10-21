@@ -64,7 +64,10 @@ fn probe(
           }
           setup_acknowledged = true
         }
-      StreamFinished(_) | StreamReset(_, _) | SendStopped(_, _) => {
+      StreamFinished(_)
+      | StreamClosed(_)
+      | StreamReset(_, _)
+      | SendStopped(_, _) => {
         close_code = handshake
           .control_closed()
           .close_code()

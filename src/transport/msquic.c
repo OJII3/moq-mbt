@@ -275,11 +275,15 @@ int32_t moq_client_send(client *c, HQUIC s, moonbit_bytes_t data, int32_t len, i
 }
 
 int32_t moq_client_abort_send(client *c, HQUIC s, int64_t error_code) {
-    return (int32_t)c->api->StreamShutdown(s, QUIC_STREAM_SHUTDOWN_FLAG_ABORT_SEND, (uint64_t)error_code);
+    QUIC_STATUS status = c->api->StreamShutdown(
+        s, QUIC_STREAM_SHUTDOWN_FLAG_ABORT_SEND, (uint64_t)error_code);
+    return QUIC_FAILED(status) ? (int32_t)status : 0;
 }
 
 int32_t moq_client_stop_receiving(client *c, HQUIC s, int64_t error_code) {
-    return (int32_t)c->api->StreamShutdown(s, QUIC_STREAM_SHUTDOWN_FLAG_ABORT_RECEIVE, (uint64_t)error_code);
+    QUIC_STATUS status = c->api->StreamShutdown(
+        s, QUIC_STREAM_SHUTDOWN_FLAG_ABORT_RECEIVE, (uint64_t)error_code);
+    return QUIC_FAILED(status) ? (int32_t)status : 0;
 }
 
 int32_t moq_client_send_datagram(client *c, moonbit_bytes_t data, int32_t len, int64_t id) {

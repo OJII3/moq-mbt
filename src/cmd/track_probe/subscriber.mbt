@@ -1,12 +1,14 @@
 ///|
 priv struct SubscriberProbeState {
+  request_id : UInt64
   group_count : UInt64
   objects_per_group : UInt64
   expect_datagram : Bool
   next_object_ids : Map[UInt64, UInt64]
   finished_groups : Map[UInt64, Bool]
+  mut track_alias : UInt64?
   mut received_objects : UInt64
-  mut received_datagram : Bool
+  mut received_sample_datagram : Bool
   mut publish_done_received : Bool
 }
 
@@ -19,6 +21,7 @@ fn handle_subscriber_notices(
   for notice in notices {
     match notice {
       @session.SubscribeEstablished(_, track_alias) => {
+        state.track_alias = Some(track_alias)
         eprintln("SUBSCRIBE_OK received")
         println("Subscription accepted (track alias \{track_alias})")
       }
@@ -61,23 +64,50 @@ fn handle_subscriber_notices(
           )
         }
       }
-      @session.ObjectDatagramReceived(_, datagram) => {
+      @session.ObjectDatagramReceived(request_id, datagram) => {
         guard state.expect_datagram else {
           fail("received unexpected Object Datagram")
         }
-        guard !state.received_datagram else {
-          fail("received Object Datagram more than once")
+        guard request_id == state.request_id else {
+          fail("Object Datagram arrived on an unexpected subscription")
         }
-        guard datagram.track_alias == 1UL &&
-          datagram.group_id == state.group_count &&
-          datagram.object_id == 0UL &&
-          datagram.status == @protocol.Normal &&
-          datagram.payload == b"track-probe-object-datagram" else {
-          fail("Object Datagram fields or payload did not match")
+        guard state.track_alias is Some(track_alias) &&
+          datagram.track_alias == track_alias else {
+          fail("Object Datagram Alias did not match SUBSCRIBE_OK")
         }
-        state.received_datagram = true
-        println("Received Object Datagram")
-        if state.publish_done_received {
+        match (datagram.status, datagram.end_of_group, datagram.payload) {
+          (@protocol.Normal, false, b"track-probe-object-datagram") => {
+            guard datagram.group_id == state.group_count &&
+              datagram.object_id == 0UL else {
+              fail("normal Object Datagram fields did not match")
+            }
+            state.received_sample_datagram = true
+            println("Received Object Datagram (normal payload)")
+          }
+          (@protocol.Normal, true, b"track-probe-last-in-group") => {
+            guard datagram.group_id == state.group_count &&
+              datagram.object_id == 1UL else {
+              fail("end-of-group Object Datagram fields did not match")
+            }
+            println("Received Object Datagram (last object in Group)")
+          }
+          (@protocol.EndOfGroup, false, b"") => {
+            guard datagram.group_id == state.group_count + 1UL &&
+              datagram.object_id == 0UL else {
+              fail("EndOfGroup Object Datagram fields did not match")
+            }
+            println("Received Object Datagram (EndOfGroup status)")
+          }
+          (@protocol.EndOfTrack, false, b"") => {
+            guard datagram.group_id == state.group_count + 2UL &&
+              datagram.object_id == 0UL else {
+              fail("EndOfTrack Object Datagram fields did not match")
+            }
+            println("Received Object Datagram (EndOfTrack status)")
+          }
+          _ => fail("Object Datagram status or payload did not match")
+        }
+        if state.publish_done_received && state.received_sample_datagram {
           finished = true
         }
       }
@@ -121,7 +151,7 @@ fn handle_subscriber_notices(
         println(
           "Verified \{state.received_objects} Objects across \{state.group_count} groups; PUBLISH_DONE received",
         )
-        finished = !state.expect_datagram || state.received_datagram
+        finished = !state.expect_datagram || state.received_sample_datagram
       }
       _ => ()
     }
@@ -153,13 +183,15 @@ fn run_subscriber(
     client, session, actions, send_counts,
   )
   let state : SubscriberProbeState = {
+    request_id,
     group_count: group_count.to_uint64(),
     objects_per_group: objects_per_group.to_uint64(),
     expect_datagram: datagrams,
     next_object_ids: {},
     finished_groups: {},
+    track_alias: None,
     received_objects: 0UL,
-    received_datagram: false,
+    received_sample_datagram: false,
     publish_done_received: false,
   }
   ignore(handle_subscriber_notices(notices, state))
@@ -226,6 +258,7 @@ fn run_subscriber(
           return
         }
       }
+      StreamClosed(_) => ()
       StreamReset(stream, code) => {
         let (notices, _) = drive_session_result(
           client,
