@@ -136,6 +136,15 @@ fn setup_client(
     ],
   }).unwrap()
   let client = @transport.Client::connect(host, port, insecure~)
+  let capability = client.datagram_send_capability()
+  ignore(
+    session.receive(
+      @session.DatagramSendCapabilityChanged(
+        capability.enabled,
+        capability.max_length,
+      ),
+    ),
+  )
   let send_counts : Map[Int64, UInt64] = Map([])
   let mut setup_stream : Int64? = None
   let mut setup_received = false
@@ -219,7 +228,21 @@ fn setup_client(
           setup_acknowledged = true
         }
       }
-      DatagramStateChanged(_) => ()
+      DatagramStateChanged(capability) => {
+        let (notices, _) = drive_session_result(
+          client,
+          session,
+          receive_session_event(
+            session,
+            @session.DatagramSendCapabilityChanged(
+              capability.enabled,
+              capability.max_length,
+            ),
+          ),
+          send_counts,
+        )
+        ignore(notices)
+      }
       DatagramSendStateChanged(_, state) =>
         if state.is_final() {
           let (notices, _) = drive_session_result(

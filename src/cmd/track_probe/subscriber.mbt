@@ -272,7 +272,23 @@ fn run_subscriber(
           return
         }
       }
-      DatagramStateChanged(_) => ()
+      DatagramStateChanged(capability) => {
+        let (notices, _) = drive_session_result(
+          client,
+          session,
+          receive_session_event(
+            session,
+            @session.DatagramSendCapabilityChanged(
+              capability.enabled,
+              capability.max_length,
+            ),
+          ),
+          send_counts,
+        )
+        if handle_subscriber_notices(notices, state) {
+          return
+        }
+      }
       DatagramSendStateChanged(_, send_state) =>
         if send_state.is_final() {
           let (notices, _) = drive_session_result(

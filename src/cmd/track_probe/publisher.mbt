@@ -296,7 +296,21 @@ fn run_publisher(
         )
         handle_publisher_notices(client, session, notices, send_counts, state)
       }
-      DatagramStateChanged(_) => ()
+      DatagramStateChanged(capability) => {
+        let (notices, _) = drive_session_result(
+          client,
+          session,
+          receive_session_event(
+            session,
+            @session.DatagramSendCapabilityChanged(
+              capability.enabled,
+              capability.max_length,
+            ),
+          ),
+          send_counts,
+        )
+        handle_publisher_notices(client, session, notices, send_counts, state)
+      }
       DatagramSendStateChanged(id, send_state) => {
         println("Datagram send \{id} state: \{send_state.to_repr()}")
         if send_state.is_final() {

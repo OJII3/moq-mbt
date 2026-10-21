@@ -83,6 +83,8 @@ pub(all) enum ClientSessionError {
   RequestUpdatePending
   UnexpectedMessage
   BufferLimitExceeded
+  DatagramSendUnavailable
+  DatagramTooLarge(Int, Int)
 } derive(Eq, @debug.Debug)
 pub fn ClientSessionError::equal(Self, Self) -> Bool
 pub fn ClientSessionError::not_equal(Self, Self) -> Bool
@@ -92,6 +94,7 @@ pub(all) enum ClientSessionEvent {
   InboundStreamStarted(Int64, ClientStreamDirection)
   StreamData(Int64, Bytes)
   DatagramReceived(Bytes)
+  DatagramSendCapabilityChanged(Bool, Int)
   StreamOpened(ClientStreamPurpose, Int64)
   StreamFinished(Int64)
   StreamReset(Int64, UInt64)

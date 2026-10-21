@@ -31,6 +31,7 @@ pub(all) enum ClientSessionEvent {
   InboundStreamStarted(Int64, ClientStreamDirection)
   StreamData(Int64, Bytes)
   DatagramReceived(Bytes)
+  DatagramSendCapabilityChanged(Bool, Int32)
   StreamOpened(ClientStreamPurpose, Int64)
   StreamFinished(Int64)
   StreamReset(Int64, UInt64)
@@ -115,6 +116,8 @@ pub(all) enum ClientSessionError {
   RequestUpdatePending
   UnexpectedMessage
   BufferLimitExceeded
+  DatagramSendUnavailable
+  DatagramTooLarge(Int32, Int32)
 } derive(Debug, Eq)
 
 ///|
@@ -149,6 +152,8 @@ pub struct ClientSession {
   priv mut max_peer_request_id : UInt64?
   priv pending_sends : Map[Int64, UInt64]
   priv mut pending_datagram_sends : UInt64
+  priv mut datagram_send_enabled : Bool
+  priv mut max_datagram_length : Int32
   priv inbound_stream_kinds : Map[Int64, InboundStreamKind]
   priv inbound_unclassified_buffers : Map[Int64, Bytes]
   priv requests : Map[UInt64, ClientRequest]
@@ -194,6 +199,8 @@ pub fn ClientSession::new(
         max_peer_request_id: None,
         pending_sends: {},
         pending_datagram_sends: 0UL,
+        datagram_send_enabled: false,
+        max_datagram_length: 0,
         inbound_stream_kinds: {},
         inbound_unclassified_buffers: {},
         requests: {},
@@ -256,6 +263,11 @@ pub fn ClientSession::receive(
     }
     StreamData(stream, bytes) => self.receive_stream_data(stream, bytes)
     DatagramReceived(bytes) => self.receive_object_datagram(bytes)
+    DatagramSendCapabilityChanged(enabled, max_length) => {
+      self.datagram_send_enabled = enabled
+      self.max_datagram_length = max_length
+      Ok([])
+    }
     StreamOpened(purpose, stream) => self.stream_opened(purpose, stream)
     StreamFinished(stream) => self.stream_finished(stream)
     StreamReset(stream, code) => self.stream_reset(stream, code)

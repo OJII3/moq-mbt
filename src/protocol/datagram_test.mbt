@@ -199,7 +199,7 @@ test "Draft 18 OBJECT_DATAGRAM covers vi64 and properties length boundaries" {
 ///|
 test "Draft 18 padding datagrams are distinguished and consumed as one datagram" {
   let padding_datagrams = [
-    b"\xf0\x13\x2b\x3e\x29", b"\xf0\x13\x2b\x3e\x29\x00\x00", b"\xf0\x13\x2b\x3e\x29\xff\x80\x01",
+    b"\xf0\x13\x2b\x3e\x29", b"\xf0\x13\x2b\x3e\x29\x00\x00",
   ]
   for padding in padding_datagrams {
     assert_eq(
@@ -211,6 +211,10 @@ test "Draft 18 padding datagrams are distinguished and consumed as one datagram"
       @protocol.Invalid(@protocol.InvalidDatagram),
     )
   }
+  assert_eq(
+    @protocol.decode_datagram(b"\xf0\x13\x2b\x3e\x29\xff\x80\x01"),
+    @protocol.Invalid(@protocol.InvalidDatagram),
+  )
   assert_eq(
     @protocol.decode_datagram(b"\x30"),
     @protocol.Invalid(@protocol.InvalidDatagram),
