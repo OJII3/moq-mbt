@@ -32,11 +32,17 @@ Subgroup の reader / writer と送信完了待ちの状態は private なスト
 
 local PUBLISH、local SUBSCRIBE、peer SUBSCRIBE は同じ `RequestLifetime` で local send と peer send の終了を記録する。FIN は peer send 方向だけを閉じ、request の取消や Object stream の終了にはしない。RESET、STOP_SENDING、明示取消は共通遷移を通し、まだ開いている方向への transport action と `SubscriptionEnded` を一度だけ返す。`PUBLISH_DONE` の受信と Subgroup/Object stream の drain は request cancellation とは別に管理する。
 
+`PUBLISH_DONE` と初回要求への `REQUEST_ERROR` を受信したら、local send 方向に一度だけ FIN を送る。`PUBLISH_DONE` 後も、通知された stream 数に達するまで遅着 Object を受信する。送信側は開設待ちの Object stream の callback も待ち、開設後に reset した空の stream も `PUBLISH_DONE` の stream 数に含める。
+
+ローカル SUBSCRIBE で今後の更新が不要になった場合は、`finish_subscription_updates` で更新の送信方向だけを閉じる。以後の更新送信は拒否するが、相手の応答と Object の受信は継続する。
+
 request stream の ID 索引は session の存続中 tombstone として保持する。終了後に遅れて届いた event を新しい peer request として誤配送しないため、解放は session が破棄される時とする。Object stream tombstone はその stream の FIN または RESET で解放する。通常の SUBSCRIBE Alias は、`PUBLISH_DONE` の stream 数と観測済み stream 数が一致し、active Object stream がなくなった時に解放する。cancel で `PUBLISH_DONE` を待てなくなった Alias は session 終了まで保持し、遅れて到着する Object stream を同じ request に結び付けて破棄できるようにする。
 
 ## M3 の Draft 18 スコープ
 
 [M3](https://github.com/OJII3/moq-mbt/milestone/3) では `REQUEST_UPDATE` とその応答、リクエストストリームのキャンセルによる購読解除、`GOAWAY` とセッション終了、および Datagram Object の送受信を追加する。Datagram と Subgroup stream は同じ購読・Alias の状態を参照する。
+
+購読フィルターは stream と Datagram の Object 送信に共通して適用する。相対フィルターの開始位置は初回要求の受理時とフィルターを明示した更新時に確定し、他のパラメーターだけの更新では維持する。`NEW_GROUP_REQUEST` の送信には、相手の `SUBSCRIBE_OK` に `DYNAMIC_GROUPS=1` が必要となる。
 
 Draft 18 では `MAX_REQUEST_ID` / `REQUESTS_BLOCKED` と独立したキャンセルメッセージが削除されている。購読更新には `REQUEST_UPDATE`、キャンセルには開いているストリーム方向への `STOP_SENDING` / reset を使う。仕様の [§3.3.2](https://www.ietf.org/archive/id/draft-ietf-moq-transport-18.html#section-3.3.2)、[§10.9](https://www.ietf.org/archive/id/draft-ietf-moq-transport-18.html#section-10.9)、[Appendix A.2](https://www.ietf.org/archive/id/draft-ietf-moq-transport-18.html#appendix-A.2) を参照する。
 

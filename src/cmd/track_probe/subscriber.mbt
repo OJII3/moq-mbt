@@ -204,6 +204,15 @@ fn run_subscriber(
     }
   }
   let request_stream = request_stream.unwrap()
+  let (notices, _) = drive_session_result(
+    client,
+    session,
+    session.finish_subscription_updates(request_id),
+    send_counts,
+  )
+  if handle_subscriber_notices(notices, state) {
+    return
+  }
   let deadline = @env.now() + 30000
   while @env.now() < deadline {
     match client.next_event(100) {

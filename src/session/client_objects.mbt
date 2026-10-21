@@ -12,7 +12,16 @@ priv struct PublishedSubscription {
   mut parameters : Array[@protocol.MessageParameter]
   mut pending_updates : Array[PendingSubscriptionUpdate]
   mut pending_failure : @protocol.PublishDoneMessage?
+  mut resolved_filter : ResolvedSubscriptionFilter?
   request_id : UInt64
+}
+
+///|
+priv struct ResolvedSubscriptionFilter {
+  start_group : UInt64
+  start_object : UInt64
+  end_group : UInt64?
+  impossible : Bool
 }
 
 ///|
@@ -61,6 +70,141 @@ fn encode_outgoing_object(
   }
   writer.previous_object_id = Some(frame.object_id)
   Ok(encoded)
+}
+
+///|
+fn ClientSession::has_pending_object_streams(
+  self : ClientSession,
+  subscription_stream : Int64,
+) -> Bool {
+  for (_, pending) in self.pending_object_streams {
+    if pending.subscription_stream == subscription_stream {
+      return true
+    }
+  }
+  false
+}
+
+///|
+fn subscription_allows_location(
+  filter : ResolvedSubscriptionFilter?,
+  group_id : UInt64,
+  object_id : UInt64,
+) -> Bool {
+  match filter {
+    None => true
+    Some(window) => {
+      if window.impossible ||
+        group_id < window.start_group ||
+        (group_id == window.start_group && object_id < window.start_object) {
+        return false
+      }
+      match window.end_group {
+        Some(end_group) if group_id > end_group => false
+        _ => true
+      }
+    }
+  }
+}
+
+///|
+fn resolve_subscription_filter(
+  parameters : Array[@protocol.MessageParameter],
+  largest : (UInt64, UInt64)?,
+) -> ResolvedSubscriptionFilter? {
+  for parameter in parameters {
+    if parameter.kind == 0x21 {
+      match parameter.value {
+        @protocol.Filter(@protocol.AbsoluteStart(group_id, object_id)) =>
+          return Some({
+            start_group: group_id,
+            start_object: object_id,
+            end_group: None,
+            impossible: false,
+          })
+        @protocol.Filter(
+          @protocol.AbsoluteRange(group_id, object_id, end_group)
+        ) =>
+          return Some({
+            start_group: group_id,
+            start_object: object_id,
+            end_group: Some(end_group),
+            impossible: end_group < group_id,
+          })
+        @protocol.Filter(@protocol.LargestObject) => {
+          let (start_group, start_object, impossible) = match largest {
+            None => (0UL, 0UL, false)
+            Some((group_id, object_id)) if object_id < 0xffffffffffffffffUL =>
+              (group_id, object_id + 1UL, false)
+            Some((group_id, _)) if group_id < 0xffffffffffffffffUL =>
+              (group_id + 1UL, 0UL, false)
+            Some(_) => (0UL, 0UL, true)
+          }
+          return Some({
+            start_group,
+            start_object,
+            end_group: None,
+            impossible,
+          })
+        }
+        @protocol.Filter(@protocol.NextGroupStart) => {
+          let (start_group, impossible) = match largest {
+            None => (0UL, false)
+            Some((group_id, _)) if group_id < 0xffffffffffffffffUL =>
+              (group_id + 1UL, false)
+            Some(_) => (0UL, true)
+          }
+          return Some({
+            start_group,
+            start_object: 0UL,
+            end_group: None,
+            impossible,
+          })
+        }
+        _ => return None
+      }
+    }
+  }
+  None
+}
+
+///|
+fn subscription_filter_parameter(
+  parameters : Array[@protocol.MessageParameter],
+) -> @protocol.MessageParameter? {
+  for parameter in parameters {
+    if parameter.kind == 0x21 {
+      return Some(parameter)
+    }
+  }
+  None
+}
+
+///|
+fn subscription_largest_location(
+  parameters : Array[@protocol.MessageParameter],
+) -> (UInt64, UInt64)? {
+  for parameter in parameters {
+    if parameter.kind == 0x09 {
+      match parameter.value {
+        @protocol.Location(group_id, object_id) =>
+          return Some((group_id, object_id))
+        _ => ()
+      }
+    }
+  }
+  None
+}
+
+///|
+fn subscription_has_relative_filter(
+  parameters : Array[@protocol.MessageParameter],
+) -> Bool {
+  match subscription_filter_parameter(parameters) {
+    Some({ value: @protocol.Filter(@protocol.LargestObject), .. }) => true
+    Some({ value: @protocol.Filter(@protocol.NextGroupStart), .. }) => true
+    _ => false
+  }
 }
 
 ///|
@@ -282,10 +426,27 @@ pub fn ClientSession::send_object(
   if outgoing.finishing {
     return Err(UnexpectedMessage)
   }
+  if !subscription_allows_location(
+      self.published_subscriptions.get(outgoing.subscription_stream).unwrap().resolved_filter,
+      outgoing.header.group_id,
+      frame.object_id,
+    ) {
+    return Err(SubscriptionNotAccepted)
+  }
   let bytes = match encode_outgoing_object(outgoing, frame) {
     Ok(value) => value
     Err(error) => return Err(Track(error))
   }
+  let publisher_request_id = match
+    self.inbound_subscriptions.get(outgoing.subscription_stream) {
+    Some(inbound) => inbound.publisher_request_id
+    None => self.request_streams.get(outgoing.subscription_stream).unwrap()
+  }
+  self.note_published_location(
+    publisher_request_id,
+    outgoing.header.group_id,
+    frame.object_id,
+  )
   outgoing.pending_send_count = outgoing.pending_send_count + 1UL
   Ok(self.finish_actions([Send(stream, bytes, false)]))
 }
@@ -324,6 +485,16 @@ pub fn ClientSession::send_object_datagram(
   if datagram.track_alias != publisher.track_alias.unwrap() {
     return Err(Track(AliasMismatch))
   }
+  let subscription = self.published_subscriptions
+    .get(subscription_stream)
+    .unwrap()
+  if !subscription_allows_location(
+      subscription.resolved_filter,
+      datagram.group_id,
+      datagram.object_id,
+    ) {
+    return Err(SubscriptionNotAccepted)
+  }
   let bytes = match @protocol.encode_object_datagram(datagram) {
     Ok(value) => value
     Err(error) => return Err(Encoding(error))
@@ -334,7 +505,29 @@ pub fn ClientSession::send_object_datagram(
   if bytes.length() > self.max_datagram_length {
     return Err(DatagramTooLarge(bytes.length(), self.max_datagram_length))
   }
+  self.note_published_location(
+    publisher_request_id,
+    datagram.group_id,
+    datagram.object_id,
+  )
   Ok(self.finish_actions([SendDatagram(bytes)]))
+}
+
+///|
+fn ClientSession::note_published_location(
+  self : ClientSession,
+  publisher_request_id : UInt64,
+  group_id : UInt64,
+  object_id : UInt64,
+) -> Unit {
+  match self.largest_published_locations.get(publisher_request_id) {
+    Some((previous_group, previous_object)) if previous_group > group_id ||
+      (previous_group == group_id && previous_object >= object_id) => ()
+    _ =>
+      self.largest_published_locations[publisher_request_id] = (
+        group_id, object_id,
+      )
+  }
 }
 
 ///|
@@ -399,7 +592,8 @@ pub fn ClientSession::publish_done(
   if !subscription.pending_updates.is_empty() {
     return Err(RequestUpdatePending)
   }
-  if subscription.open_stream_count != 0UL {
+  if subscription.open_stream_count != 0UL ||
+    self.has_pending_object_streams(subscription_stream) {
     return Err(Track(ObjectStreamsStillOpen))
   }
   let message : @protocol.PublishDoneMessage = {

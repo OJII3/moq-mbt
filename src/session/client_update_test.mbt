@@ -257,7 +257,7 @@ test "unknown, malformed, and post-cancel datagrams do not reach the application
   )
   assert_eq(
     subscriber.receive(@session.DatagramReceived(b"\xf0\x13\x2b\x3e\x29\x01")),
-    Err(@session.UnexpectedMessage),
+    Ok([]),
   )
   // These two datagrams form a valid wire only if their bytes are combined.
   assert_eq(
@@ -611,12 +611,90 @@ test "failed local update requires UPDATE_FAILED PUBLISH_DONE" {
     subscriber.receive(@session.StreamData(30, wire)),
     Ok([
       @session.Notify(@session.SubscriptionUpdateRejected(0, update_id, error)),
+      @session.Send(30, b"", true),
       @session.Notify(@session.PublishDone(0, done)),
     ]),
   )
   assert_eq(
     subscriber.update_subscription(0, []),
     Err(@session.SubscriptionNotAccepted),
+  )
+}
+
+///|
+test "UPDATE_FAILED PUBLISH_DONE counts an Object stream opened after rejection" {
+  let publisher = publisher_started()
+  let token = match
+    publisher.open_object_stream(40, publisher_header(1, false)).unwrap() {
+    [@session.OpenStream(@session.Unidirectional, @session.Object(token))] =>
+      token
+    _ => fail("expected pending Object stream")
+  }
+  ignore(
+    publisher
+    .receive(@session.StreamData(40, request_update_bytes(3, [])))
+    .unwrap(),
+  )
+  let error : @protocol.RequestErrorMessage = {
+    code: 1,
+    retry_interval: 0,
+    reason: b"unsupported",
+    redirect: b"",
+  }
+  assert_eq(
+    publisher.reject_subscription_update(40, 3, error),
+    Ok([
+      @session.Send(40, @protocol.encode_request_error(error).unwrap(), false),
+    ]),
+  )
+  let done : @protocol.PublishDoneMessage = {
+    code: 8,
+    stream_count: 1,
+    reason: b"",
+  }
+  assert_eq(
+    publisher.receive(@session.StreamOpened(@session.Object(token), 50)),
+    Ok([
+      @session.AbortSend(50, 0UL),
+      @session.Send(40, @protocol.encode_publish_done(done).unwrap(), true),
+      @session.Notify(@session.PublishDone(1UL, done)),
+    ]),
+  )
+}
+
+///|
+test "Object stream opened after forwarding is paused counts toward later PUBLISH_DONE" {
+  let publisher = publisher_started()
+  let token = match
+    publisher.open_object_stream(40, publisher_header(1, false)).unwrap() {
+    [@session.OpenStream(@session.Unidirectional, @session.Object(token))] =>
+      token
+    _ => fail("expected pending Object stream")
+  }
+  let pause : Array[@protocol.MessageParameter] = [
+    { kind: 0x10UL, value: @protocol.Byte(0), },
+  ]
+  ignore(
+    publisher
+    .receive(@session.StreamData(40, request_update_bytes(3, pause)))
+    .unwrap(),
+  )
+  ignore(publisher.accept_subscription_update(40, 3, update_ok()).unwrap())
+  assert_eq(
+    publisher.receive(@session.StreamOpened(@session.Object(token), 50)),
+    Ok([@session.AbortSend(50, 0UL)]),
+  )
+  let done : @protocol.PublishDoneMessage = {
+    code: 3,
+    stream_count: 1,
+    reason: b"",
+  }
+  assert_eq(
+    publisher.publish_done(40, done.code, done.reason),
+    Ok([
+      @session.Send(40, @protocol.encode_publish_done(done).unwrap(), true),
+      @session.Notify(@session.PublishDone(1UL, done)),
+    ]),
   )
 }
 
@@ -808,7 +886,10 @@ test "datagrams do not count toward PUBLISH_DONE and can arrive while streams dr
         @protocol.encode_publish_done(empty_done).unwrap(),
       ),
     ),
-    Ok([@session.Notify(@session.PublishDone(0, empty_done))]),
+    Ok([
+      @session.Send(30, b"", true),
+      @session.Notify(@session.PublishDone(0, empty_done)),
+    ]),
   )
   assert_eq(
     datagram_only.receive(
@@ -872,7 +953,7 @@ test "datagrams do not count toward PUBLISH_DONE and can arrive while streams dr
         @protocol.encode_publish_done(mixed_done).unwrap(),
       ),
     ),
-    Ok([]),
+    Ok([@session.Send(30, b"", true)]),
   )
   assert_eq(
     mixed.receive(

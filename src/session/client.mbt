@@ -162,6 +162,7 @@ pub struct ClientSession {
   priv inbound_subscriptions : Map[Int64, InboundSubscription]
   priv peer_request_ids : Map[UInt64, Int64]
   priv published_requests : Array[UInt64]
+  priv largest_published_locations : Map[UInt64, (UInt64, UInt64)]
   priv aliases : Map[UInt64, UInt64]
   priv incoming_object_streams : Map[Int64, IncomingObjectStream]
   priv published_subscriptions : Map[Int64, PublishedSubscription]
@@ -209,6 +210,7 @@ pub fn ClientSession::new(
         inbound_subscriptions: {},
         peer_request_ids: {},
         published_requests: [],
+        largest_published_locations: {},
         aliases: {},
         incoming_object_streams: {},
         published_subscriptions: {},
@@ -526,13 +528,31 @@ fn ClientSession::stream_opened(
       match pending.cancelled_error_code {
         Some(error_code) => {
           self.pending_object_streams.remove(token)
-          return Ok([AbortSend(stream, error_code)])
+          match self.published_subscriptions.get(pending.subscription_stream) {
+            Some(subscription) =>
+              subscription.opened_stream_count = subscription.opened_stream_count +
+                1UL
+            None => ()
+          }
+          return Ok(
+            [AbortSend(stream, error_code)] +
+            self.finish_failed_subscription(pending.subscription_stream),
+          )
         }
         None => ()
       }
       if !self.subscription_is_active(pending.subscription_stream) {
         self.pending_object_streams.remove(token)
-        return Ok([AbortSend(stream, 1UL)])
+        match self.published_subscriptions.get(pending.subscription_stream) {
+          Some(subscription) =>
+            subscription.opened_stream_count = subscription.opened_stream_count +
+              1UL
+          None => ()
+        }
+        return Ok(
+          [AbortSend(stream, 1UL)] +
+          self.finish_failed_subscription(pending.subscription_stream),
+        )
       }
       let subscription = match
         self.published_subscriptions.get(pending.subscription_stream) {

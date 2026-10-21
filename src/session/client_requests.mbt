@@ -13,6 +13,7 @@ priv struct ClientRequest {
   mut response_buffer : Bytes
   mut accepted : Bool
   mut terminal : Bool
+  mut dynamic_groups : Bool
   lifetime : RequestLifetime
   mut observed_object_streams : UInt64
   mut active_object_streams : UInt64
@@ -26,6 +27,7 @@ priv struct ClientRequest {
 priv struct PendingSubscriptionUpdate {
   request_id : UInt64
   effective_parameters : Array[@protocol.MessageParameter]
+  filter_updated : Bool
 }
 
 ///|
@@ -136,25 +138,44 @@ fn ClientSession::receive_response(
             parameters: response.parameters,
             pending_updates: [],
             pending_failure: None,
+            resolved_filter: resolve_subscription_filter(
+              response.parameters,
+              self.largest_published_locations.get(request_id),
+            ),
             request_id,
           }
           [Notify(PublishAccepted(request_id))]
         }
         (Subscribing, @protocol.SubscribeOk(response)) if !request.accepted => {
+          let dynamic_groups = match
+            track_supports_dynamic_groups(response.properties) {
+            Some(value) => value
+            None =>
+              return Ok(
+                self.end_session(
+                  Local(close_protocol_violation, b""),
+                  Some(close_protocol_violation),
+                  b"",
+                ),
+              )
+          }
           if self.aliases.get(response.track_alias) is Some(_) {
             return Err(AliasInUse)
           }
           self.aliases[response.track_alias] = request_id
           request.track_alias = Some(response.track_alias)
+          request.dynamic_groups = dynamic_groups
           request.accepted = true
           [Notify(SubscribeEstablished(request_id, response.track_alias))]
         }
         (Publishing, @protocol.RequestError(error)) if !request.accepted => {
           request.terminal = true
+          self.request_local_fin_actions(stream) +
           [Notify(PublishRejected(request_id, error))]
         }
         (Subscribing, @protocol.RequestError(error)) if !request.accepted => {
           request.terminal = true
+          self.request_local_fin_actions(stream) +
           [Notify(SubscribeRejected(request_id, error))]
         }
         (Publishing, @protocol.RequestUpdate(update)) if request.accepted =>
@@ -254,10 +275,92 @@ fn ClientSession::receive_publish_done(
   request.terminal = true
   request.pending_local_update = None
   request.pending_publish_done = Some(message)
-  match self.take_ready_publish_done(request_id) {
-    Some(done) => Ok([Notify(PublishDone(request_id, done))])
-    None => Ok([])
+  let fin_actions = match request.stream {
+    Some(stream) => self.request_local_fin_actions(stream)
+    None => []
   }
+  match self.take_ready_publish_done(request_id) {
+    Some(done) => Ok(fin_actions + [Notify(PublishDone(request_id, done))])
+    None => Ok(fin_actions)
+  }
+}
+
+///|
+/// Close the local direction of a completed request stream exactly once.
+fn ClientSession::request_local_fin_actions(
+  self : ClientSession,
+  stream : Int64,
+) -> Array[ClientSessionAction] {
+  let request_id = match self.request_streams.get(stream) {
+    Some(value) => value
+    None => return []
+  }
+  let request = self.requests.get(request_id).unwrap()
+  if request.lifetime.local_send_closed {
+    return []
+  }
+  self.note_request_local_fin(stream)
+  [Send(stream, b"", true)]
+}
+
+///|
+/// Decode one variable-length integer from raw Track Properties.
+fn read_track_property_vi64(input : Bytes, offset : Int32) -> (UInt64, Int32)? {
+  let end = if offset + 9 < input.length() {
+    offset + 9
+  } else {
+    input.length()
+  }
+  match @protocol.decode_vi64(input[offset:end].to_owned()) {
+    @protocol.Complete(value, consumed) => Some((value, offset + consumed))
+    _ => None
+  }
+}
+
+///|
+/// Scan Draft 18 Track Properties, ignoring unknown properties safely.
+fn track_supports_dynamic_groups(properties : Bytes) -> Bool? {
+  let mut offset = 0
+  let mut previous = 0UL
+  let mut supported = false
+  while offset < properties.length() {
+    let (delta, after_delta) = match
+      read_track_property_vi64(properties, offset) {
+      Some(value) => value
+      None => return None
+    }
+    if delta > 0xffffffffffffffffUL - previous {
+      return None
+    }
+    let kind = previous + delta
+    offset = after_delta
+    if (kind & 1UL) == 0UL {
+      let (value, next) = match read_track_property_vi64(properties, offset) {
+        Some(value) => value
+        None => return None
+      }
+      if kind == 0x30UL {
+        if value > 1UL {
+          return None
+        }
+        supported = value == 1UL
+      }
+      offset = next
+    } else {
+      let (length, after_length) = match
+        read_track_property_vi64(properties, offset) {
+        Some(value) => value
+        None => return None
+      }
+      if length > 65535UL ||
+        length > (properties.length() - after_length).to_uint64() {
+        return None
+      }
+      offset = after_length + length.to_int()
+    }
+    previous = kind
+  }
+  Some(supported)
 }
 
 ///|
@@ -450,6 +553,7 @@ pub fn ClientSession::publish_track(
     response_buffer: b"",
     accepted: false,
     terminal: false,
+    dynamic_groups: false,
     lifetime: RequestLifetime::new(),
     observed_object_streams: 0UL,
     active_object_streams: 0UL,
@@ -489,6 +593,7 @@ pub fn ClientSession::subscribe_track(
     response_buffer: b"",
     accepted: false,
     terminal: false,
+    dynamic_groups: false,
     lifetime: RequestLifetime::new(),
     observed_object_streams: 0UL,
     active_object_streams: 0UL,
@@ -503,6 +608,38 @@ pub fn ClientSession::subscribe_track(
       self.finish_actions([OpenStream(Bidirectional, Request(request_id))]),
     ),
   )
+}
+
+///|
+/// Finish sending updates on a local SUBSCRIBE request stream.
+/// The response direction remains open for SUBSCRIBE_OK, Objects, and
+/// PUBLISH_DONE. Calling this more than once has no effect.
+pub fn ClientSession::finish_subscription_updates(
+  self : ClientSession,
+  request_id : UInt64,
+) -> Result[Array[ClientSessionAction], ClientSessionError] {
+  match self.ensure_open() {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  let request = match self.requests.get(request_id) {
+    Some(value) => value
+    None => return Err(UnknownRequest)
+  }
+  if request.kind != Subscribing {
+    return Err(SubscriptionNotAccepted)
+  }
+  if request.lifetime.local_send_closed {
+    return Ok([])
+  }
+  if request.terminal {
+    return Err(SubscriptionNotAccepted)
+  }
+  let stream = match request.stream {
+    Some(value) => value
+    None => return Err(SubscriptionNotAccepted)
+  }
+  Ok(self.finish_actions(self.request_local_fin_actions(stream)))
 }
 
 ///|
@@ -526,7 +663,12 @@ pub fn ClientSession::accept_subscription(
   let response = match
     @protocol.encode_subscribe_ok({
       track_alias: request.track_alias.unwrap(),
-      parameters: [],
+      parameters: match
+        self.largest_published_locations.get(inbound.publisher_request_id) {
+        Some((group_id, object_id)) =>
+          [{ kind: 0x09UL, value: @protocol.Location(group_id, object_id), }]
+        None => []
+      },
       properties: b"",
     }) {
     Ok(value) => value
@@ -539,6 +681,10 @@ pub fn ClientSession::accept_subscription(
     parameters: inbound.parameters,
     pending_updates: [],
     pending_failure: None,
+    resolved_filter: resolve_subscription_filter(
+      inbound.parameters,
+      self.largest_published_locations.get(inbound.publisher_request_id),
+    ),
     request_id: inbound.request_id,
   }
   Ok(

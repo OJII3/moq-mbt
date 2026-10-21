@@ -186,7 +186,9 @@ test "Draft 18 OBJECT_DATAGRAM covers vi64 and properties length boundaries" {
   for length in [127, 128] {
     let datagram : @protocol.ObjectDatagram = {
       ..object_datagram(3, b"x"),
-      properties: Bytes::from_array(Array::make(length, 0xaa)),
+      properties: b"\x01" +
+      @protocol.encode_vi64((length - 2).to_uint64()) +
+      Bytes::from_array(Array::make(length - 2, 0xaa)),
     }
     let wire = @protocol.encode_object_datagram(datagram).unwrap()
     assert_eq(
@@ -211,14 +213,107 @@ test "Draft 18 padding datagrams are distinguished and consumed as one datagram"
       @protocol.Invalid(@protocol.InvalidDatagram),
     )
   }
+  let nonzero_padding = b"\xf0\x13\x2b\x3e\x29\xff\x80\x01"
   assert_eq(
-    @protocol.decode_datagram(b"\xf0\x13\x2b\x3e\x29\xff\x80\x01"),
-    @protocol.Invalid(@protocol.InvalidDatagram),
+    @protocol.decode_datagram(nonzero_padding),
+    @protocol.Complete(@protocol.Padding, nonzero_padding.length()),
   )
   assert_eq(
     @protocol.decode_datagram(b"\x30"),
     @protocol.Invalid(@protocol.InvalidDatagram),
   )
+}
+
+///|
+test "Draft 18 OBJECT_DATAGRAM validates type range and property KVP syntax" {
+  assert_true(
+    @protocol.decode_datagram(b"\x41\x0c\x01\x02x") is @protocol.Invalid(_),
+  )
+  assert_true(
+    @protocol.decode_datagram(b"\x81\x0c\x01\x02x") is @protocol.Invalid(_),
+  )
+
+  for invalid_properties in [b"\x02", b"\x01", b"\x01\x02x"] {
+    let datagram : @protocol.ObjectDatagram = {
+      ..object_datagram(1, b"payload"),
+      properties: invalid_properties,
+    }
+    assert_eq(
+      @protocol.encode_object_datagram(datagram),
+      Err(@protocol.InvalidDatagram),
+    )
+  }
+
+  let overflowing_properties = @protocol.encode_vi64(0xffffffffffffffffUL) +
+    @protocol.encode_vi64(0UL) +
+    @protocol.encode_vi64(1UL)
+  let malformed_properties = [
+    b"\x02", // Even type is missing its varint value.
+     b"\x01", // Odd type is missing its length.
+     b"\x01\x02x", // Odd type declares more bytes than provided.
+     overflowing_properties, // Type delta overflows.
+  ]
+  for properties in malformed_properties {
+    let wire = b"\x0d\x01\x02" +
+      @protocol.encode_vi64(properties.length().to_uint64()) +
+      properties
+    assert_true(@protocol.decode_datagram(wire) is @protocol.Invalid(_))
+  }
+
+  let max_value = Bytes::from_array(Array::make(65535, 0xaa))
+  let max_properties = @protocol.encode_vi64(0x39UL) +
+    @protocol.encode_vi64(65535UL) +
+    max_value
+  let max_datagram : @protocol.ObjectDatagram = {
+    ..object_datagram(1, b"payload"),
+    properties: max_properties,
+  }
+  let max_wire = @protocol.encode_object_datagram(max_datagram).unwrap()
+  assert_eq(
+    @protocol.decode_object_datagram(max_wire),
+    @protocol.Complete(max_datagram, max_wire.length()),
+  )
+
+  let oversized_value = Bytes::from_array(Array::make(65536, 0xaa))
+  let oversized_properties = @protocol.encode_vi64(0x39UL) +
+    @protocol.encode_vi64(65536UL) +
+    oversized_value
+  let oversized_datagram : @protocol.ObjectDatagram = {
+    ..object_datagram(1, b"payload"),
+    properties: oversized_properties,
+  }
+  assert_eq(
+    @protocol.encode_object_datagram(oversized_datagram),
+    Err(@protocol.InvalidDatagram),
+  )
+  let wire = b"\x0d\x01\x02" +
+    @protocol.encode_vi64(oversized_properties.length().to_uint64()) +
+    oversized_properties +
+    b"payload"
+  assert_true(@protocol.decode_datagram(wire) is @protocol.Invalid(_))
+
+  for
+    properties in [
+      overflowing_properties,
+      @protocol.encode_vi64(0x39UL) +
+      @protocol.encode_vi64(65536UL) +
+      oversized_value,
+    ] {
+    assert_eq(
+      @protocol.encode_object_datagram({
+        ..object_datagram(1, b"payload"),
+        properties,
+      }),
+      Err(@protocol.InvalidDatagram),
+    )
+  }
+
+  let unknown_properties = b"\x40\x01\x7f\x01x"
+  let wire = b"\x0d\x01\x02" +
+    @protocol.encode_vi64(unknown_properties.length().to_uint64()) +
+    unknown_properties +
+    b"payload"
+  assert_true(@protocol.decode_datagram(wire) is @protocol.Complete(_, _))
 }
 
 ///|

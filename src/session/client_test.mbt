@@ -427,7 +427,7 @@ test "ClientSession shares even request IDs across tracks and routes interleaved
         @protocol.encode_publish_done({ code: 3, stream_count: 1, reason: b"", }).unwrap(),
       ),
     ),
-    Ok([]),
+    Ok([@session.Send(32, b"", true)]),
   )
   assert_eq(
     subscriber.receive(
@@ -436,7 +436,7 @@ test "ClientSession shares even request IDs across tracks and routes interleaved
         @protocol.encode_publish_done({ code: 3, stream_count: 1, reason: b"", }).unwrap(),
       ),
     ),
-    Ok([]),
+    Ok([@session.Send(30, b"", true)]),
   )
   assert_eq(
     subscriber.receive(@session.StreamFinished(60)),
@@ -918,6 +918,7 @@ test "ClientSession releases a completed subscription alias" {
       ),
     ),
     Ok([
+      @session.Send(30, b"", true),
       @session.Notify(
         @session.PublishDone(0, { code: 0, stream_count: 0, reason: b"", }),
       ),
