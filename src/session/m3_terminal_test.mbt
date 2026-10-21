@@ -53,6 +53,47 @@ test "SUBSCRIBE PUBLISH_DONE closes its request direction once while objects dra
 }
 
 ///|
+test "PUBLISH_DONE received before malformed Object FIN reports once after stream retirement" {
+  let subscriber = subscriber_started()
+  let done : @protocol.PublishDoneMessage = {
+    code: 0UL,
+    stream_count: 1UL,
+    reason: b"",
+  }
+  assert_eq(
+    subscriber.receive(
+      @session.StreamData(30, @protocol.encode_publish_done(done).unwrap()),
+    ),
+    Ok([@session.Send(30, b"", true)]),
+  )
+  assert_eq(subscriber.receive(@session.StreamFinished(30)), Ok([]))
+  assert_eq(
+    subscriber.receive(
+      @session.InboundStreamStarted(40, @session.Unidirectional),
+    ),
+    Ok([]),
+  )
+  let header = subscriber_header(1UL, false)
+  assert_eq(
+    subscriber.receive(
+      @session.StreamData(
+        40,
+        @protocol.encode_subgroup_header(header) + b"\x00\x02x",
+      ),
+    ),
+    Ok([]),
+  )
+  assert_eq(
+    subscriber.receive(@session.StreamFinished(40)),
+    Ok([
+      @session.Notify(@session.PublishDone(0UL, done)),
+      @session.StopReceiving(40, 3UL),
+    ]),
+  )
+  assert_eq(subscriber.receive(@session.StreamReset(40, 1UL)), Ok([]))
+}
+
+///|
 test "initial REQUEST_ERROR closes the request direction once" {
   let subscriber = subscriber_pending()
   let error : @protocol.RequestErrorMessage = {
