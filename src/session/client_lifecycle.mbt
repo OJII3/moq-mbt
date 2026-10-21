@@ -74,10 +74,7 @@ fn ClientSession::note_send_complete(
 ///|
 fn ClientSession::has_active_requests(self : ClientSession) -> Bool {
   for (_, request) in self.requests {
-    if !request.terminal ||
-      request.active_object_streams > 0UL ||
-      request.pending_publish_done is Some(_) ||
-      request.pending_local_update is Some(_) {
+    if request.has_active_work() {
       return true
     }
   }
@@ -232,10 +229,10 @@ fn ClientSession::reject_local_request_for_goaway(
   request_id : UInt64,
   request : ClientRequest,
 ) -> Array[ClientSessionAction] {
-  if request.accepted || request.terminal {
+  if request.is_accepted() || request.is_terminal() {
     return []
   }
-  request.terminal = true
+  request.mark_terminal()
   let effects = request.lifetime.transition(
     Cancel(request_reset_going_away),
     request.stream is Some(_),
@@ -298,7 +295,7 @@ fn ClientSession::receive_control_goaway(
     ),
   ]
   for (request_id, request) in self.requests {
-    if request_id >= message.request_id && !request.accepted {
+    if request_id >= message.request_id && !request.is_accepted() {
       for action in self.reject_local_request_for_goaway(request_id, request) {
         actions.push(action)
       }
