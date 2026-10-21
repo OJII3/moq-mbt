@@ -28,6 +28,8 @@
 
 `ClientSession` をプロトコル操作の公開 API とし、Request ID、Track Alias、リクエストの応答・終了状態、購読、および Object stream の状態を所有させる。リクエストストリームの受信バッファと応答デコードは PUBLISH / SUBSCRIBE で同じ経路を使い、受理状態や Alias の正本を一つにする。Alias からリクエストへの検索表は、この状態を参照するための索引として扱う。
 
+要求の受理段階（pending / accepted / terminal）は `ClientRequest` が所有し、`RequestLifetime` の送受信方向の終了とは別の状態として扱う。terminal でも `PUBLISH_DONE` 後の Object drain が残るため、stream 数・稼働数・保留中の完了通知と drain 完了条件は `ObjectDrain` に集約する。Datagram の配送可否も同じ `ClientRequest` の状態判断を参照する。
+
 Subgroup の reader / writer と送信完了待ちの状態は private なストリーム状態として管理し、処理を責務ごとのファイルへ分割する。Publisher / Subscriber の利便 API が必要になった場合は、`ClientSession` の操作と通知を使う上位のラッパーとして構築する。
 
 ## Request stream lifetime

@@ -361,8 +361,7 @@ fn ClientSession::protocol_error_actions(
             match state.request_id {
               Some(request_id) => {
                 let request = self.requests.get(request_id).unwrap()
-                request.active_object_streams = request.active_object_streams -
-                  1UL
+                request.object_drain.note_stream_closed()
                 match self.take_ready_publish_done(request_id) {
                   Some(done) =>
                     actions.push(Notify(PublishDone(request_id, done)))
@@ -569,7 +568,7 @@ fn ClientSession::stream_opened(
       }
       request.stream = Some(stream)
       self.request_streams[stream] = request_id
-      if request.terminal {
+      if request.is_terminal() {
         if request.lifetime.cancelled {
           let error_code = match request.lifetime.cancel_error_code {
             Some(value) => value
@@ -674,7 +673,7 @@ fn ClientSession::stream_finished(
       self.inbound_stream_kinds.remove(stream)
       if ignored.counted_active {
         let request = self.requests.get(ignored.request_id).unwrap()
-        request.active_object_streams = request.active_object_streams - 1UL
+        request.object_drain.note_stream_closed()
       }
       return Ok([])
     }
@@ -701,7 +700,7 @@ fn ClientSession::stream_finished(
       let group_id = state.header.unwrap().group_id
       let group_finished = state.header.unwrap().end_of_group
       let request = self.requests.get(request_id).unwrap()
-      request.active_object_streams = request.active_object_streams - 1UL
+      request.object_drain.note_stream_closed()
       self.incoming_object_streams.remove(stream)
       self.inbound_stream_kinds.remove(stream)
       let actions : Array[ClientSessionAction] = []
@@ -759,7 +758,7 @@ fn ClientSession::stream_reset(
       self.inbound_stream_kinds.remove(stream)
       if ignored.counted_active {
         let request = self.requests.get(ignored.request_id).unwrap()
-        request.active_object_streams = request.active_object_streams - 1UL
+        request.object_drain.note_stream_closed()
       }
       return Ok([])
     }
@@ -776,7 +775,7 @@ fn ClientSession::stream_reset(
         }
       }
       let request = self.requests.get(request_id).unwrap()
-      request.active_object_streams = request.active_object_streams - 1UL
+      request.object_drain.note_stream_closed()
       self.incoming_object_streams.remove(stream)
       self.inbound_stream_kinds.remove(stream)
       let actions : Array[ClientSessionAction] = [

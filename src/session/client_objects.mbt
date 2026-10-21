@@ -272,18 +272,14 @@ fn ClientSession::receive_subgroup(
             }
             return Ok([StopReceiving(stream, 1UL)])
           }
-          match request.pending_publish_done {
-            Some(done) if request.observed_object_streams >= done.stream_count =>
-              return Err(UnexpectedMessage)
-            _ => ()
+          if !request.object_drain.can_observe_stream() {
+            return Err(UnexpectedMessage)
           }
           state.request_id = Some(request_id)
           state.header = Some(header)
           state.decoder = Some(@protocol.SubgroupDecoder::new(header))
           state.buffer = state.buffer[consumed:].to_owned()
-          request.observed_object_streams = request.observed_object_streams +
-            1UL
-          request.active_object_streams = request.active_object_streams + 1UL
+          request.object_drain.note_stream_open()
         }
       }
     Some(_) => ()
@@ -309,7 +305,7 @@ fn ClientSession::receive_subgroup(
   } else {
     let request = self.requests.get(request_id).unwrap()
     if request.kind == Subscribing &&
-      request.accepted &&
+      request.is_accepted() &&
       !request.update_failed &&
       subscription_forward(request.parameters) {
       Ok([Notify(ObjectReceived(request_id, header, frames))])
@@ -345,12 +341,7 @@ fn ClientSession::receive_object_datagram(
     None => return Ok([])
   }
   let request = self.requests.get(request_id).unwrap()
-  if request.kind != Subscribing ||
-    !request.accepted ||
-    (request.terminal && request.pending_publish_done is None) ||
-    request.lifetime.cancelled ||
-    request.update_failed ||
-    !subscription_forward(request.parameters) {
+  if !request.can_receive_object_datagram() {
     return Ok([])
   }
   Ok([Notify(ObjectDatagramReceived(request_id, datagram))])
@@ -380,7 +371,9 @@ pub fn ClientSession::open_object_stream(
       match self.request_streams.get(subscription_stream) {
         Some(request_id) => {
           let request = self.requests.get(request_id).unwrap()
-          if request.kind != Publishing || !request.accepted || request.terminal {
+          if request.kind != Publishing ||
+            !request.is_accepted() ||
+            request.is_terminal() {
             return Err(SubscriptionNotAccepted)
           }
           request_id
@@ -473,7 +466,9 @@ pub fn ClientSession::send_object_datagram(
       match self.request_streams.get(subscription_stream) {
         Some(request_id) => {
           let request = self.requests.get(request_id).unwrap()
-          if request.kind != Publishing || !request.accepted || request.terminal {
+          if request.kind != Publishing ||
+            !request.is_accepted() ||
+            request.is_terminal() {
             return Err(SubscriptionNotAccepted)
           }
           request_id
@@ -576,7 +571,9 @@ pub fn ClientSession::publish_done(
       match self.request_streams.get(subscription_stream) {
         Some(request_id) => {
           let request = self.requests.get(request_id).unwrap()
-          if request.kind != Publishing || !request.accepted || request.terminal {
+          if request.kind != Publishing ||
+            !request.is_accepted() ||
+            request.is_terminal() {
             return Err(SubscriptionNotAccepted)
           }
           (request_id, true)
@@ -607,7 +604,7 @@ pub fn ClientSession::publish_done(
   }
   if local_publish {
     let request = self.requests.get(request_id).unwrap()
-    request.terminal = true
+    request.mark_terminal()
   } else {
     let inbound = self.inbound_subscriptions.get(subscription_stream).unwrap()
     inbound.state = Ended

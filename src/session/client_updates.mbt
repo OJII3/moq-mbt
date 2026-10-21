@@ -70,7 +70,9 @@ fn ClientSession::receive_peer_subscription_update(
       match self.request_streams.get(stream) {
         Some(request_id) => {
           let request = self.requests.get(request_id).unwrap()
-          if request.kind != Publishing || !request.accepted || request.terminal {
+          if request.kind != Publishing ||
+            !request.is_accepted() ||
+            request.is_terminal() {
             return Err(SubscriptionNotAccepted)
           }
           request_id
@@ -105,7 +107,7 @@ fn ClientSession::receive_peer_subscription_update(
       Some(inbound) => inbound.state = Ended
       None =>
         match self.requests.get(request_id) {
-          Some(request) => request.terminal = true
+          Some(request) => request.mark_terminal()
           None => ()
         }
     }
@@ -173,9 +175,9 @@ pub fn ClientSession::update_subscription(
     None => return Err(UnknownRequest)
   }
   if request.kind != Subscribing ||
-    !request.accepted ||
+    !request.is_accepted() ||
     request.lifetime.local_send_closed ||
-    request.terminal ||
+    request.is_terminal() ||
     request.update_failed {
     return Err(SubscriptionNotAccepted)
   }
@@ -335,7 +337,7 @@ pub fn ClientSession::reject_subscription_update(
     Some(inbound) => inbound.state = Ended
     None =>
       match self.requests.get(subscription.request_id) {
-        Some(request) => request.terminal = true
+        Some(request) => request.mark_terminal()
         None => ()
       }
   }

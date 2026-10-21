@@ -5,22 +5,144 @@ priv enum ClientRequestKind {
 } derive(Eq)
 
 ///|
+priv enum ClientRequestState {
+  RequestPending
+  RequestAccepted
+  RequestTerminal
+} derive(Eq)
+
+///|
 priv struct ClientRequest {
   kind : ClientRequestKind
   track : @protocol.TrackName
   mut track_alias : UInt64?
   mut stream : Int64?
   mut response_buffer : Bytes
-  mut accepted : Bool
-  mut terminal : Bool
+  mut state : ClientRequestState
   mut dynamic_groups : Bool
   lifetime : RequestLifetime
-  mut observed_object_streams : UInt64
-  mut active_object_streams : UInt64
-  mut pending_publish_done : @protocol.PublishDoneMessage?
+  object_drain : ObjectDrain
   mut parameters : Array[@protocol.MessageParameter]
   mut pending_local_update : PendingSubscriptionUpdate?
   mut update_failed : Bool
+}
+
+///|
+priv struct ObjectDrain {
+  mut observed_streams : UInt64
+  mut active_streams : UInt64
+  mut pending_done : @protocol.PublishDoneMessage?
+}
+
+///|
+fn ClientRequest::is_accepted(self : ClientRequest) -> Bool {
+  self.state == RequestAccepted
+}
+
+///|
+fn ClientRequest::is_terminal(self : ClientRequest) -> Bool {
+  self.state == RequestTerminal
+}
+
+///|
+fn ClientRequest::is_active(self : ClientRequest) -> Bool {
+  self.state == RequestAccepted
+}
+
+///|
+fn ClientRequest::is_fully_terminal(self : ClientRequest) -> Bool {
+  self.is_terminal() && !self.object_drain.has_pending_done()
+}
+
+///|
+fn ClientRequest::mark_accepted(self : ClientRequest) -> Unit {
+  self.state = RequestAccepted
+}
+
+///|
+fn ClientRequest::mark_terminal(self : ClientRequest) -> Unit {
+  self.state = RequestTerminal
+}
+
+///|
+fn ClientRequest::has_active_work(self : ClientRequest) -> Bool {
+  !self.is_terminal() ||
+  self.object_drain.has_work() ||
+  self.pending_local_update is Some(_)
+}
+
+///|
+fn ClientRequest::can_receive_object_datagram(self : ClientRequest) -> Bool {
+  self.kind == Subscribing &&
+  self.is_accepted() &&
+  (!self.is_terminal() || self.object_drain.has_pending_done()) &&
+  !self.lifetime.cancelled &&
+  !self.update_failed &&
+  subscription_forward(self.parameters)
+}
+
+///|
+fn ObjectDrain::has_work(self : ObjectDrain) -> Bool {
+  self.active_streams > 0UL || self.pending_done is Some(_)
+}
+
+///|
+fn ObjectDrain::has_pending_done(self : ObjectDrain) -> Bool {
+  self.pending_done is Some(_)
+}
+
+///|
+fn ObjectDrain::note_stream_open(self : ObjectDrain) -> Unit {
+  self.observed_streams = self.observed_streams + 1UL
+  self.active_streams = self.active_streams + 1UL
+}
+
+///|
+fn ObjectDrain::begin(
+  self : ObjectDrain,
+  done : @protocol.PublishDoneMessage,
+) -> Unit {
+  self.pending_done = Some(done)
+}
+
+///|
+fn ObjectDrain::cancel(self : ObjectDrain) -> Unit {
+  self.pending_done = None
+}
+
+///|
+fn ObjectDrain::note_stream_closed(self : ObjectDrain) -> Unit {
+  self.active_streams = self.active_streams - 1UL
+}
+
+///|
+fn ObjectDrain::can_observe_stream(self : ObjectDrain) -> Bool {
+  match self.pending_done {
+    Some(done) => self.observed_streams < done.stream_count
+    None => true
+  }
+}
+
+///|
+fn ObjectDrain::can_begin(
+  self : ObjectDrain,
+  done : @protocol.PublishDoneMessage,
+) -> Bool {
+  done.stream_count >= self.observed_streams
+}
+
+///|
+fn ObjectDrain::take_ready_done(
+  self : ObjectDrain,
+) -> @protocol.PublishDoneMessage? {
+  match self.pending_done {
+    Some(done) if self.observed_streams == done.stream_count &&
+      self.active_streams == 0UL => {
+      self.pending_done = None
+      Some(done)
+    }
+    _ => None
+  }
 }
 
 ///|
@@ -64,7 +186,7 @@ fn ClientSession::subscription_is_active(
       match self.request_streams.get(stream) {
         Some(request_id) => {
           let request = self.requests.get(request_id).unwrap()
-          request.kind == Publishing && request.accepted && !request.terminal
+          request.kind == Publishing && request.is_active()
         }
         None => false
       }
@@ -107,14 +229,14 @@ fn ClientSession::receive_response(
   if request.lifetime.peer_send_closed {
     return Ok([])
   }
-  if request.terminal {
+  if request.is_terminal() {
     return Err(UnexpectedMessage)
   }
   if bytes.length() > 65546 - request.response_buffer.length() {
     return Err(BufferLimitExceeded)
   }
   request.response_buffer = request.response_buffer + bytes
-  let context = match (request.kind, request.accepted) {
+  let context = match (request.kind, request.is_accepted()) {
     (Publishing, false) =>
       @protocol.RequestStreamFor(@protocol.RequestOkContext::Publish)
     (Subscribing, true) if request.pending_local_update is Some(_) =>
@@ -129,8 +251,8 @@ fn ClientSession::receive_response(
       let trailing = request.response_buffer[consumed:].to_owned()
       request.response_buffer = b""
       let actions = match (request.kind, message) {
-        (Publishing, @protocol.RequestOk(response)) if !request.accepted => {
-          request.accepted = true
+        (Publishing, @protocol.RequestOk(response)) if !request.is_accepted() => {
+          request.mark_accepted()
           request.parameters = response.parameters
           self.published_subscriptions[stream] = {
             opened_stream_count: 0UL,
@@ -146,7 +268,7 @@ fn ClientSession::receive_response(
           }
           [Notify(PublishAccepted(request_id))]
         }
-        (Subscribing, @protocol.SubscribeOk(response)) if !request.accepted => {
+        (Subscribing, @protocol.SubscribeOk(response)) if !request.is_accepted() => {
           let dynamic_groups = match
             track_supports_dynamic_groups(response.properties) {
             Some(value) => value
@@ -165,20 +287,20 @@ fn ClientSession::receive_response(
           self.aliases[response.track_alias] = request_id
           request.track_alias = Some(response.track_alias)
           request.dynamic_groups = dynamic_groups
-          request.accepted = true
+          request.mark_accepted()
           [Notify(SubscribeEstablished(request_id, response.track_alias))]
         }
-        (Publishing, @protocol.RequestError(error)) if !request.accepted => {
-          request.terminal = true
+        (Publishing, @protocol.RequestError(error)) if !request.is_accepted() => {
+          request.mark_terminal()
           self.request_local_fin_actions(stream) +
           [Notify(PublishRejected(request_id, error))]
         }
-        (Subscribing, @protocol.RequestError(error)) if !request.accepted => {
-          request.terminal = true
+        (Subscribing, @protocol.RequestError(error)) if !request.is_accepted() => {
+          request.mark_terminal()
           self.request_local_fin_actions(stream) +
           [Notify(SubscribeRejected(request_id, error))]
         }
-        (Publishing, @protocol.RequestUpdate(update)) if request.accepted =>
+        (Publishing, @protocol.RequestUpdate(update)) if request.is_accepted() =>
           match self.receive_peer_subscription_update(stream, update) {
             Ok(values) => values
             Err(error) => return Err(error)
@@ -207,7 +329,7 @@ fn ClientSession::receive_response(
             ),
           ]
         }
-        (Subscribing, @protocol.PublishDone(message)) if request.accepted =>
+        (Subscribing, @protocol.PublishDone(message)) if request.is_accepted() =>
           match self.receive_publish_done(request_id, message) {
             Ok(values) => values
             Err(error) => return Err(error)
@@ -265,16 +387,16 @@ fn ClientSession::receive_publish_done(
   message : @protocol.PublishDoneMessage,
 ) -> Result[Array[ClientSessionAction], ClientSessionError] {
   let request = self.requests.get(request_id).unwrap()
-  if !request.accepted ||
-    request.terminal ||
-    message.stream_count < request.observed_object_streams ||
+  if !request.is_accepted() ||
+    request.is_terminal() ||
+    !request.object_drain.can_begin(message) ||
     (request.update_failed && message.code != 8UL) ||
     (!request.update_failed && message.code == 8UL) {
     return Err(UnexpectedMessage)
   }
-  request.terminal = true
+  request.mark_terminal()
   request.pending_local_update = None
-  request.pending_publish_done = Some(message)
+  request.object_drain.begin(message)
   let fin_actions = match request.stream {
     Some(stream) => self.request_local_fin_actions(stream)
     None => []
@@ -369,10 +491,8 @@ fn ClientSession::take_ready_publish_done(
   request_id : UInt64,
 ) -> @protocol.PublishDoneMessage? {
   let request = self.requests.get(request_id).unwrap()
-  match request.pending_publish_done {
-    Some(message) if request.observed_object_streams == message.stream_count &&
-      request.active_object_streams == 0UL => {
-      request.pending_publish_done = None
+  match request.object_drain.take_ready_done() {
+    Some(message) => {
       match request.track_alias {
         Some(track_alias_value) if self.aliases.get(track_alias_value) ==
           Some(request_id) => self.aliases.remove(track_alias_value)
@@ -381,7 +501,7 @@ fn ClientSession::take_ready_publish_done(
       request.track_alias = None
       Some(message)
     }
-    _ => None
+    None => None
   }
 }
 
@@ -494,7 +614,7 @@ fn ClientSession::find_publisher(
 ) -> UInt64? {
   for request_id in self.published_requests {
     let request = self.requests.get(request_id).unwrap()
-    if request.track == track && request.accepted && !request.terminal {
+    if request.track == track && request.is_accepted() && !request.is_terminal() {
       return Some(request_id)
     }
   }
@@ -539,7 +659,7 @@ pub fn ClientSession::publish_track(
   }
   for request_id in self.published_requests {
     let request = self.requests.get(request_id).unwrap()
-    if !request.terminal &&
+    if !request.is_terminal() &&
       (request.track == track || request.track_alias == Some(track_alias)) {
       return Err(AliasInUse)
     }
@@ -551,13 +671,14 @@ pub fn ClientSession::publish_track(
     track_alias: Some(track_alias),
     stream: None,
     response_buffer: b"",
-    accepted: false,
-    terminal: false,
+    state: RequestPending,
     dynamic_groups: false,
     lifetime: RequestLifetime::new(),
-    observed_object_streams: 0UL,
-    active_object_streams: 0UL,
-    pending_publish_done: None,
+    object_drain: {
+      observed_streams: 0UL,
+      active_streams: 0UL,
+      pending_done: None,
+    },
     parameters: [],
     pending_local_update: None,
     update_failed: false,
@@ -591,13 +712,14 @@ pub fn ClientSession::subscribe_track(
     track_alias: None,
     stream: None,
     response_buffer: b"",
-    accepted: false,
-    terminal: false,
+    state: RequestPending,
     dynamic_groups: false,
     lifetime: RequestLifetime::new(),
-    observed_object_streams: 0UL,
-    active_object_streams: 0UL,
-    pending_publish_done: None,
+    object_drain: {
+      observed_streams: 0UL,
+      active_streams: 0UL,
+      pending_done: None,
+    },
     parameters: [],
     pending_local_update: None,
     update_failed: false,
@@ -632,7 +754,7 @@ pub fn ClientSession::finish_subscription_updates(
   if request.lifetime.local_send_closed {
     return Ok([])
   }
-  if request.terminal {
+  if request.is_terminal() {
     return Err(SubscriptionNotAccepted)
   }
   let stream = match request.stream {
@@ -751,17 +873,15 @@ pub fn ClientSession::cancel_request(
         Some(stream) => self.has_pending_publish_done(stream)
         None => false
       }
-      let pending_publish_done = request.pending_publish_done is Some(_) ||
-        publisher_pending_publish_done
       if request.lifetime.cancelled ||
-        (request.terminal && !pending_publish_done) {
+        (request.is_fully_terminal() && !publisher_pending_publish_done) {
         return Ok([])
       }
       match request.stream {
         Some(stream) =>
           Ok(self.finish_actions(self.end_request_stream(stream, Cancel(1UL))))
         None => {
-          request.terminal = true
+          request.mark_terminal()
           ignore(request.lifetime.transition(Cancel(1UL), false))
           request.response_buffer = b""
           request.pending_local_update = None
@@ -795,9 +915,9 @@ fn ClientSession::end_request_stream(
   }
   let request = self.requests.get(request_id).unwrap()
   let publisher_pending_publish_done = self.has_pending_publish_done(stream)
-  let pending_publish_done = request.pending_publish_done is Some(_) ||
-    publisher_pending_publish_done
-  if request.terminal && !pending_publish_done && !request.lifetime.cancelled {
+  if request.is_fully_terminal() &&
+    !publisher_pending_publish_done &&
+    !request.lifetime.cancelled {
     return []
   }
   let effects = request.lifetime.transition(event, true)
@@ -805,14 +925,14 @@ fn ClientSession::end_request_stream(
     return []
   }
   let error_code = request.lifetime.cancel_error_code.unwrap()
-  request.terminal = true
+  request.mark_terminal()
   if request.kind != Subscribing ||
-    request.accepted ||
+    request.is_accepted() ||
     request.lifetime.peer_send_closed {
     request.response_buffer = b""
   }
   request.pending_local_update = None
-  request.pending_publish_done = None
+  request.object_drain.cancel()
 
   let actions : Array[ClientSessionAction] = []
   if effects.abort_send {
