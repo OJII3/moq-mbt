@@ -30,6 +30,8 @@ typedef struct client {
     datagram_send *pending_datagrams;
     size_t queued_bytes;
     unsigned queued_events;
+    size_t max_queued_bytes;
+    unsigned max_queued_events;
     uint16_t max_datagram_length;
     int datagram_send_enabled;
     int connection_started;
@@ -50,7 +52,7 @@ static int unlink_datagram_locked(client *c, datagram_send *send) {
 
 static void push(client *c, int type, uint64_t id, uint64_t code, HQUIC stream, const uint8_t *data, size_t size) {
     pthread_mutex_lock(&c->mutex);
-    event *e = (c->failed || size > (1024 * 1024) - c->queued_bytes || c->queued_events >= 256)
+    event *e = (c->failed || size > c->max_queued_bytes - c->queued_bytes || c->queued_events >= c->max_queued_events)
         ? NULL : malloc(sizeof(*e) + size);
     if (!e) {
         c->failed = 1;
@@ -215,16 +217,20 @@ void moq_client_free(client *c) {
     free(c);
 }
 
-client *moq_client_connect(moonbit_bytes_t host, int32_t port, moonbit_bytes_t alpn, int32_t alpn_len, int32_t insecure) {
+client *moq_client_connect(moonbit_bytes_t host, int32_t port, moonbit_bytes_t alpn, int32_t alpn_len, int32_t insecure,
+                           int32_t max_queued_bytes, int32_t max_queued_events, int32_t max_streams,
+                           int32_t handshake_timeout_ms, int32_t idle_timeout_ms) {
     client *c = calloc(1, sizeof(*c));
     if (!c) return NULL;
+    c->max_queued_bytes = (size_t)max_queued_bytes;
+    c->max_queued_events = (unsigned)max_queued_events;
     pthread_mutex_init(&c->mutex, NULL);
     pthread_cond_init(&c->shutdown_complete, NULL);
     QUIC_REGISTRATION_CONFIG reg = { "moq-mbt", QUIC_EXECUTION_PROFILE_LOW_LATENCY };
     QUIC_BUFFER alpn_buf = { (uint32_t)alpn_len, alpn };
     QUIC_SETTINGS settings = {
         .IsSet = { .SendBufferingEnabled = 1, .DatagramReceiveEnabled = 1, .PeerBidiStreamCount = 1, .PeerUnidiStreamCount = 1, .HandshakeIdleTimeoutMs = 1, .IdleTimeoutMs = 1 },
-        .SendBufferingEnabled = FALSE, .DatagramReceiveEnabled = TRUE, .PeerBidiStreamCount = 16, .PeerUnidiStreamCount = 16, .HandshakeIdleTimeoutMs = 10000, .IdleTimeoutMs = 30000,
+        .SendBufferingEnabled = FALSE, .DatagramReceiveEnabled = TRUE, .PeerBidiStreamCount = (uint16_t)max_streams, .PeerUnidiStreamCount = (uint16_t)max_streams, .HandshakeIdleTimeoutMs = (uint64_t)handshake_timeout_ms, .IdleTimeoutMs = (uint64_t)idle_timeout_ms,
     };
     QUIC_CREDENTIAL_CONFIG cred = { .Type = QUIC_CREDENTIAL_TYPE_NONE, .Flags = QUIC_CREDENTIAL_FLAG_CLIENT | (insecure ? QUIC_CREDENTIAL_FLAG_NO_CERTIFICATE_VALIDATION : 0) };
     if (QUIC_FAILED(MsQuicOpen2(&c->api)) ||

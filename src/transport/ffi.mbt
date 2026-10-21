@@ -14,6 +14,11 @@ extern "C" fn native_connect(
   alpn : Bytes,
   alpn_len : Int32,
   insecure : Bool,
+  max_queued_bytes : Int32,
+  max_queued_events : Int32,
+  max_streams : Int32,
+  handshake_timeout_ms : Int32,
+  idle_timeout_ms : Int32,
 ) -> RawClient = "moq_client_connect"
 
 ///|
