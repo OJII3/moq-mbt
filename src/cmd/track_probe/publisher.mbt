@@ -10,6 +10,9 @@ priv struct PublisherProbeState {
   mut publish_after : UInt64
   mut publish_accepted : Bool
   mut publication_ready : Bool
+  datagrams : Bool
+  mut datagram_sent : Bool
+  mut datagram_send_final : Bool
   mut next_group_index : Int32
   mut publish_done_sent : Bool
 }
@@ -160,6 +163,7 @@ fn run_publisher(
   track_name : String,
   group_count : Int32,
   objects_per_group : Int32,
+  datagrams : Bool,
   insecure : Bool,
 ) -> Unit raise {
   let track : @protocol.TrackName = {
@@ -187,12 +191,15 @@ fn run_publisher(
     done_stream: None,
     group_count: group_count.to_uint64(),
     objects_per_group,
+    datagrams,
     object_stream_groups: {},
     finished_object_streams: {},
     finished_stream_count: 0UL,
     publish_after: 0UL,
     publish_accepted: false,
     publication_ready: false,
+    datagram_sent: false,
+    datagram_send_final: false,
     next_group_index: 0,
     publish_done_sent: false,
   }
@@ -249,7 +256,9 @@ fn run_publisher(
         if canceled {
           fail("publisher send was canceled")
         }
-        if state.done_stream == Some(stream) && send_counts.get(stream) is None {
+        if state.done_stream == Some(stream) &&
+          send_counts.get(stream) is None &&
+          (!state.datagrams || state.datagram_send_final) {
           println("PUBLISH_DONE send completed")
           return
         }
@@ -287,14 +296,21 @@ fn run_publisher(
         )
         handle_publisher_notices(client, session, notices, send_counts, state)
       }
-      DatagramSendComplete => {
-        let (notices, _) = drive_session_result(
-          client,
-          session,
-          receive_session_event(session, @session.DatagramSendComplete),
-          send_counts,
-        )
-        handle_publisher_notices(client, session, notices, send_counts, state)
+      DatagramStateChanged(_) => ()
+      DatagramSendStateChanged(id, send_state) => {
+        println("Datagram send \{id} state: \{send_state.to_repr()}")
+        if send_state.is_final() {
+          if state.datagrams {
+            state.datagram_send_final = true
+          }
+          let (notices, _) = drive_session_result(
+            client,
+            session,
+            receive_session_event(session, @session.DatagramSendComplete),
+            send_counts,
+          )
+          handle_publisher_notices(client, session, notices, send_counts, state)
+        }
       }
       Closed(code) => {
         let (notices, _) = drive_session_result(
@@ -335,6 +351,27 @@ fn run_publisher(
       !state.publication_ready &&
       @env.now() >= state.publish_after {
       state.publication_ready = true
+    }
+    if state.publication_ready && state.datagrams && !state.datagram_sent {
+      let datagram : @protocol.ObjectDatagram = {
+        track_alias: 1UL,
+        group_id: state.group_count,
+        object_id: 0UL,
+        publisher_priority: None,
+        end_of_group: false,
+        properties: b"",
+        status: @protocol.Normal,
+        payload: b"track-probe-object-datagram",
+      }
+      let (notices, _) = drive_session_result(
+        client,
+        session,
+        session.send_object_datagram(state.publish_stream, datagram),
+        send_counts,
+      )
+      handle_publisher_notices(client, session, notices, send_counts, state)
+      state.datagram_sent = true
+      println("Sent Object Datagram")
     }
     if state.publication_ready &&
       state.next_group_index < state.group_count.to_int() &&

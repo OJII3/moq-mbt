@@ -2,9 +2,12 @@
 priv struct SubscriberProbeState {
   group_count : UInt64
   objects_per_group : UInt64
+  expect_datagram : Bool
   next_object_ids : Map[UInt64, UInt64]
   finished_groups : Map[UInt64, Bool]
   mut received_objects : UInt64
+  mut received_datagram : Bool
+  mut publish_done_received : Bool
 }
 
 ///|
@@ -58,6 +61,26 @@ fn handle_subscriber_notices(
           )
         }
       }
+      @session.ObjectDatagramReceived(_, datagram) => {
+        guard state.expect_datagram else {
+          fail("received unexpected Object Datagram")
+        }
+        guard !state.received_datagram else {
+          fail("received Object Datagram more than once")
+        }
+        guard datagram.track_alias == 1UL &&
+          datagram.group_id == state.group_count &&
+          datagram.object_id == 0UL &&
+          datagram.status == @protocol.Normal &&
+          datagram.payload == b"track-probe-object-datagram" else {
+          fail("Object Datagram fields or payload did not match")
+        }
+        state.received_datagram = true
+        println("Received Object Datagram")
+        if state.publish_done_received {
+          finished = true
+        }
+      }
       @session.GroupFinished(_, group_id) => {
         guard group_id < state.group_count else {
           fail("finished unexpected group \{group_id}")
@@ -94,10 +117,11 @@ fn handle_subscriber_notices(
         guard state.finished_groups.length().to_uint64() == state.group_count else {
           fail("PUBLISH_DONE arrived before all groups finished")
         }
+        state.publish_done_received = true
         println(
           "Verified \{state.received_objects} Objects across \{state.group_count} groups; PUBLISH_DONE received",
         )
-        finished = true
+        finished = !state.expect_datagram || state.received_datagram
       }
       _ => ()
     }
@@ -114,6 +138,7 @@ fn run_subscriber(
   track_name : String,
   group_count : Int32,
   objects_per_group : Int32,
+  datagrams : Bool,
   insecure : Bool,
 ) -> Unit raise {
   let track : @protocol.TrackName = {
@@ -130,9 +155,12 @@ fn run_subscriber(
   let state : SubscriberProbeState = {
     group_count: group_count.to_uint64(),
     objects_per_group: objects_per_group.to_uint64(),
+    expect_datagram: datagrams,
     next_object_ids: {},
     finished_groups: {},
     received_objects: 0UL,
+    received_datagram: false,
+    publish_done_received: false,
   }
   ignore(handle_subscriber_notices(notices, state))
   let mut request_stream : Int64? = None
@@ -244,17 +272,19 @@ fn run_subscriber(
           return
         }
       }
-      DatagramSendComplete => {
-        let (notices, _) = drive_session_result(
-          client,
-          session,
-          receive_session_event(session, @session.DatagramSendComplete),
-          send_counts,
-        )
-        if handle_subscriber_notices(notices, state) {
-          return
+      DatagramStateChanged(_) => ()
+      DatagramSendStateChanged(_, send_state) =>
+        if send_state.is_final() {
+          let (notices, _) = drive_session_result(
+            client,
+            session,
+            receive_session_event(session, @session.DatagramSendComplete),
+            send_counts,
+          )
+          if handle_subscriber_notices(notices, state) {
+            return
+          }
         }
-      }
       Closed(code) => {
         let (notices, _) = drive_session_result(
           client,

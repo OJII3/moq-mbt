@@ -8,11 +8,34 @@ let max_events : Int32 = 256
 let max_streams : Int32 = 16
 
 ///|
+let max_datagram_sends : Int32 = 64
+
+///|
+fn validate_datagram_send(
+  length : Int32,
+  capability : DatagramSendCapability,
+  pending_bytes : Int32,
+  pending_sends : Int32,
+) -> Unit raise TransportError {
+  if !capability.enabled {
+    raise DatagramSendUnavailable
+  }
+  if length > capability.max_length {
+    raise DatagramTooLarge(length, capability.max_length)
+  }
+  if length > max_bytes - pending_bytes || pending_sends >= max_datagram_sends {
+    raise DatagramSendQueueFull
+  }
+}
+
+///|
 /// Native QUIC client. Call `close` when finished; methods run on the calling thread.
 pub struct Client {
   priv mut raw : RawClient?
   priv streams : Map[Int64, RawStream]
   priv send_sizes : Array[(Int64, Int32)]
+  priv datagram_send_sizes : Map[Int64, Int32]
+  priv mut next_datagram_id : Int64
   priv mut pending_send_bytes : Int32
   priv mut pending_datagram_bytes : Int32
   priv mut pending_datagrams : Int32
@@ -43,6 +66,8 @@ pub fn Client::connect(
     raw: Some(raw),
     streams: {},
     send_sizes: [],
+    datagram_send_sizes: {},
+    next_datagram_id: 1L,
     pending_send_bytes: 0,
     pending_datagram_bytes: 0,
     pending_datagrams: 0,
@@ -62,6 +87,16 @@ fn Client::handle(self : Client) -> RawClient raise TransportError {
 pub fn Client::has_stream_capacity(self : Client) -> Bool raise TransportError {
   ignore(self.handle())
   self.streams.length() < max_streams
+}
+
+///|
+/// Current peer datagram-send capability and the maximum size of one datagram.
+pub fn Client::datagram_send_capability(
+  self : Client,
+) -> DatagramSendCapability raise TransportError {
+  let raw = self.handle()
+  let state = native_datagram_state(raw)
+  { enabled: (state & 1L) != 0L, max_length: (state >> 1).to_int(), }
 }
 
 ///|
@@ -126,23 +161,39 @@ pub fn Client::send(
 }
 
 ///|
-/// Copy one unreliable datagram into a buffer retained until MsQuic finishes it.
+/// Copy one unreliable datagram into a buffer retained until MsQuic reports a final state.
+/// The returned ID is included in each `DatagramSendStateChanged` event. An
+/// acknowledged state confirms QUIC acknowledgement only, not application delivery.
 pub fn Client::send_datagram(
   self : Client,
   data : Bytes,
-) -> Unit raise TransportError {
+) -> Int64 raise TransportError {
   let raw = self.handle()
   let length = data.length()
-  if length > max_bytes - self.pending_datagram_bytes ||
-    self.pending_datagrams >= max_events {
-    raise TransportError("datagram send buffer overflow")
+  let capability = self.datagram_send_capability()
+  validate_datagram_send(
+    length,
+    capability,
+    self.pending_datagram_bytes,
+    self.pending_datagrams,
+  )
+  let id = self.next_datagram_id
+  let status = native_send_datagram(raw, data, length, id)
+  match status {
+    0 => ()
+    1 => raise DatagramSendUnavailable
+    2 => {
+      let current = self.datagram_send_capability()
+      raise DatagramTooLarge(length, current.max_length)
+    }
+    3 => raise DatagramSendAllocationFailed
+    _ => raise DatagramSendFailed(status)
   }
-  let status = native_send_datagram(raw, data, length)
-  if status != 0 {
-    raise TransportError("datagram send failed (status \{status})")
-  }
+  self.next_datagram_id += 1L
   self.pending_datagram_bytes += length
   self.pending_datagrams += 1
+  self.datagram_send_sizes[id] = length
+  id
 }
 
 ///|
@@ -244,27 +295,41 @@ pub fn Client::next_event(
       }
       12 => return Datagram(native_event_data(raw))
       13 => {
-        self.pending_datagram_bytes -= native_event_id(raw).to_int()
-        self.pending_datagrams -= 1
-        return DatagramSendComplete
+        let id = native_event_id(raw)
+        let state = datagram_send_state_from_code(
+          native_event_code(raw).to_int(),
+        )
+        if state.is_final() {
+          match self.datagram_send_sizes.get(id) {
+            Some(size) => {
+              self.pending_datagram_bytes -= size
+              self.pending_datagrams -= 1
+              self.datagram_send_sizes.remove(id)
+            }
+            None => raise TransportError("unknown datagram send ID \{id}")
+          }
+        }
+        return DatagramSendStateChanged(id, state)
       }
+      14 =>
+        return DatagramStateChanged({
+          enabled: native_event_id(raw) != 0L,
+          max_length: native_event_code(raw).to_int(),
+        })
       _ => raise TransportError("event queue failed")
     }
   }
 }
 
 ///|
-/// Close streams and the connection, waiting for callbacks before freeing memory.
+/// Close streams and the connection, waiting for `SHUTDOWN_COMPLETE` before freeing memory.
 /// Calling this method more than once is harmless.
 pub fn Client::close(self : Client, error_code~ : Int64 = 0) -> Unit {
   if self.raw is Some(raw) {
     self.raw = None
     native_shutdown(raw, error_code)
-    for _ in 0..<600 {
+    while !native_shutdown_complete(raw) {
       let event = native_pop(raw)
-      if event == 4 {
-        break
-      }
       if event == 11 {
         let id = native_event_id(raw)
         self.streams[id] = native_event_stream(raw)
@@ -275,7 +340,9 @@ pub fn Client::close(self : Client, error_code~ : Int64 = 0) -> Unit {
           native_stream_close(raw, stream)
         }
       }
-      native_sleep_ms(5)
+      if !native_shutdown_complete(raw) {
+        native_sleep_ms(5)
+      }
     }
     for _, stream in self.streams {
       native_stream_close(raw, stream)
