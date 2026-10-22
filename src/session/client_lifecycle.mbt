@@ -88,6 +88,16 @@ fn ClientSession::has_active_requests(self : ClientSession) -> Bool {
       return true
     }
   }
+  for (_, request) in self.namespace_subscriptions {
+    if !request.lifetime.cancelled && !request.lifetime.peer_send_closed {
+      return true
+    }
+  }
+  for (_, subscription) in self.inbound_namespace_subscriptions {
+    if subscription.state != Ended {
+      return true
+    }
+  }
   self.incoming_object_streams.length() > 0 ||
   self.ignored_object_streams.length() > 0 ||
   self.pending_object_streams.length() > 0 ||

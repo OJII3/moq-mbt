@@ -208,13 +208,18 @@ fn ClientSession::receive_request(
   stream : Int64,
   bytes : Bytes,
 ) -> Result[Array[ClientSessionAction], ClientSessionError] {
-  match self.namespace_request_streams.get(stream) {
-    Some(request_id) if self.namespace_requests.get(request_id).unwrap().locally_initiated =>
-      self.receive_namespace_response(request_id, stream, bytes)
-    _ =>
-      match self.request_streams.get(stream) {
-        Some(request_id) => self.receive_response(request_id, stream, bytes)
-        None => self.receive_peer_request(stream, bytes)
+  match self.namespace_subscription_streams.get(stream) {
+    Some(request_id) =>
+      self.receive_namespace_subscription_response(request_id, stream, bytes)
+    None =>
+      match self.namespace_request_streams.get(stream) {
+        Some(request_id) if self.namespace_requests.get(request_id).unwrap().locally_initiated =>
+          self.receive_namespace_response(request_id, stream, bytes)
+        _ =>
+          match self.request_streams.get(stream) {
+            Some(request_id) => self.receive_response(request_id, stream, bytes)
+            None => self.receive_peer_request(stream, bytes)
+          }
       }
   }
 }
@@ -673,9 +678,10 @@ pub fn ClientSession::finish_subscription_updates(
 }
 
 ///|
-/// Cancel a local PUBLISH/SUBSCRIBE or a peer SUBSCRIBE by Request ID.
-/// Cancellation uses the request stream's transport directions, not a control
-/// message. Repeating cancellation after termination is a no-op.
+/// Cancel a local PUBLISH/SUBSCRIBE, namespace subscription, or peer SUBSCRIBE
+/// by Request ID. Namespace subscriptions use request-side FIN as cancellation;
+/// track subscriptions may use FIN only to finish their update direction.
+/// Repeating cancellation after termination is a no-op.
 pub fn ClientSession::cancel_request(
   self : ClientSession,
   request_id : UInt64,
@@ -722,10 +728,19 @@ pub fn ClientSession::cancel_request(
         }
       }
     }
+    None if self.namespace_subscriptions.get(request_id) is Some(_) =>
+      self.cancel_namespace_subscription(request_id)
     None =>
       match self.peer_request_ids.get(request_id) {
-        Some(stream) =>
-          Ok(self.finish_actions(self.end_request_stream(stream, Cancel(1UL))))
+        Some(stream) => {
+          let actions = if self.inbound_namespace_subscriptions.get(stream)
+            is Some(_) {
+            self.end_inbound_namespace_subscription(stream, Cancel(1UL))
+          } else {
+            self.end_request_stream(stream, Cancel(1UL))
+          }
+          Ok(self.finish_actions(actions))
+        }
         None => Err(UnknownRequest)
       }
   }
@@ -741,6 +756,12 @@ fn ClientSession::end_request_stream(
   match self.inbound_subscriptions.get(stream) {
     Some(_) => return self.end_inbound_subscription(stream, event)
     None => ()
+  }
+  if self.inbound_namespace_subscriptions.get(stream) is Some(_) {
+    return self.end_inbound_namespace_subscription(stream, event)
+  }
+  if self.namespace_subscription_streams.get(stream) is Some(_) {
+    return self.end_namespace_subscription(stream, event)
   }
   if self.namespace_request_streams.get(stream) is Some(_) {
     return self.end_namespace_request(stream, event)
