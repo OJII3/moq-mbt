@@ -93,12 +93,18 @@ fn ClientSession::has_active_requests(self : ClientSession) -> Bool {
       return true
     }
   }
+  for (_, fetch) in self.fetches {
+    if fetch.state != FetchTerminal {
+      return true
+    }
+  }
   for (_, subscription) in self.inbound_namespace_subscriptions {
     if subscription.state != Ended {
       return true
     }
   }
   self.incoming_object_streams.length() > 0 ||
+  self.outgoing_fetch_streams.length() > 0 ||
   self.ignored_object_streams.length() > 0 ||
   self.pending_object_streams.length() > 0 ||
   self.outgoing_object_streams.length() > 0
@@ -134,6 +140,11 @@ fn ClientSession::end_session(
   self.state = Closed
   self.control_goaway_deadline = None
   self.request_goaway_deadlines.clear()
+  self.fetches.clear()
+  self.fetch_streams.clear()
+  self.inbound_fetch_streams.clear()
+  self.inbound_fetch_request_ids.clear()
+  self.outgoing_fetch_streams.clear()
   let actions : Array[ClientSessionAction] = []
   match close_code {
     Some(code) => actions.push(CloseConnection(code, reason))
@@ -316,6 +327,41 @@ fn ClientSession::receive_control_goaway(
       }
     }
   }
+  for (request_id, fetch) in self.fetches {
+    if fetch.locally_initiated &&
+      request_id >= message.request_id &&
+      fetch.state == FetchPending {
+      fetch.state = FetchTerminal
+      let effects = fetch.lifetime.transition(
+        Cancel(request_reset_going_away),
+        fetch.stream is Some(_),
+      )
+      match fetch.stream {
+        Some(stream) => {
+          if effects.abort_send {
+            actions.push(AbortSend(stream, request_reset_going_away))
+          }
+          if effects.stop_receiving {
+            actions.push(StopReceiving(stream, request_reset_going_away))
+          }
+        }
+        None => ()
+      }
+      if !fetch.terminal_notified {
+        fetch.terminal_notified = true
+        actions.push(
+          Notify(
+            FetchFailed(request_id, {
+              code: request_error_going_away,
+              retry_interval: 0UL,
+              reason: b"",
+              redirect: b"",
+            }),
+          ),
+        )
+      }
+    }
+  }
   for (request_id, request) in self.namespace_requests {
     if request.locally_initiated &&
       request_id >= message.request_id &&
@@ -377,7 +423,7 @@ fn ClientSession::receive_request_goaway(
         None =>
           match self.inbound_subscriptions.get(stream) {
             Some(inbound) => inbound.request_id
-            None => 0UL
+            None => self.fetch_streams.get(stream).unwrap_or(0UL)
           }
       }
   }

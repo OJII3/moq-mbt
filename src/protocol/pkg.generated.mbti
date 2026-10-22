@@ -372,6 +372,7 @@ pub fn RequestErrorMessage::to_repr(Self) -> @debug.Repr
 pub(all) enum RequestOkContext {
   Publish
   RequestUpdate
+  FetchUpdate
   TrackStatus
   Namespace
 } derive(Eq, @debug.Debug)

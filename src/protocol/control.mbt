@@ -80,6 +80,7 @@ pub(all) struct GoAwayRequestMessage {
 pub(all) enum RequestOkContext {
   Publish
   RequestUpdate
+  FetchUpdate
   TrackStatus
   Namespace
 } derive(Debug, Eq)
@@ -261,27 +262,19 @@ pub fn encode_request_ok_for(
 pub fn encode_request_update(
   message : RequestUpdateMessage,
 ) -> Result[Bytes, CodecError] {
-  match validate_request_update_parameters(message.parameters) {
-    Ok(_) => ()
-    Err(error) => return Err(error)
-  }
-  let parameters = match encode_parameters(message.parameters) {
-    Ok(bytes) => bytes
-    Err(error) => return Err(error)
-  }
-  control_frame(2, encode_vi64(message.request_id) + parameters)
+  encode_request_update_for(message, RequestStream)
 }
 
 ///|
-/// Encode a REQUEST_UPDATE using the scope of the request it updates.
+/// Encode a REQUEST_UPDATE using the request type's permitted parameter scope.
 pub fn encode_request_update_for(
   message : RequestUpdateMessage,
   context : ControlStreamContext,
 ) -> Result[Bytes, CodecError] {
-  let scope = if context == FetchRequestStream {
-    FetchUpdate
+  let scope : ParameterScope = if context == FetchRequestStream {
+    ParameterScope::FetchUpdate
   } else {
-    RequestUpdate
+    ParameterScope::RequestUpdate
   }
   match validate_parameters_scope(message.parameters, scope) {
     Ok(_) => ()
@@ -610,7 +603,7 @@ pub fn decode_control_with_context(
       }
       let response_context = match context {
         RequestStreamFor(value) => Some(value)
-        FetchRequestStream => return invalid
+        FetchRequestStream => Some(RequestOkContext::FetchUpdate)
         ControlStream | RequestStream => return invalid
         AnyStream => None
       }
@@ -637,8 +630,8 @@ pub fn decode_control_with_context(
         None => return invalid
       }
       let update_context = match context {
-        FetchRequestStream => FetchUpdate
-        _ => RequestUpdate
+        FetchRequestStream => ParameterScope::FetchUpdate
+        _ => ParameterScope::RequestUpdate
       }
       match validate_parameters_scope(parameters, update_context) {
         Ok(_) => ()
@@ -934,13 +927,6 @@ fn validate_parameters_scope(
 }
 
 ///|
-fn validate_request_update_parameters(
-  parameters : Array[MessageParameter],
-) -> Result[Unit, CodecError] {
-  validate_parameters_scope(parameters, RequestUpdate)
-}
-
-///|
 fn parameter_allowed(kind : UInt64, context : ParameterScope) -> Bool {
   match context {
     Subscribe =>
@@ -965,7 +951,7 @@ fn parameter_allowed(kind : UInt64, context : ParameterScope) -> Bool {
       kind == 0x32 ||
       kind == 0x34
     Fetch => kind == 0x03 || kind == 0x0a || kind == 0x20 || kind == 0x22
-    FetchUpdate => kind == 0x20
+    FetchUpdate => kind == 0x03 || kind == 0x20
     FetchOk => false
     NamespaceRequest => kind == 0x03
     RequestOk(context) =>
@@ -980,6 +966,7 @@ fn parameter_allowed(kind : UInt64, context : ParameterScope) -> Bool {
           kind == 0x22 ||
           kind == 0x32
         RequestUpdate => kind == 0x08 || kind == 0x09
+        RequestOkContext::FetchUpdate => false
         TrackStatus => kind == 0x09
         Namespace => false
       }

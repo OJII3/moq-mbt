@@ -9,6 +9,7 @@ pub(all) enum ClientStreamPurpose {
   Control
   Request(UInt64)
   Object(UInt64)
+  FetchData(UInt64)
 } derive(Debug, Eq)
 
 ///|
@@ -52,6 +53,26 @@ pub(all) enum ClientSessionNotice {
   SubscribeEstablished(UInt64, UInt64)
   SubscribeRejected(UInt64, @protocol.RequestErrorMessage)
   SubscriptionRequested(UInt64, Int64, @protocol.TrackName)
+  FetchRequested(
+    UInt64,
+    Int64,
+    @protocol.TrackName,
+    @protocol.FetchLocation,
+    @protocol.FetchLocation,
+    Array[@protocol.MessageParameter]
+  )
+  FetchAccepted(UInt64, Int64)
+  FetchRejected(UInt64, Int64, @protocol.RequestErrorMessage)
+  FetchObjectReceived(UInt64, @protocol.FetchObject)
+  FetchRangeEnded(UInt64, @protocol.FetchRangeEnd)
+  FetchEndOfTrack(UInt64)
+  FetchFinished(UInt64)
+  FetchFailed(UInt64, @protocol.RequestErrorMessage)
+  FetchCancelled(UInt64, UInt64)
+  FetchReset(UInt64, Int64, UInt64)
+  FetchUpdateRequested(UInt64, UInt64, Int64, Array[@protocol.MessageParameter])
+  FetchUpdateAccepted(UInt64, UInt64, @protocol.RequestOkMessage)
+  FetchUpdateRejected(UInt64, UInt64, @protocol.RequestErrorMessage)
   NamespacePublicationRequested(
     UInt64,
     Int64,
@@ -148,6 +169,7 @@ pub(all) enum ClientSessionError {
   DuplicateStream
   UnknownStream
   UnknownRequest
+  InvalidFetchRange
   SessionDraining
   SessionClosed
   TrackNotPublished
@@ -166,6 +188,7 @@ priv enum InboundStreamKind {
   Control
   Request
   Subgroup
+  FetchData
   Padding
   Discarded
 }
@@ -174,6 +197,7 @@ priv enum InboundStreamKind {
 priv enum RequestStreamRoute {
   NamespaceSubscriptionResponse(UInt64)
   NamespacePublicationResponse(UInt64)
+  FetchResponse(UInt64)
   TrackResponse(UInt64)
   UnknownRequestStream
 }
@@ -207,6 +231,11 @@ pub struct ClientSession {
   priv inbound_stream_kinds : Map[Int64, InboundStreamKind]
   priv inbound_unclassified_buffers : Map[Int64, Bytes]
   priv requests : Map[UInt64, ClientRequest]
+  priv fetches : Map[UInt64, ClientFetch]
+  priv fetch_streams : Map[Int64, UInt64]
+  priv inbound_fetch_streams : Map[Int64, InboundFetchDataStream]
+  priv inbound_fetch_request_ids : Map[UInt64, Int64]
+  priv outgoing_fetch_streams : Map[Int64, OutgoingFetchDataStream]
   priv request_streams : Map[Int64, UInt64]
   priv inbound_buffers : Map[Int64, Bytes]
   priv inbound_subscriptions : Map[Int64, InboundSubscription]
@@ -264,6 +293,11 @@ pub fn ClientSession::new(
         inbound_stream_kinds: {},
         inbound_unclassified_buffers: {},
         requests: {},
+        fetches: {},
+        fetch_streams: {},
+        inbound_fetch_streams: {},
+        inbound_fetch_request_ids: {},
+        outgoing_fetch_streams: {},
         request_streams: {},
         inbound_buffers: {},
         inbound_subscriptions: {},
@@ -315,6 +349,8 @@ pub fn ClientSession::receive(
         self.inbound_unclassified_buffers.get(stream) is Some(_) ||
         self.inbound_buffers.get(stream) is Some(_) ||
         self.inbound_subscriptions.get(stream) is Some(_) ||
+        self.fetch_streams.get(stream) is Some(_) ||
+        self.inbound_fetch_streams.get(stream) is Some(_) ||
         self.request_streams.get(stream) is Some(_) ||
         self.incoming_object_streams.get(stream) is Some(_) {
         return Err(DuplicateStream)
@@ -342,16 +378,31 @@ pub fn ClientSession::receive(
       if self.outbound_control_stream == Some(stream) {
         Err(Handshake(self.handshake.control_closed()))
       } else {
-        match self.outgoing_object_streams.get(stream) {
+        match self.outgoing_fetch_streams.get(stream) {
           Some(outgoing) => {
-            let subscription_stream = outgoing.subscription_stream
-            self.close_outgoing_object_stream(stream)
-            Ok(
-              [AbortSend(stream, code), Notify(SendFinished(stream, true))] +
-              self.finish_failed_subscription(subscription_stream),
-            )
+            let request_id = outgoing.request_id
+            self.outgoing_fetch_streams.remove(stream)
+            let fetch = self.fetches.get(request_id).unwrap()
+            fetch.state = FetchTerminal
+            let actions : Array[ClientSessionAction] = [AbortSend(stream, code)]
+            if !fetch.terminal_notified {
+              fetch.terminal_notified = true
+              actions.push(Notify(FetchReset(request_id, stream, code)))
+            }
+            Ok(actions)
           }
-          None => Ok(self.end_request_stream(stream, PeerStop(code)))
+          None =>
+            match self.outgoing_object_streams.get(stream) {
+              Some(outgoing) => {
+                let subscription_stream = outgoing.subscription_stream
+                self.close_outgoing_object_stream(stream)
+                Ok(
+                  [AbortSend(stream, code), Notify(SendFinished(stream, true))] +
+                  self.finish_failed_subscription(subscription_stream),
+                )
+              }
+              None => Ok(self.end_request_stream(stream, PeerStop(code)))
+            }
         }
       }
     SendComplete(stream, canceled) => {
