@@ -23,5 +23,8 @@ jobs:
       - name: Check MoonBit packages
         run: moon check --target native --deny-warn
 
+      - name: Run MoonBit tests
+        run: moon test
+
       - name: Check formatting
         run: moon fmt --check
