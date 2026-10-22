@@ -297,6 +297,429 @@ test "peer namespace subscriptions enumerate app names and reject tuple prefix o
 }
 
 ///|
+test "namespace prefix update switches suffix interpretation at REQUEST_OK in one chunk" {
+  let client = client_session_ready()
+  let old_prefix = test_namespace([b"old"])
+  let new_prefix = test_namespace([b"new"])
+  let old_name = test_namespace([b"old", b"before"])
+  let new_name = test_namespace([b"new", b"after"])
+  let (request_id, _) = client.subscribe_namespace(old_prefix).unwrap()
+  ignore(
+    client.receive(@session.StreamOpened(@session.Request(request_id), 70)),
+  )
+  let established = @protocol.encode_request_ok_for(
+    { parameters: [], properties: b"", },
+    @protocol.Namespace,
+  ).unwrap()
+  ignore(client.receive(@session.StreamData(70, established)))
+  let (update_id, update_actions) = client
+    .update_namespace_subscription(request_id, new_prefix)
+    .unwrap()
+  assert_eq(update_id, 2UL)
+  assert_true(update_actions.length() == 1)
+  let old_namespace = @protocol.encode_namespace({
+    track_namespace: test_namespace([b"before"]),
+  }).unwrap()
+  let update_ok = @protocol.encode_request_ok_for(
+    { parameters: [], properties: b"", },
+    @protocol.RequestUpdate,
+  ).unwrap()
+  let new_namespace = @protocol.encode_namespace({
+    track_namespace: test_namespace([b"after"]),
+  }).unwrap()
+  assert_eq(
+    client.receive(
+      @session.StreamData(70, old_namespace + update_ok + new_namespace),
+    ),
+    Ok([
+      @session.Notify(@session.NamespaceDiscovered(request_id, old_name)),
+      @session.Notify(
+        @session.NamespaceSubscriptionUpdateAccepted(request_id, update_id, {
+          parameters: [],
+          properties: b"",
+        }),
+      ),
+      @session.Notify(@session.NamespaceNoLongerAvailable(request_id, old_name)),
+      @session.Notify(@session.NamespaceDiscovered(request_id, new_name)),
+    ]),
+  )
+}
+
+///|
+test "namespace prefix update response split across chunks uses new prefix afterward" {
+  let client = client_session_ready()
+  let old_prefix = test_namespace([b"before"])
+  let new_prefix = test_namespace([b"after"])
+  let (request_id, _) = client.subscribe_namespace(old_prefix).unwrap()
+  ignore(
+    client.receive(@session.StreamOpened(@session.Request(request_id), 71)),
+  )
+  ignore(
+    client.receive(
+      @session.StreamData(
+        71,
+        @protocol.encode_request_ok_for(
+          { parameters: [], properties: b"", },
+          @protocol.Namespace,
+        ).unwrap(),
+      ),
+    ),
+  )
+  let (update_id, _) = client
+    .update_namespace_subscription(request_id, new_prefix)
+    .unwrap()
+  let update_ok = @protocol.encode_request_ok_for(
+    { parameters: [], properties: b"", },
+    @protocol.RequestUpdate,
+  ).unwrap()
+  assert_true(update_ok.length() > 1)
+  let split = update_ok.length() / 2
+  assert_eq(
+    client.receive(@session.StreamData(71, update_ok[:split].to_owned())),
+    Ok([]),
+  )
+  assert_eq(
+    client.receive(
+      @session.StreamData(
+        71,
+        update_ok[split:].to_owned() +
+        @protocol.encode_namespace({
+          track_namespace: test_namespace([b"child"]),
+        }).unwrap(),
+      ),
+    ),
+    Ok([
+      @session.Notify(
+        @session.NamespaceSubscriptionUpdateAccepted(request_id, update_id, {
+          parameters: [],
+          properties: b"",
+        }),
+      ),
+      @session.Notify(
+        @session.NamespaceDiscovered(
+          request_id,
+          test_namespace([b"after", b"child"]),
+        ),
+      ),
+    ]),
+  )
+}
+
+///|
+test "peer namespace prefix update is accepted and re-enumerates under new prefix" {
+  let publisher = client_session_ready()
+  let old_prefix = test_namespace([b"old"])
+  let new_prefix = test_namespace([b"new"])
+  let current = test_namespace([b"new", b"room"])
+  ignore(publisher.publish_application_namespace(current).unwrap())
+  ignore(
+    publisher.receive(@session.InboundStreamStarted(72, @session.Bidirectional)),
+  )
+  ignore(
+    publisher.receive(
+      @session.StreamData(
+        72,
+        @protocol.encode_subscribe_namespace({
+          request_id: 1UL,
+          track_namespace: old_prefix,
+          parameters: [],
+        }).unwrap(),
+      ),
+    ),
+  )
+  ignore(publisher.accept_namespace_subscription(72, []).unwrap())
+  let update_id = 3UL
+  let update = @protocol.encode_request_update({
+    request_id: update_id,
+    parameters: [
+      { kind: 0x34UL, value: @protocol.NamespacePrefix(new_prefix), },
+    ],
+  }).unwrap()
+  assert_eq(
+    publisher.receive(@session.StreamData(72, update)),
+    Ok([
+      @session.Notify(
+        @session.NamespaceSubscriptionUpdateRequested(
+          1UL, update_id, 72, new_prefix,
+        ),
+      ),
+    ]),
+  )
+  assert_eq(
+    publisher.accept_namespace_subscription_update(72, update_id, {
+      parameters: [],
+      properties: b"",
+    }),
+    Ok([
+      @session.Send(
+        72,
+        @protocol.encode_request_ok_for(
+          { parameters: [], properties: b"", },
+          @protocol.RequestUpdate,
+        ).unwrap(),
+        false,
+      ),
+      @session.Notify(
+        @session.NamespaceSubscriptionUpdateAccepted(1UL, update_id, {
+          parameters: [],
+          properties: b"",
+        }),
+      ),
+      @session.Send(
+        72,
+        @protocol.encode_namespace({
+          track_namespace: test_namespace([b"room"]),
+        }).unwrap(),
+        false,
+      ),
+      @session.Notify(@session.NamespaceDiscovered(1UL, current)),
+    ]),
+  )
+}
+
+///|
+test "namespace prefix updates reject overlap and rejection leaves other subscriptions active" {
+  let client = client_session_ready()
+  let (first_id, _) = client
+    .subscribe_namespace(test_namespace([b"first"]))
+    .unwrap()
+  let (second_id, _) = client
+    .subscribe_namespace(test_namespace([b"root", b"child"]))
+    .unwrap()
+  ignore(client.receive(@session.StreamOpened(@session.Request(first_id), 73)))
+  ignore(client.receive(@session.StreamOpened(@session.Request(second_id), 74)))
+  let established = @protocol.encode_request_ok_for(
+    { parameters: [], properties: b"", },
+    @protocol.Namespace,
+  ).unwrap()
+  ignore(client.receive(@session.StreamData(73, established)))
+  ignore(client.receive(@session.StreamData(74, established)))
+  assert_eq(
+    client.update_namespace_subscription(first_id, test_namespace([b"root"])),
+    Err(@session.PrefixOverlap),
+  )
+  assert_eq(
+    client.update_namespace_subscription(
+      first_id,
+      test_namespace([b"root", b"child", b"x"]),
+    ),
+    Err(@session.PrefixOverlap),
+  )
+
+  let publisher = client_session_ready()
+  let old_prefix = test_namespace([b"old"])
+  let active_name = test_namespace([b"old", b"room"])
+  ignore(
+    publisher.receive(@session.InboundStreamStarted(75, @session.Bidirectional)),
+  )
+  ignore(
+    publisher.receive(@session.InboundStreamStarted(76, @session.Bidirectional)),
+  )
+  ignore(
+    publisher.receive(
+      @session.StreamData(
+        75,
+        @protocol.encode_subscribe_namespace({
+          request_id: 1UL,
+          track_namespace: old_prefix,
+          parameters: [],
+        }).unwrap(),
+      ),
+    ),
+  )
+  ignore(
+    publisher.receive(
+      @session.StreamData(
+        76,
+        @protocol.encode_subscribe_namespace({
+          request_id: 3UL,
+          track_namespace: test_namespace([b"independent"]),
+          parameters: [],
+        }).unwrap(),
+      ),
+    ),
+  )
+  ignore(publisher.accept_namespace_subscription(75, [active_name]).unwrap())
+  ignore(publisher.accept_namespace_subscription(76, []).unwrap())
+  let update_id = 5UL
+  ignore(
+    publisher.receive(
+      @session.StreamData(
+        75,
+        @protocol.encode_request_update({
+          request_id: update_id,
+          parameters: [
+            {
+              kind: 0x34UL,
+              value: @protocol.NamespacePrefix(test_namespace([b"new"])),
+            },
+          ],
+        }).unwrap(),
+      ),
+    ),
+  )
+  let error : @protocol.RequestErrorMessage = {
+    code: 0x30UL,
+    retry_interval: 0UL,
+    reason: b"overlap",
+    redirect: b"",
+  }
+  let rejected = publisher
+    .reject_namespace_subscription_update(75, update_id, error)
+    .unwrap()
+  assert_true(
+    rejected.contains(
+      @session.Send(75, @protocol.encode_request_error(error).unwrap(), true),
+    ),
+  )
+  assert_true(
+    rejected.contains(
+      @session.Notify(@session.NamespaceNoLongerAvailable(1UL, active_name)),
+    ),
+  )
+  assert_true(
+    rejected.contains(
+      @session.Notify(
+        @session.NamespaceSubscriptionUpdateRejected(1UL, update_id, error),
+      ),
+    ),
+  )
+  assert_true(
+    rejected.contains(
+      @session.Notify(@session.NamespaceSubscriptionEnded(1UL, 75)),
+    ),
+  )
+  assert_true(rejected.contains(@session.StopReceiving(75, 1UL)))
+  assert_true(
+    publisher
+    .publish_application_namespace(test_namespace([b"independent", b"next"]))
+    .unwrap()
+    .contains(
+      @session.Send(
+        76,
+        @protocol.encode_namespace({
+          track_namespace: test_namespace([b"next"]),
+        }).unwrap(),
+        false,
+      ),
+    ),
+  )
+}
+
+///|
+test "canceling a namespace subscription during prefix update ignores a late response" {
+  let client = client_session_ready()
+  let (request_id, _) = client
+    .subscribe_namespace(test_namespace([b"old"]))
+    .unwrap()
+  ignore(
+    client.receive(@session.StreamOpened(@session.Request(request_id), 77)),
+  )
+  ignore(
+    client.receive(
+      @session.StreamData(
+        77,
+        @protocol.encode_request_ok_for(
+          { parameters: [], properties: b"", },
+          @protocol.Namespace,
+        ).unwrap(),
+      ),
+    ),
+  )
+  ignore(
+    client
+    .update_namespace_subscription(request_id, test_namespace([b"new"]))
+    .unwrap(),
+  )
+  assert_true(client.cancel_request(request_id) is Ok(_))
+  assert_eq(
+    client.receive(
+      @session.StreamData(
+        77,
+        @protocol.encode_request_ok_for(
+          { parameters: [], properties: b"", },
+          @protocol.RequestUpdate,
+        ).unwrap(),
+      ),
+    ),
+    Ok([]),
+  )
+}
+
+///|
+test "rejected namespace prefix update terminates only its request" {
+  let client = client_session_ready()
+  let old_prefix = test_namespace([b"old"])
+  let active_name = test_namespace([b"old", b"room"])
+  let (request_id, _) = client.subscribe_namespace(old_prefix).unwrap()
+  ignore(
+    client.receive(@session.StreamOpened(@session.Request(request_id), 78)),
+  )
+  ignore(
+    client.receive(
+      @session.StreamData(
+        78,
+        @protocol.encode_request_ok_for(
+          { parameters: [], properties: b"", },
+          @protocol.Namespace,
+        ).unwrap(),
+      ),
+    ),
+  )
+  ignore(
+    client.receive(
+      @session.StreamData(
+        78,
+        @protocol.encode_namespace({
+          track_namespace: test_namespace([b"room"]),
+        }).unwrap(),
+      ),
+    ),
+  )
+  let (update_id, _) = client
+    .update_namespace_subscription(request_id, test_namespace([b"new"]))
+    .unwrap()
+  let error : @protocol.RequestErrorMessage = {
+    code: 0x30UL,
+    retry_interval: 0UL,
+    reason: b"overlap",
+    redirect: b"",
+  }
+  let actions = client
+    .receive(
+      @session.StreamData(78, @protocol.encode_request_error(error).unwrap()),
+    )
+    .unwrap()
+  assert_true(
+    actions.contains(
+      @session.Notify(
+        @session.NamespaceNoLongerAvailable(request_id, active_name),
+      ),
+    ),
+  )
+  assert_true(
+    actions.contains(
+      @session.Notify(@session.NamespaceSubscriptionEnded(request_id, 78)),
+    ),
+  )
+  assert_true(
+    actions.contains(
+      @session.Notify(
+        @session.NamespaceSubscriptionUpdateRejected(
+          request_id, update_id, error,
+        ),
+      ),
+    ),
+  )
+  assert_true(actions.contains(@session.AbortSend(78, 1UL)))
+  assert_true(actions.contains(@session.StopReceiving(78, 1UL)))
+  assert_eq(
+    client.update_namespace_subscription(request_id, test_namespace([b"later"])),
+    Err(@session.SubscriptionNotAccepted),
+  )
+}
+
+///|
 test "namespace prefix matching treats sibling tuple branches as disjoint" {
   let publisher = client_session_ready()
   let left = test_namespace([b"root", b"left"])

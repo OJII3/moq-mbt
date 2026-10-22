@@ -1,21 +1,29 @@
 ///|
 priv struct NamespaceSubscription {
-  prefix : @protocol.TrackNamespace
+  mut prefix : @protocol.TrackNamespace
   mut stream : Int64?
   mut response_buffer : Bytes
   mut established : Bool
   mut rejected : Bool
   mut active_namespaces : Array[@protocol.TrackNamespace]
+  mut pending_update : PendingNamespaceSubscriptionUpdate?
   lifetime : RequestLifetime
 }
 
 ///|
 priv struct InboundNamespaceSubscription {
   request_id : UInt64
-  prefix : @protocol.TrackNamespace
+  mut prefix : @protocol.TrackNamespace
   mut active_namespaces : Array[@protocol.TrackNamespace]
+  mut pending_updates : Array[PendingNamespaceSubscriptionUpdate]
   mut state : SubscriptionState
   lifetime : RequestLifetime
+}
+
+///|
+priv struct PendingNamespaceSubscriptionUpdate {
+  request_id : UInt64
+  prefix : @protocol.TrackNamespace
 }
 
 ///|
@@ -51,6 +59,74 @@ fn namespace_join(
 }
 
 ///|
+fn namespace_parameter_prefix(
+  parameters : Array[@protocol.MessageParameter],
+) -> Result[@protocol.TrackNamespace, ClientSessionError] {
+  let mut prefix : @protocol.TrackNamespace? = None
+  for parameter in parameters {
+    if parameter.kind != 0x34UL {
+      return Err(UnexpectedMessage)
+    }
+    match parameter.value {
+      @protocol.NamespacePrefix(value) if prefix is None => prefix = Some(value)
+      _ => return Err(UnexpectedMessage)
+    }
+  }
+  match prefix {
+    Some(value) => Ok(value)
+    None => Err(UnexpectedMessage)
+  }
+}
+
+///|
+fn ClientSession::receive_peer_namespace_subscription_update(
+  self : ClientSession,
+  stream : Int64,
+  update : @protocol.RequestUpdateMessage,
+) -> Result[Array[ClientSessionAction], ClientSessionError] {
+  let inbound = self.inbound_namespace_subscriptions.get(stream).unwrap()
+  if (update.request_id & 1UL) != 1UL {
+    return Err(InvalidRequestId)
+  }
+  if self.peer_request_ids.get(update.request_id) is Some(_) {
+    return Err(DuplicateRequestId)
+  }
+  if inbound.state != Active {
+    return Err(SubscriptionNotAccepted)
+  }
+  let prefix = match namespace_parameter_prefix(update.parameters) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  self.peer_request_ids[update.request_id] = stream
+  self.note_peer_request_id(update.request_id)
+  inbound.pending_updates.push({ request_id: update.request_id, prefix, })
+  if self.control_goaway_sent {
+    let error : @protocol.RequestErrorMessage = {
+      code: request_error_going_away,
+      retry_interval: 0UL,
+      reason: b"",
+      redirect: b"",
+    }
+    return self.reject_namespace_subscription_update(
+      stream,
+      update.request_id,
+      error,
+    )
+  }
+  Ok([
+    Notify(
+      NamespaceSubscriptionUpdateRequested(
+        inbound.request_id,
+        update.request_id,
+        stream,
+        prefix,
+      ),
+    ),
+  ])
+}
+
+///|
 /// Request ns discovery on a new bidirectional stream.
 pub fn ClientSession::subscribe_namespace(
   self : ClientSession,
@@ -71,6 +147,7 @@ pub fn ClientSession::subscribe_namespace(
     established: false,
     rejected: false,
     active_namespaces: [],
+    pending_update: None,
     lifetime: RequestLifetime::new(),
   }
   Ok(
@@ -79,6 +156,57 @@ pub fn ClientSession::subscribe_namespace(
       self.finish_actions([OpenStream(Bidirectional, Request(request_id))]),
     ),
   )
+}
+
+///|
+/// Update the prefix of an established SUBSCRIBE_NAMESPACE request.
+pub fn ClientSession::update_namespace_subscription(
+  self : ClientSession,
+  request_id : UInt64,
+  prefix : @protocol.TrackNamespace,
+) -> Result[(UInt64, Array[ClientSessionAction]), ClientSessionError] {
+  match self.ensure_new_request_allowed() {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  let request = match self.namespace_subscriptions.get(request_id) {
+    Some(value) => value
+    None => return Err(UnknownRequest)
+  }
+  if !request.established ||
+    request.lifetime.local_send_closed ||
+    request.lifetime.cancelled ||
+    request.lifetime.peer_send_closed ||
+    request.rejected {
+    return Err(SubscriptionNotAccepted)
+  }
+  if request.pending_update is Some(_) {
+    return Err(RequestUpdatePending)
+  }
+  for (other_id, other) in self.namespace_subscriptions {
+    if other_id != request_id &&
+      other.established &&
+      !other.lifetime.cancelled &&
+      !other.lifetime.peer_send_closed &&
+      namespace_prefixes_overlap(other.prefix, prefix) {
+      return Err(PrefixOverlap)
+    }
+  }
+  let stream = match request.stream {
+    Some(value) => value
+    None => return Err(SubscriptionNotAccepted)
+  }
+  let parameters : Array[@protocol.MessageParameter] = [
+    { kind: 0x34UL, value: @protocol.NamespacePrefix(prefix), },
+  ]
+  let update_id = self.allocate_request_id()
+  let bytes = match
+    @protocol.encode_request_update({ request_id: update_id, parameters, }) {
+    Ok(value) => value
+    Err(error) => return Err(Encoding(error))
+  }
+  request.pending_update = Some({ request_id: update_id, prefix, })
+  Ok((update_id, self.finish_actions([Send(stream, bytes, false)])))
 }
 
 ///|
@@ -164,6 +292,142 @@ pub fn ClientSession::accept_namespace_subscription(
       Err(error) => return Err(error)
     }
   }
+  Ok(self.finish_actions(actions))
+}
+
+///|
+/// Accept the next peer prefix update on an active namespace subscription.
+pub fn ClientSession::accept_namespace_subscription_update(
+  self : ClientSession,
+  stream : Int64,
+  update_id : UInt64,
+  response_message : @protocol.RequestOkMessage,
+) -> Result[Array[ClientSessionAction], ClientSessionError] {
+  match self.ensure_open() {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  let inbound = match self.inbound_namespace_subscriptions.get(stream) {
+    Some(value) => value
+    None => return Err(UnknownStream)
+  }
+  if inbound.state != Active ||
+    inbound.pending_updates.is_empty() ||
+    inbound.pending_updates[0].request_id != update_id {
+    return Err(RequestUpdatePending)
+  }
+  let pending = inbound.pending_updates[0]
+  for (other_stream, other) in self.inbound_namespace_subscriptions {
+    if other_stream != stream &&
+      other.state == Active &&
+      namespace_prefixes_overlap(other.prefix, pending.prefix) {
+      return self.reject_namespace_subscription_update(stream, update_id, {
+        code: 0x30UL,
+        retry_interval: 0UL,
+        reason: b"",
+        redirect: b"",
+      })
+    }
+  }
+  let response = match
+    @protocol.encode_request_ok_for(response_message, @protocol.RequestUpdate) {
+    Ok(value) => value
+    Err(error) => return Err(Encoding(error))
+  }
+  ignore(inbound.pending_updates.remove(0))
+  inbound.prefix = pending.prefix
+  let actions : Array[ClientSessionAction] = [
+    Send(stream, response, false),
+    Notify(
+      NamespaceSubscriptionUpdateAccepted(
+        inbound.request_id,
+        update_id,
+        response_message,
+      ),
+    ),
+  ]
+  for ns in inbound.active_namespaces {
+    actions.push(Notify(NamespaceNoLongerAvailable(inbound.request_id, ns)))
+  }
+  inbound.active_namespaces = []
+  let known : Array[@protocol.TrackNamespace] = []
+  for (_, publication) in self.namespace_requests {
+    if publication.locally_initiated &&
+      publication.state == NamespaceAccepted &&
+      namespace_has_prefix(publication.track_namespace, inbound.prefix) {
+      append_unique_namespace(known, publication.track_namespace)
+    }
+  }
+  for ns in self.application_namespaces {
+    if namespace_has_prefix(ns, inbound.prefix) {
+      append_unique_namespace(known, ns)
+    }
+  }
+  for ns in known {
+    match self.send_namespace_available(stream, ns) {
+      Ok(values) =>
+        for action in values {
+          actions.push(action)
+        }
+      Err(error) => return Err(error)
+    }
+  }
+  Ok(self.finish_actions(actions))
+}
+
+///|
+/// Reject a peer prefix update and terminate the namespace subscription.
+pub fn ClientSession::reject_namespace_subscription_update(
+  self : ClientSession,
+  stream : Int64,
+  update_id : UInt64,
+  error : @protocol.RequestErrorMessage,
+) -> Result[Array[ClientSessionAction], ClientSessionError] {
+  match self.ensure_open() {
+    Ok(_) => ()
+    Err(value) => return Err(value)
+  }
+  let inbound = match self.inbound_namespace_subscriptions.get(stream) {
+    Some(value) => value
+    None => return Err(UnknownStream)
+  }
+  if inbound.state != Active ||
+    inbound.pending_updates.is_empty() ||
+    inbound.pending_updates[0].request_id != update_id {
+    return Err(RequestUpdatePending)
+  }
+  let response = match @protocol.encode_request_error(error) {
+    Ok(value) => value
+    Err(value) => return Err(Encoding(value))
+  }
+  let rejected : Array[UInt64] = []
+  for pending in inbound.pending_updates {
+    rejected.push(pending.request_id)
+  }
+  inbound.pending_updates = []
+  inbound.state = Ended
+  inbound.lifetime.local_send_closed = true
+  inbound.lifetime.peer_send_closed = true
+  inbound.lifetime.cancelled = true
+  inbound.lifetime.end_notified = true
+  let actions : Array[ClientSessionAction] = [Send(stream, response, true)]
+  actions.push(StopReceiving(stream, 1UL))
+  for ns in inbound.active_namespaces {
+    actions.push(Notify(NamespaceNoLongerAvailable(inbound.request_id, ns)))
+  }
+  inbound.active_namespaces = []
+  for rejected_id in rejected {
+    actions.push(
+      Notify(
+        NamespaceSubscriptionUpdateRejected(
+          inbound.request_id,
+          rejected_id,
+          error,
+        ),
+      ),
+    )
+  }
+  actions.push(Notify(NamespaceSubscriptionEnded(inbound.request_id, stream)))
   Ok(self.finish_actions(actions))
 }
 
@@ -383,7 +647,9 @@ fn ClientSession::receive_namespace_subscription_response(
     return Err(BufferLimitExceeded)
   }
   request.response_buffer = request.response_buffer + bytes
-  let context = if request.established {
+  let context = if request.established && request.pending_update is Some(_) {
+    @protocol.RequestStreamFor(@protocol.RequestOkContext::RequestUpdate)
+  } else if request.established {
     @protocol.RequestStream
   } else {
     @protocol.RequestStreamFor(@protocol.RequestOkContext::Namespace)
@@ -406,6 +672,39 @@ fn ClientSession::receive_namespace_subscription_response(
           [
             Notify(NamespaceSubscriptionRejected(request_id, stream, error)),
             Send(stream, b"", true),
+          ]
+        }
+        (true, @protocol.RequestOk(response)) if request.pending_update
+          is Some(pending) => {
+          request.pending_update = None
+          request.prefix = pending.prefix
+          let changed : Array[ClientSessionAction] = [
+            Notify(
+              NamespaceSubscriptionUpdateAccepted(
+                request_id,
+                pending.request_id,
+                response,
+              ),
+            ),
+          ]
+          for ns in request.active_namespaces {
+            changed.push(Notify(NamespaceNoLongerAvailable(request_id, ns)))
+          }
+          request.active_namespaces = []
+          changed
+        }
+        (true, @protocol.RequestError(error)) if request.pending_update
+          is Some(pending) => {
+          request.pending_update = None
+          self.end_namespace_subscription(stream, Cancel(1UL)) +
+          [
+            Notify(
+              NamespaceSubscriptionUpdateRejected(
+                request_id,
+                pending.request_id,
+                error,
+              ),
+            ),
           ]
         }
         (true, @protocol.Namespace(suffix)) => {
@@ -479,6 +778,7 @@ fn ClientSession::end_namespace_subscription(
     return []
   }
   request.response_buffer = b""
+  request.pending_update = None
   let actions : Array[ClientSessionAction] = []
   let code = request.lifetime.cancel_error_code.unwrap_or(0UL)
   if effects.abort_send {
@@ -517,6 +817,7 @@ fn ClientSession::cancel_namespace_subscription(
   request.lifetime.peer_send_closed = true
   request.lifetime.end_notified = true
   request.response_buffer = b""
+  request.pending_update = None
   let actions : Array[ClientSessionAction] = []
   match request.stream {
     Some(stream) => {
@@ -558,6 +859,7 @@ fn ClientSession::end_inbound_namespace_subscription(
     return []
   }
   inbound.state = Ended
+  inbound.pending_updates = []
   let actions : Array[ClientSessionAction] = []
   let code = inbound.lifetime.cancel_error_code.unwrap_or(0UL)
   if effects.abort_send {
