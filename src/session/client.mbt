@@ -384,15 +384,15 @@ pub fn ClientSession::receive(
         match self.outgoing_fetch_streams.get(stream) {
           Some(outgoing) => {
             let request_id = outgoing.request_id
-            self.outgoing_fetch_streams.remove(stream)
             let fetch = self.fetches.get(request_id).unwrap()
-            fetch.state = FetchTerminal
-            let actions : Array[ClientSessionAction] = [AbortSend(stream, code)]
-            if !fetch.terminal_notified {
-              fetch.terminal_notified = true
-              actions.push(Notify(FetchReset(request_id, stream, code)))
-            }
-            Ok(actions)
+            Ok(
+              self.terminate_fetch(
+                fetch,
+                [AbortSend(stream, code)],
+                Some(Notify(FetchReset(request_id, stream, code))),
+                RemoveFetchData,
+              ),
+            )
           }
           None =>
             match self.outgoing_object_streams.get(stream) {

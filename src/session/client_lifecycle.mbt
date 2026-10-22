@@ -332,7 +332,6 @@ fn ClientSession::receive_control_goaway(
     if fetch.locally_initiated &&
       request_id >= message.request_id &&
       fetch.state == FetchPending {
-      fetch.state = FetchTerminal
       let effects = fetch.lifetime.transition(
         Cancel(request_reset_going_away),
         fetch.stream is Some(_),
@@ -348,18 +347,23 @@ fn ClientSession::receive_control_goaway(
         }
         None => ()
       }
-      if !fetch.terminal_notified {
-        fetch.terminal_notified = true
-        actions.push(
-          Notify(
-            FetchFailed(request_id, {
-              code: request_error_going_away,
-              retry_interval: 0UL,
-              reason: b"",
-              redirect: b"",
-            }),
+      for
+        action in self.terminate_fetch(
+          fetch,
+          [],
+          Some(
+            Notify(
+              FetchFailed(request_id, {
+                code: request_error_going_away,
+                retry_interval: 0UL,
+                reason: b"",
+                redirect: b"",
+              }),
+            ),
           ),
-        )
+          StopFetchData(request_reset_going_away),
+        ) {
+        actions.push(action)
       }
     }
   }
