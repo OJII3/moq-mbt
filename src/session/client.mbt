@@ -171,6 +171,14 @@ priv enum InboundStreamKind {
 }
 
 ///|
+priv enum RequestStreamRoute {
+  NamespaceSubscriptionResponse(UInt64)
+  NamespacePublicationResponse(UInt64)
+  TrackResponse(UInt64)
+  UnknownRequestStream
+}
+
+///|
 /// Draft 18 Sans-I/O client session. It owns requests, subscriptions, Object
 /// streams, and track aliases; transport references remain opaque.
 pub struct ClientSession {
