@@ -12,6 +12,17 @@ fn ClientSession::receive_peer_request(
       inbound.lifetime.peer_send_closed => return Ok([])
     _ => ()
   }
+  match self.namespace_request_streams.get(stream) {
+    Some(request_id) => {
+      let request = self.namespace_requests.get(request_id).unwrap()
+      if request.lifetime.cancelled ||
+        request.lifetime.peer_send_closed ||
+        request.state == NamespaceTerminal {
+        return Ok([])
+      }
+    }
+    None => ()
+  }
   let buffer = match self.inbound_buffers.get(stream) {
     Some(value) => value
     None => b""
@@ -77,6 +88,59 @@ fn ClientSession::receive_peer_request(
               )
             }
           }
+          (None, @protocol.PublishNamespace(request)) => {
+            if self.namespace_request_streams.get(stream) is Some(_) {
+              return Err(UnexpectedMessage)
+            }
+            if (request.request_id & 1UL) != 1UL {
+              return Err(InvalidRequestId)
+            }
+            if self.peer_request_ids.get(request.request_id) is Some(_) {
+              return Err(DuplicateRequestId)
+            }
+            self.peer_request_ids[request.request_id] = stream
+            self.note_peer_request_id(request.request_id)
+            if self.control_goaway_sent {
+              let error = match
+                @protocol.encode_request_error({
+                  code: request_error_going_away,
+                  retry_interval: 0UL,
+                  reason: b"",
+                  redirect: b"",
+                }) {
+                Ok(value) => value
+                Err(error) => return Err(Encoding(error))
+              }
+              actions.push(Send(stream, error, true))
+            } else {
+              let namespace_request : NamespaceRequest = {
+                track_namespace: request.track_namespace,
+                parameters: request.parameters,
+                locally_initiated: false,
+                announced: true,
+                stream: Some(stream),
+                response_buffer: b"",
+                state: NamespacePending,
+                ignore_late_bytes: false,
+                lifetime: RequestLifetime::new(),
+                pending_updates: [],
+                pending_local_update_id: None,
+                pending_local_update_parameters: [],
+              }
+              self.namespace_requests[request.request_id] = namespace_request
+              self.namespace_request_streams[stream] = request.request_id
+              actions.push(
+                Notify(
+                  NamespacePublicationRequested(
+                    request.request_id,
+                    stream,
+                    request.track_namespace,
+                    request.parameters,
+                  ),
+                ),
+              )
+            }
+          }
           (Some(inbound), @protocol.GoAwayRequest(goaway)) => {
             for action in self.receive_request_goaway(stream, goaway) {
               actions.push(action)
@@ -86,8 +150,26 @@ fn ClientSession::receive_peer_request(
             }
             ignore(inbound)
           }
+          (None, @protocol.GoAwayRequest(goaway)) if self.namespace_request_streams.get(
+              stream,
+            )
+            is Some(_) =>
+            for action in self.receive_request_goaway(stream, goaway) {
+              actions.push(action)
+            }
           (Some(_), @protocol.RequestUpdate(update)) =>
             match self.receive_peer_subscription_update(stream, update) {
+              Ok(values) =>
+                for action in values {
+                  actions.push(action)
+                }
+              Err(error) => return Err(error)
+            }
+          (None, @protocol.RequestUpdate(update)) if self.namespace_request_streams.get(
+              stream,
+            )
+            is Some(_) =>
+            match self.receive_peer_namespace_update(stream, update) {
               Ok(values) =>
                 for action in values {
                   actions.push(action)

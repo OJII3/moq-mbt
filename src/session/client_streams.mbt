@@ -47,9 +47,13 @@ fn ClientSession::receive_stream_data(
         Some(Subgroup) => self.receive_subgroup(stream, bytes)
         Some(Padding) | Some(Discarded) => Ok([])
         None =>
-          match self.request_streams.get(stream) {
+          match self.namespace_request_streams.get(stream) {
             Some(_) => self.receive_request(stream, bytes)
-            None => Err(UnknownStream)
+            None =>
+              match self.request_streams.get(stream) {
+                Some(_) => self.receive_request(stream, bytes)
+                None => Err(UnknownStream)
+              }
           }
       }
   }
@@ -77,8 +81,38 @@ fn ClientSession::stream_opened(
       Ok([Send(stream, self.handshake.outbound_setup(), false)])
     }
     Request(request_id) => {
-      if self.request_streams.get(stream) is Some(_) {
+      if self.request_streams.get(stream) is Some(_) ||
+        self.namespace_request_streams.get(stream) is Some(_) {
         return Err(DuplicateStream)
+      }
+      match self.namespace_requests.get(request_id) {
+        Some(request) if request.stream is None => {
+          request.stream = Some(stream)
+          self.namespace_request_streams[stream] = request_id
+          if request.locally_initiated {
+            self.request_streams[stream] = request_id
+          }
+          if request.state == NamespaceTerminal {
+            if request.lifetime.cancelled {
+              let error_code = request.lifetime.cancel_error_code.unwrap()
+              return Ok(self.end_namespace_request(stream, Cancel(error_code)))
+            }
+            return Ok([])
+          }
+          let encoded = @protocol.encode_publish_namespace({
+            request_id,
+            track_namespace: request.track_namespace,
+            parameters: request.parameters,
+          })
+          let bytes = match encoded {
+            Ok(value) => value
+            Err(error) => return Err(Encoding(error))
+          }
+          request.announced = true
+          return Ok([Send(stream, bytes, false)])
+        }
+        Some(_) => return Err(DuplicateStream)
+        None => ()
       }
       let request = match self.requests.get(request_id) {
         Some(value) if value.stream is None => value
@@ -233,6 +267,24 @@ fn ClientSession::stream_finished(
       Ok(actions)
     }
     None => {
+      if self.namespace_request_streams.get(stream) is Some(_) {
+        let request = self.namespace_requests
+          .get(self.namespace_request_streams.get(stream).unwrap())
+          .unwrap()
+        if (request.locally_initiated && request.state == NamespacePending) ||
+          !request.response_buffer.is_empty() ||
+          (
+            request.locally_initiated &&
+            request.pending_local_update_id is Some(_)
+          ) ||
+          !self.inbound_buffers.get(stream).unwrap_or(b"").is_empty() {
+          return Err(UnexpectedMessage)
+        }
+        ignore(request.lifetime.transition(PeerFin, true))
+        request.response_buffer = b""
+        self.inbound_buffers.remove(stream)
+        return Ok([])
+      }
       if self.inbound_subscriptions.get(stream) is Some(_) ||
         self.request_streams.get(stream) is Some(_) {
         match self.inbound_subscriptions.get(stream) {
@@ -307,6 +359,9 @@ fn ClientSession::stream_reset(
       Ok(actions)
     }
     None => {
+      if self.namespace_request_streams.get(stream) is Some(_) {
+        return Ok(self.end_namespace_request(stream, PeerReset(error_code)))
+      }
       if self.inbound_subscriptions.get(stream) is Some(_) ||
         self.request_streams.get(stream) is Some(_) {
         return Ok(self.end_request_stream(stream, PeerReset(error_code)))
@@ -354,10 +409,15 @@ fn ClientSession::send_complete(
       }
     }
     None =>
-      match self.request_streams.get(stream) {
-        Some(request_id) if self.requests.get(request_id).unwrap().lifetime.cancelled =>
-          Ok([])
-        _ => Ok([Notify(SendFinished(stream, canceled))])
+      if self.namespace_request_streams.get(stream) is Some(request_id) &&
+        self.namespace_requests.get(request_id).unwrap().lifetime.cancelled {
+        Ok([])
+      } else {
+        match self.request_streams.get(stream) {
+          Some(request_id) if self.requests.get(request_id).unwrap().lifetime.cancelled =>
+            Ok([])
+          _ => Ok([Notify(SendFinished(stream, canceled))])
+        }
       }
   }
 }

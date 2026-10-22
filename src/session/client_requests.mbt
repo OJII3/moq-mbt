@@ -208,9 +208,14 @@ fn ClientSession::receive_request(
   stream : Int64,
   bytes : Bytes,
 ) -> Result[Array[ClientSessionAction], ClientSessionError] {
-  match self.request_streams.get(stream) {
-    Some(request_id) => self.receive_response(request_id, stream, bytes)
-    None => self.receive_peer_request(stream, bytes)
+  match self.namespace_request_streams.get(stream) {
+    Some(request_id) if self.namespace_requests.get(request_id).unwrap().locally_initiated =>
+      self.receive_namespace_response(request_id, stream, bytes)
+    _ =>
+      match self.request_streams.get(stream) {
+        Some(request_id) => self.receive_response(request_id, stream, bytes)
+        None => self.receive_peer_request(stream, bytes)
+      }
   }
 }
 
@@ -415,6 +420,16 @@ fn ClientSession::request_local_fin_actions(
   self : ClientSession,
   stream : Int64,
 ) -> Array[ClientSessionAction] {
+  if self.namespace_request_streams.get(stream) is Some(_) {
+    let request = self.namespace_requests
+      .get(self.namespace_request_streams.get(stream).unwrap())
+      .unwrap()
+    if request.lifetime.local_send_closed {
+      return []
+    }
+    self.note_request_local_fin(stream)
+    return [Send(stream, b"", true)]
+  }
   let request_id = match self.request_streams.get(stream) {
     Some(value) => value
     None => return []
@@ -514,6 +529,13 @@ fn ClientSession::note_request_local_fin(
 ) -> Unit {
   match self.inbound_subscriptions.get(stream) {
     Some(inbound) => ignore(inbound.lifetime.transition(LocalFin, true))
+    None if self.namespace_request_streams.get(stream) is Some(request_id) =>
+      ignore(
+        self.namespace_requests.get(request_id).unwrap().lifetime.transition(
+          LocalFin,
+          true,
+        ),
+      )
     None =>
       match self.request_streams.get(stream) {
         Some(request_id) =>
@@ -684,6 +706,22 @@ pub fn ClientSession::cancel_request(
         }
       }
     }
+    None if self.namespace_requests.get(request_id) is Some(request) => {
+      if request.lifetime.cancelled || request.state == NamespaceTerminal {
+        return Ok([])
+      }
+      match request.stream {
+        Some(stream) =>
+          Ok(
+            self.finish_actions(self.end_namespace_request(stream, Cancel(1UL))),
+          )
+        None => {
+          request.state = NamespaceTerminal
+          ignore(request.lifetime.transition(Cancel(1UL), false))
+          Ok(self.finish_actions([]))
+        }
+      }
+    }
     None =>
       match self.peer_request_ids.get(request_id) {
         Some(stream) =>
@@ -703,6 +741,9 @@ fn ClientSession::end_request_stream(
   match self.inbound_subscriptions.get(stream) {
     Some(_) => return self.end_inbound_subscription(stream, event)
     None => ()
+  }
+  if self.namespace_request_streams.get(stream) is Some(_) {
+    return self.end_namespace_request(stream, event)
   }
   let request_id = match self.request_streams.get(stream) {
     Some(value) => value

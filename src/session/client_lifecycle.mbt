@@ -83,6 +83,11 @@ fn ClientSession::has_active_requests(self : ClientSession) -> Bool {
       return true
     }
   }
+  for (_, request) in self.namespace_requests {
+    if request.state != NamespaceTerminal {
+      return true
+    }
+  }
   self.incoming_object_streams.length() > 0 ||
   self.ignored_object_streams.length() > 0 ||
   self.pending_object_streams.length() > 0 ||
@@ -301,6 +306,39 @@ fn ClientSession::receive_control_goaway(
       }
     }
   }
+  for (request_id, request) in self.namespace_requests {
+    if request.locally_initiated &&
+      request_id >= message.request_id &&
+      request.state == NamespacePending {
+      request.state = NamespaceTerminal
+      request.pending_local_update_id = None
+      request.pending_local_update_parameters = []
+      request.pending_updates = []
+      let effects = request.lifetime.transition(
+        Cancel(request_reset_going_away),
+        request.stream is Some(_),
+      )
+      request.lifetime.end_notified = true
+      if request.stream is Some(stream) {
+        if effects.abort_send {
+          actions.push(AbortSend(stream, request_reset_going_away))
+        }
+        if effects.stop_receiving {
+          actions.push(StopReceiving(stream, request_reset_going_away))
+        }
+        actions.push(
+          Notify(
+            NamespacePublicationRejected(request_id, stream, {
+              code: request_error_going_away,
+              retry_interval: 0UL,
+              reason: b"",
+              redirect: b"",
+            }),
+          ),
+        )
+      }
+    }
+  }
   actions
 }
 
@@ -324,9 +362,13 @@ fn ClientSession::receive_request_goaway(
   let request_id = match self.request_streams.get(stream) {
     Some(value) => value
     None =>
-      match self.inbound_subscriptions.get(stream) {
-        Some(inbound) => inbound.request_id
-        None => 0UL
+      match self.namespace_request_streams.get(stream) {
+        Some(value) => value
+        None =>
+          match self.inbound_subscriptions.get(stream) {
+            Some(inbound) => inbound.request_id
+            None => 0UL
+          }
       }
   }
   [

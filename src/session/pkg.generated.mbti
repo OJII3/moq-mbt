@@ -23,6 +23,8 @@ pub fn ClientHandshake::version(Self) -> Version
 pub struct ClientSession {
   // private fields
 }
+pub fn ClientSession::accept_namespace_publication(Self, Int64) -> Result[Array[ClientSessionAction], ClientSessionError]
+pub fn ClientSession::accept_namespace_update(Self, Int64, UInt64, @protocol.RequestOkMessage) -> Result[Array[ClientSessionAction], ClientSessionError]
 pub fn ClientSession::accept_subscription(Self, Int64) -> Result[Array[ClientSessionAction], ClientSessionError]
 pub fn ClientSession::accept_subscription_update(Self, Int64, UInt64, @protocol.RequestOkMessage) -> Result[Array[ClientSessionAction], ClientSessionError]
 pub fn ClientSession::cancel_request(Self, UInt64) -> Result[Array[ClientSessionAction], ClientSessionError]
@@ -32,8 +34,11 @@ pub fn ClientSession::finish_subscription_updates(Self, UInt64) -> Result[Array[
 pub fn ClientSession::new(Version, @protocol.Setup) -> Result[Self, @protocol.CodecError]
 pub fn ClientSession::open_object_stream(Self, Int64, @protocol.SubgroupHeader) -> Result[Array[ClientSessionAction], ClientSessionError]
 pub fn ClientSession::publish_done(Self, Int64, UInt64, Bytes) -> Result[Array[ClientSessionAction], ClientSessionError]
+pub fn ClientSession::publish_namespace(Self, @protocol.TrackNamespace, Array[@protocol.MessageParameter]) -> Result[(UInt64, Array[ClientSessionAction]), ClientSessionError]
 pub fn ClientSession::publish_track(Self, @protocol.TrackName, UInt64) -> Result[(UInt64, Array[ClientSessionAction]), ClientSessionError]
 pub fn ClientSession::receive(Self, ClientSessionEvent) -> Result[Array[ClientSessionAction], ClientSessionError]
+pub fn ClientSession::reject_namespace_publication(Self, Int64, @protocol.RequestErrorMessage) -> Result[Array[ClientSessionAction], ClientSessionError]
+pub fn ClientSession::reject_namespace_update(Self, Int64, UInt64, @protocol.RequestErrorMessage) -> Result[Array[ClientSessionAction], ClientSessionError]
 pub fn ClientSession::reject_subscription(Self, Int64, @protocol.RequestErrorMessage) -> Result[Array[ClientSessionAction], ClientSessionError]
 pub fn ClientSession::reject_subscription_update(Self, Int64, UInt64, @protocol.RequestErrorMessage) -> Result[Array[ClientSessionAction], ClientSessionError]
 pub fn ClientSession::send_goaway(Self, UInt64) -> Result[Array[ClientSessionAction], ClientSessionError]
@@ -42,6 +47,7 @@ pub fn ClientSession::send_object_datagram(Self, Int64, @protocol.ObjectDatagram
 pub fn ClientSession::start(Self) -> Result[Array[ClientSessionAction], ClientSessionError]
 pub fn ClientSession::state(Self) -> ClientSessionState
 pub fn ClientSession::subscribe_track(Self, @protocol.TrackName) -> Result[(UInt64, Array[ClientSessionAction]), ClientSessionError]
+pub fn ClientSession::update_published_namespace(Self, UInt64, Array[@protocol.MessageParameter]) -> Result[(UInt64, Array[ClientSessionAction]), ClientSessionError]
 pub fn ClientSession::update_subscription(Self, UInt64, Array[@protocol.MessageParameter]) -> Result[(UInt64, Array[ClientSessionAction]), ClientSessionError]
 
 pub(all) enum ClientSessionAction {
@@ -118,6 +124,14 @@ pub(all) enum ClientSessionNotice {
   SubscribeEstablished(UInt64, UInt64)
   SubscribeRejected(UInt64, @protocol.RequestErrorMessage)
   SubscriptionRequested(UInt64, Int64, @protocol.TrackName)
+  NamespacePublicationRequested(UInt64, Int64, @protocol.TrackNamespace, Array[@protocol.MessageParameter])
+  NamespacePublicationAccepted(UInt64, Int64)
+  NamespacePublicationRejected(UInt64, Int64, @protocol.RequestErrorMessage)
+  NamespaceUpdateRequested(UInt64, UInt64, Int64, Array[@protocol.MessageParameter])
+  NamespaceUpdateAccepted(UInt64, UInt64, @protocol.RequestOkMessage)
+  NamespaceUpdateRejected(UInt64, UInt64, @protocol.RequestErrorMessage)
+  NamespaceWithdrawn(UInt64, Int64)
+  NamespaceAcceptanceRevoked(UInt64, Int64)
   SubscriptionAccepted(UInt64, Int64, UInt64)
   SubscriptionRejected(UInt64, Int64)
   SubscriptionUpdateRequested(UInt64, UInt64, Int64, Array[@protocol.MessageParameter], Array[@protocol.MessageParameter])

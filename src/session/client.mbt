@@ -52,6 +52,24 @@ pub(all) enum ClientSessionNotice {
   SubscribeEstablished(UInt64, UInt64)
   SubscribeRejected(UInt64, @protocol.RequestErrorMessage)
   SubscriptionRequested(UInt64, Int64, @protocol.TrackName)
+  NamespacePublicationRequested(
+    UInt64,
+    Int64,
+    @protocol.TrackNamespace,
+    Array[@protocol.MessageParameter]
+  )
+  NamespacePublicationAccepted(UInt64, Int64)
+  NamespacePublicationRejected(UInt64, Int64, @protocol.RequestErrorMessage)
+  NamespaceUpdateRequested(
+    UInt64,
+    UInt64,
+    Int64,
+    Array[@protocol.MessageParameter]
+  )
+  NamespaceUpdateAccepted(UInt64, UInt64, @protocol.RequestOkMessage)
+  NamespaceUpdateRejected(UInt64, UInt64, @protocol.RequestErrorMessage)
+  NamespaceWithdrawn(UInt64, Int64)
+  NamespaceAcceptanceRevoked(UInt64, Int64)
   SubscriptionAccepted(UInt64, Int64, UInt64)
   SubscriptionRejected(UInt64, Int64)
   SubscriptionUpdateRequested(
@@ -162,6 +180,8 @@ pub struct ClientSession {
   priv inbound_buffers : Map[Int64, Bytes]
   priv inbound_subscriptions : Map[Int64, InboundSubscription]
   priv peer_request_ids : Map[UInt64, Int64]
+  priv namespace_requests : Map[UInt64, NamespaceRequest]
+  priv namespace_request_streams : Map[Int64, UInt64]
   priv published_requests : Array[UInt64]
   priv largest_published_locations : Map[UInt64, (UInt64, UInt64)]
   priv aliases : Map[UInt64, UInt64]
@@ -210,6 +230,8 @@ pub fn ClientSession::new(
         inbound_buffers: {},
         inbound_subscriptions: {},
         peer_request_ids: {},
+        namespace_requests: {},
+        namespace_request_streams: {},
         published_requests: [],
         largest_published_locations: {},
         aliases: {},
@@ -349,8 +371,13 @@ fn ClientSession::protocol_error_actions(
       if self.peer_control_stream == Some(stream) || kind is Some(Control) {
         Some(self.end_session(Local(code, b""), Some(code), b""))
       } else if self.request_streams.get(stream) is Some(_) ||
-        self.inbound_subscriptions.get(stream) is Some(_) {
-        Some(self.end_request_stream(stream, Cancel(code)))
+        self.inbound_subscriptions.get(stream) is Some(_) ||
+        self.namespace_request_streams.get(stream) is Some(_) {
+        match self.namespace_request_streams.get(stream) {
+          Some(request_id) if self.namespace_requests.get(request_id).unwrap().locally_initiated =>
+            Some(self.end_session(Local(code, b""), Some(code), b""))
+          _ => Some(self.end_request_stream(stream, Cancel(code)))
+        }
       } else if kind is Some(Request) {
         self.inbound_buffers.remove(stream)
         Some([AbortSend(stream, code), StopReceiving(stream, code)])
