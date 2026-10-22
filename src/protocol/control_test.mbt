@@ -54,6 +54,263 @@ test "Draft 18 single-track request and response wire formats" {
 }
 
 ///|
+test "Draft 18 FETCH variants and FETCH_OK wire formats" {
+  let track : @protocol.TrackName = { namespace_fields: [b"a"], name: b"x", }
+  let standalone : @protocol.FetchMessage = {
+    request_id: 0,
+    fetch_type: @protocol.StandaloneFetch(track, { group: 1, object: 2, }, {
+      group: 3,
+      object: 0,
+    }),
+    parameters: [],
+  }
+  let standalone_wire = b"\x16\x00\x0c\x00\x01\x01\x01a\x01x\x01\x02\x03\x00\x00"
+  assert_eq(@protocol.encode_fetch(standalone), Ok(standalone_wire))
+  assert_eq(
+    @protocol.decode_control(standalone_wire),
+    @protocol.Complete(@protocol.Fetch(standalone), standalone_wire.length()),
+  )
+
+  let moq5_standalone : @protocol.FetchMessage = {
+    request_id: 4,
+    fetch_type: @protocol.StandaloneFetch(
+      { namespace_fields: [b"live"], name: b"video", },
+      { group: 2, object: 0, },
+      { group: 5, object: 0, },
+    ),
+    parameters: [],
+  }
+  let moq5_standalone_wire = b"\x16\x00\x13\x04\x01\x01\x04live\x05video\x02\x00\x05\x00\x00"
+  assert_eq(@protocol.encode_fetch(moq5_standalone), Ok(moq5_standalone_wire))
+  assert_eq(
+    @protocol.decode_control(moq5_standalone_wire),
+    @protocol.Complete(
+      @protocol.Fetch(moq5_standalone),
+      moq5_standalone_wire.length(),
+    ),
+  )
+
+  let relative : @protocol.FetchMessage = {
+    request_id: 4,
+    fetch_type: @protocol.RelativeJoiningFetch(2, 7),
+    parameters: [{ kind: 0x20, value: @protocol.Byte(5), }],
+  }
+  let relative_wire = b"\x16\x00\x07\x04\x02\x02\x07\x01\x20\x05"
+  assert_eq(@protocol.encode_fetch(relative), Ok(relative_wire))
+  assert_eq(
+    @protocol.decode_control(relative_wire),
+    @protocol.Complete(@protocol.Fetch(relative), relative_wire.length()),
+  )
+
+  let absolute : @protocol.FetchMessage = {
+    request_id: 5,
+    fetch_type: @protocol.AbsoluteJoiningFetch(2, 7),
+    parameters: [],
+  }
+  let absolute_wire = b"\x16\x00\x05\x05\x03\x02\x07\x00"
+  assert_eq(@protocol.encode_fetch(absolute), Ok(absolute_wire))
+  assert_eq(
+    @protocol.decode_control(absolute_wire),
+    @protocol.Complete(@protocol.Fetch(absolute), absolute_wire.length()),
+  )
+
+  let fetch_ok : @protocol.FetchOkMessage = {
+    end_of_track: 1,
+    end_location: { group: 3, object: 4, },
+    parameters: [],
+    track_properties: b"\x02\x2a",
+  }
+  let fetch_ok_wire = b"\x18\x00\x06\x01\x03\x04\x00\x02\x2a"
+  assert_eq(@protocol.encode_fetch_ok(fetch_ok), Ok(fetch_ok_wire))
+  assert_eq(
+    @protocol.decode_control_with_context(
+      fetch_ok_wire,
+      @protocol.FetchRequestStream,
+    ),
+    @protocol.Complete(@protocol.FetchOk(fetch_ok), fetch_ok_wire.length()),
+  )
+
+  let moq5_fetch_ok : @protocol.FetchOkMessage = {
+    end_of_track: 1,
+    end_location: { group: 9, object: 3, },
+    parameters: [],
+    track_properties: b"",
+  }
+  let moq5_fetch_ok_wire = b"\x18\x00\x04\x01\x09\x03\x00"
+  assert_eq(@protocol.encode_fetch_ok(moq5_fetch_ok), Ok(moq5_fetch_ok_wire))
+  assert_eq(
+    @protocol.decode_control_with_context(
+      moq5_fetch_ok_wire,
+      @protocol.FetchRequestStream,
+    ),
+    @protocol.Complete(
+      @protocol.FetchOk(moq5_fetch_ok),
+      moq5_fetch_ok_wire.length(),
+    ),
+  )
+  let fetch_error : @protocol.RequestErrorMessage = {
+    code: 3,
+    retry_interval: 0,
+    reason: b"",
+    redirect: b"",
+  }
+  let fetch_error_wire = @protocol.encode_request_error(fetch_error).unwrap()
+  assert_eq(
+    @protocol.decode_control_with_context(
+      fetch_error_wire,
+      @protocol.FetchRequestStream,
+    ),
+    @protocol.Complete(
+      @protocol.RequestError(fetch_error),
+      fetch_error_wire.length(),
+    ),
+  )
+  assert_eq(
+    @protocol.decode_control_with_context(
+      fetch_error_wire,
+      @protocol.ControlStream,
+    ),
+    @protocol.Invalid(@protocol.MalformedControlMessage),
+  )
+
+  for wire in [standalone_wire, relative_wire, absolute_wire, fetch_ok_wire] {
+    for split = 0; split < wire.length(); split = split + 1 {
+      assert_eq(
+        @protocol.decode_control(wire[:split].to_owned()),
+        @protocol.Incomplete,
+      )
+    }
+  }
+}
+
+///|
+test "FETCH validates type, range, parameter scope, and Track Properties" {
+  assert_eq(
+    @protocol.encode_fetch({
+      request_id: 1,
+      fetch_type: @protocol.StandaloneFetch(
+        { namespace_fields: [], name: b"t", },
+        { group: 2, object: 4, },
+        { group: 2, object: 4, },
+      ),
+      parameters: [],
+    }),
+    Err(@protocol.InvalidFetchRange),
+  )
+  let fill_timeout : @protocol.FetchMessage = {
+    request_id: 8,
+    fetch_type: @protocol.RelativeJoiningFetch(4, 0xffffffffffffffffUL),
+    parameters: [
+      { kind: 0x03, value: @protocol.Data(b"auth"), },
+      { kind: 0x0a, value: @protocol.VarInt(0xffffffffffffffffUL), },
+      { kind: 0x20, value: @protocol.Byte(255), },
+      { kind: 0x22, value: @protocol.Byte(2), },
+    ],
+  }
+  let fill_timeout_wire = @protocol.encode_fetch(fill_timeout).unwrap()
+  assert_eq(
+    @protocol.decode_control(fill_timeout_wire),
+    @protocol.Complete(
+      @protocol.Fetch(fill_timeout),
+      fill_timeout_wire.length(),
+    ),
+  )
+  let max_locations : @protocol.FetchMessage = {
+    request_id: 0xffffffffffffffffUL,
+    fetch_type: @protocol.StandaloneFetch(
+      { namespace_fields: [], name: b"t", },
+      { group: 0xffffffffffffffffUL, object: 0xfffffffffffffffeUL, },
+      { group: 0xffffffffffffffffUL, object: 0xffffffffffffffffUL, },
+    ),
+    parameters: [],
+  }
+  let max_locations_wire = @protocol.encode_fetch(max_locations).unwrap()
+  assert_eq(
+    @protocol.decode_control(max_locations_wire),
+    @protocol.Complete(
+      @protocol.Fetch(max_locations),
+      max_locations_wire.length(),
+    ),
+  )
+  let unknown_fetch_type = b"\x16\x00\x03\x00\x04\x00"
+  assert_eq(
+    @protocol.decode_control(unknown_fetch_type),
+    @protocol.Invalid(@protocol.MalformedControlMessage),
+  )
+  assert_eq(
+    @protocol.encode_fetch({
+      request_id: 1,
+      fetch_type: @protocol.AbsoluteJoiningFetch(2, 7),
+      parameters: [{ kind: 0x02, value: @protocol.VarInt(1), }],
+    }),
+    Err(@protocol.InvalidParameterScope(0x02)),
+  )
+  assert_eq(
+    @protocol.encode_request_update_for(
+      {
+        request_id: 2,
+        parameters: [{ kind: 0x22, value: @protocol.Byte(1), }],
+      },
+      @protocol.FetchRequestStream,
+    ),
+    Err(@protocol.InvalidParameterScope(0x22)),
+  )
+  let fetch_update = @protocol.encode_request_update_for(
+    { request_id: 2, parameters: [{ kind: 0x20, value: @protocol.Byte(1), }], },
+    @protocol.FetchRequestStream,
+  ).unwrap()
+  assert_eq(
+    @protocol.decode_control_with_context(
+      fetch_update,
+      @protocol.FetchRequestStream,
+    ),
+    @protocol.Complete(
+      @protocol.RequestUpdate({
+        request_id: 2,
+        parameters: [{ kind: 0x20, value: @protocol.Byte(1), }],
+      }),
+      fetch_update.length(),
+    ),
+  )
+  let invalid_fetch_update = b"\x02\x00\x04\x02\x01\x22\x01"
+  assert_eq(
+    @protocol.decode_control_with_context(
+      invalid_fetch_update,
+      @protocol.FetchRequestStream,
+    ),
+    @protocol.Invalid(@protocol.MalformedControlMessage),
+  )
+  assert_eq(
+    @protocol.encode_fetch_ok({
+      end_of_track: 2,
+      end_location: { group: 1, object: 0, },
+      parameters: [],
+      track_properties: b"",
+    }),
+    Err(@protocol.InvalidEndOfTrack),
+  )
+  assert_eq(
+    @protocol.encode_fetch_ok({
+      end_of_track: 0,
+      end_location: { group: 1, object: 0, },
+      parameters: [],
+      track_properties: b"\x01",
+    }),
+    Err(@protocol.InvalidTrackProperties),
+  )
+  let invalid_fetch_ok = b"\x18\x00\x07\x00\x01\x00\x01\x09\x00\x00"
+  assert_eq(
+    @protocol.decode_control(invalid_fetch_ok),
+    @protocol.Invalid(@protocol.MalformedControlMessage),
+  )
+  let invalid_end_of_track = b"\x18\x00\x04\x02\x01\x00\x00"
+  assert_eq(
+    @protocol.decode_control(invalid_end_of_track),
+    @protocol.Invalid(@protocol.MalformedControlMessage),
+  )
+}
+
+///|
 test "Draft 18 namespace message golden bytes and incremental decoding" {
   let request : @protocol.NamespaceRequestMessage = {
     request_id: 1,

@@ -14,6 +14,9 @@ pub(all) enum CodecError {
   InvalidParameterScope(UInt64)
   InvalidParameterValue(UInt64)
   InvalidRequestOkProperties
+  InvalidFetchRange
+  InvalidEndOfTrack
+  InvalidTrackProperties
   InvalidGoAwayUri
   InvalidTrackName
   InvalidSubgroup

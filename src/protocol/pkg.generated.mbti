@@ -20,6 +20,10 @@ pub fn decode_subgroup_header(Bytes) -> DecodeResult[SubgroupHeader]
 
 pub fn decode_vi64(Bytes) -> DecodeResult[UInt64]
 
+pub fn encode_fetch(FetchMessage) -> Result[Bytes, CodecError]
+
+pub fn encode_fetch_ok(FetchOkMessage) -> Result[Bytes, CodecError]
+
 pub fn encode_goaway_control(GoAwayControlMessage) -> Result[Bytes, CodecError]
 
 pub fn encode_goaway_request(GoAwayRequestMessage) -> Result[Bytes, CodecError]
@@ -43,6 +47,8 @@ pub fn encode_request_ok(RequestOkMessage) -> Result[Bytes, CodecError]
 pub fn encode_request_ok_for(RequestOkMessage, RequestOkContext) -> Result[Bytes, CodecError]
 
 pub fn encode_request_update(RequestUpdateMessage) -> Result[Bytes, CodecError]
+
+pub fn encode_request_update_for(RequestUpdateMessage, ControlStreamContext) -> Result[Bytes, CodecError]
 
 pub fn encode_setup(Setup) -> Result[Bytes, CodecError]
 
@@ -79,6 +85,9 @@ pub(all) enum CodecError {
   InvalidParameterScope(UInt64)
   InvalidParameterValue(UInt64)
   InvalidRequestOkProperties
+  InvalidFetchRange
+  InvalidEndOfTrack
+  InvalidTrackProperties
   InvalidGoAwayUri
   InvalidTrackName
   InvalidSubgroup
@@ -94,6 +103,8 @@ pub(all) enum ControlMessage {
   SubscribeOk(SubscribeOkMessage)
   RequestOk(RequestOkMessage)
   RequestUpdate(RequestUpdateMessage)
+  Fetch(FetchMessage)
+  FetchOk(FetchOkMessage)
   GoAwayControl(GoAwayControlMessage)
   GoAwayRequest(GoAwayRequestMessage)
   RequestError(RequestErrorMessage)
@@ -112,6 +123,7 @@ pub(all) enum ControlStreamContext {
   ControlStream
   RequestStream
   RequestStreamFor(RequestOkContext)
+  FetchRequestStream
 } derive(Eq, @debug.Debug)
 pub fn ControlStreamContext::equal(Self, Self) -> Bool
 pub fn ControlStreamContext::not_equal(Self, Self) -> Bool
@@ -125,6 +137,42 @@ pub(all) enum DecodeResult[T] {
 pub fn[T : Eq] DecodeResult::equal(Self[T], Self[T]) -> Bool
 pub fn[T : Eq] DecodeResult::not_equal(Self[T], Self[T]) -> Bool
 pub fn[T : @debug.Debug] DecodeResult::to_repr(Self[T]) -> @debug.Repr
+
+pub(all) struct FetchLocation {
+  group : UInt64
+  object : UInt64
+} derive(Eq, @debug.Debug)
+pub fn FetchLocation::equal(Self, Self) -> Bool
+pub fn FetchLocation::not_equal(Self, Self) -> Bool
+pub fn FetchLocation::to_repr(Self) -> @debug.Repr
+
+pub(all) struct FetchMessage {
+  request_id : UInt64
+  fetch_type : FetchType
+  parameters : Array[MessageParameter]
+} derive(Eq, @debug.Debug)
+pub fn FetchMessage::equal(Self, Self) -> Bool
+pub fn FetchMessage::not_equal(Self, Self) -> Bool
+pub fn FetchMessage::to_repr(Self) -> @debug.Repr
+
+pub(all) struct FetchOkMessage {
+  end_of_track : Byte
+  end_location : FetchLocation
+  parameters : Array[MessageParameter]
+  track_properties : Bytes
+} derive(Eq, @debug.Debug)
+pub fn FetchOkMessage::equal(Self, Self) -> Bool
+pub fn FetchOkMessage::not_equal(Self, Self) -> Bool
+pub fn FetchOkMessage::to_repr(Self) -> @debug.Repr
+
+pub(all) enum FetchType {
+  StandaloneFetch(TrackName, FetchLocation, FetchLocation)
+  RelativeJoiningFetch(UInt64, UInt64)
+  AbsoluteJoiningFetch(UInt64, UInt64)
+} derive(Eq, @debug.Debug)
+pub fn FetchType::equal(Self, Self) -> Bool
+pub fn FetchType::not_equal(Self, Self) -> Bool
+pub fn FetchType::to_repr(Self) -> @debug.Repr
 
 pub(all) struct GoAwayControlMessage {
   uri : Bytes
