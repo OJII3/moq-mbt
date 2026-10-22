@@ -6,12 +6,19 @@ pub(all) struct TrackName {
 } derive(Debug, Eq)
 
 ///|
+/// A namespace is an opaque tuple of non-empty byte fields.
+pub(all) struct TrackNamespace {
+  fields : Array[Bytes]
+} derive(Debug, Eq)
+
+///|
 pub(all) enum ParameterValue {
   VarInt(UInt64)
   Byte(Byte)
   Data(Bytes)
   Location(UInt64, UInt64)
   Filter(SubscriptionFilter)
+  NamespacePrefix(TrackNamespace)
 } derive(Debug, Eq)
 
 ///|
@@ -99,6 +106,16 @@ fn encode_parameters(
           encoded.push(byte)
         }
       }
+      (0x34, NamespacePrefix(value)) => {
+        let body = match encode_track_namespace(value) {
+          Ok(bytes) => bytes
+          Err(error) => return Err(error)
+        }
+        append_vi64s(encoded, body.length().to_uint64())
+        for byte in body {
+          encoded.push(byte)
+        }
+      }
       (0x21, Filter(filter)) => {
         let body = match encode_subscription_filter(filter) {
           Ok(value) => value
@@ -115,6 +132,51 @@ fn encode_parameters(
     first = false
   }
   Ok(Bytes::from_array(encoded))
+}
+
+///|
+fn encode_track_namespace(
+  track_namespace : TrackNamespace,
+) -> Result[Bytes, CodecError] {
+  if track_namespace.fields.length() > 32 {
+    return Err(InvalidTrackName)
+  }
+  let encoded : Array[Byte] = []
+  append_vi64s(encoded, track_namespace.fields.length().to_uint64())
+  let mut total = 0
+  for field in track_namespace.fields {
+    if field.is_empty() {
+      return Err(InvalidTrackName)
+    }
+    total += field.length()
+    if total > 4096 {
+      return Err(InvalidTrackName)
+    }
+    append_vi64s(encoded, field.length().to_uint64())
+    for byte in field {
+      encoded.push(byte)
+    }
+  }
+  Ok(Bytes::from_array(encoded))
+}
+
+///|
+/// Join a namespace prefix and suffix while enforcing full namespace limits.
+pub fn join_track_namespace(
+  prefix : TrackNamespace,
+  suffix : TrackNamespace,
+) -> Result[TrackNamespace, CodecError] {
+  if prefix.fields.length() + suffix.fields.length() > 32 {
+    return Err(InvalidTrackName)
+  }
+  let fields = prefix.fields.copy()
+  for field in suffix.fields {
+    fields.push(field)
+  }
+  match encode_track_namespace({ fields, }) {
+    Ok(_) => Ok({ fields, })
+    Err(error) => Err(error)
+  }
 }
 
 ///|
@@ -312,6 +374,23 @@ fn read_parameters_at(
         next = after_value
         Data(value)
       }
+      0x34 => {
+        let (value, after_value) = match
+          read_bytes_at(input, after_delta, end) {
+          Some(pair) => pair
+          None => return None
+        }
+        let (track_namespace, namespace_end) = match
+          read_track_namespace_at(value, 0, value.length()) {
+          Some(pair) => pair
+          None => return None
+        }
+        if namespace_end != value.length() {
+          return None
+        }
+        next = after_value
+        NamespacePrefix(track_namespace)
+      }
       0x21 => {
         let (bytes, after_value) = match
           read_bytes_at(input, after_delta, end) {
@@ -331,6 +410,40 @@ fn read_parameters_at(
     previous = kind
   }
   Some((parameters, next))
+}
+
+///|
+fn read_track_namespace_at(
+  input : Bytes,
+  offset : Int32,
+  end : Int32,
+) -> (TrackNamespace, Int32)? {
+  let (count, first_next) = match read_varint_at(input, offset, end) {
+    Some(pair) => pair
+    None => return None
+  }
+  if count > 32UL {
+    return None
+  }
+  let fields : Array[Bytes] = []
+  let mut total = 0
+  let mut next = first_next
+  for _ in 0..<count.to_int() {
+    let (field, field_end) = match read_bytes_at(input, next, end) {
+      Some(pair) => pair
+      None => return None
+    }
+    if field.is_empty() {
+      return None
+    }
+    total += field.length()
+    if total > 4096 {
+      return None
+    }
+    fields.push(field)
+    next = field_end
+  }
+  Some(({ fields, }, next))
 }
 
 ///|
@@ -354,6 +467,12 @@ pub extend TrackName with Debug::{to_repr}
 
 ///|
 pub extend TrackName with Eq::{equal, not_equal}
+
+///|
+pub extend TrackNamespace with Debug::{to_repr}
+
+///|
+pub extend TrackNamespace with Eq::{equal, not_equal}
 
 ///|
 pub extend ParameterValue with Debug::{to_repr}

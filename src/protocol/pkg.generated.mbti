@@ -24,11 +24,17 @@ pub fn encode_goaway_control(GoAwayControlMessage) -> Result[Bytes, CodecError]
 
 pub fn encode_goaway_request(GoAwayRequestMessage) -> Result[Bytes, CodecError]
 
+pub fn encode_namespace(NamespaceSuffixMessage) -> Result[Bytes, CodecError]
+
+pub fn encode_namespace_done(NamespaceSuffixMessage) -> Result[Bytes, CodecError]
+
 pub fn encode_object_datagram(ObjectDatagram) -> Result[Bytes, CodecError]
 
 pub fn encode_publish(PublishMessage) -> Result[Bytes, CodecError]
 
 pub fn encode_publish_done(PublishDoneMessage) -> Result[Bytes, CodecError]
+
+pub fn encode_publish_namespace(NamespaceRequestMessage) -> Result[Bytes, CodecError]
 
 pub fn encode_request_error(RequestErrorMessage) -> Result[Bytes, CodecError]
 
@@ -48,9 +54,13 @@ pub fn encode_subgroup_stream(SubgroupHeader, Array[SubgroupFrame]) -> Result[By
 
 pub fn encode_subscribe(SubscribeMessage) -> Result[Bytes, CodecError]
 
+pub fn encode_subscribe_namespace(NamespaceRequestMessage) -> Result[Bytes, CodecError]
+
 pub fn encode_subscribe_ok(SubscribeOkMessage) -> Result[Bytes, CodecError]
 
 pub fn encode_vi64(UInt64) -> Bytes
+
+pub fn join_track_namespace(TrackNamespace, TrackNamespace) -> Result[TrackNamespace, CodecError]
 
 // Errors
 
@@ -88,6 +98,10 @@ pub(all) enum ControlMessage {
   GoAwayRequest(GoAwayRequestMessage)
   RequestError(RequestErrorMessage)
   PublishDone(PublishDoneMessage)
+  PublishNamespace(NamespaceRequestMessage)
+  SubscribeNamespace(NamespaceRequestMessage)
+  Namespace(NamespaceSuffixMessage)
+  NamespaceDone(NamespaceSuffixMessage)
 } derive(Eq, @debug.Debug)
 pub fn ControlMessage::equal(Self, Self) -> Bool
 pub fn ControlMessage::not_equal(Self, Self) -> Bool
@@ -137,6 +151,22 @@ pub fn MessageParameter::equal(Self, Self) -> Bool
 pub fn MessageParameter::not_equal(Self, Self) -> Bool
 pub fn MessageParameter::to_repr(Self) -> @debug.Repr
 
+pub(all) struct NamespaceRequestMessage {
+  request_id : UInt64
+  track_namespace : TrackNamespace
+  parameters : Array[MessageParameter]
+} derive(Eq, @debug.Debug)
+pub fn NamespaceRequestMessage::equal(Self, Self) -> Bool
+pub fn NamespaceRequestMessage::not_equal(Self, Self) -> Bool
+pub fn NamespaceRequestMessage::to_repr(Self) -> @debug.Repr
+
+pub(all) struct NamespaceSuffixMessage {
+  track_namespace : TrackNamespace
+} derive(Eq, @debug.Debug)
+pub fn NamespaceSuffixMessage::equal(Self, Self) -> Bool
+pub fn NamespaceSuffixMessage::not_equal(Self, Self) -> Bool
+pub fn NamespaceSuffixMessage::to_repr(Self) -> @debug.Repr
+
 pub(all) struct ObjectDatagram {
   track_alias : UInt64
   group_id : UInt64
@@ -174,6 +204,7 @@ pub(all) enum ParameterValue {
   Data(Bytes)
   Location(UInt64, UInt64)
   Filter(SubscriptionFilter)
+  NamespacePrefix(TrackNamespace)
 } derive(Eq, @debug.Debug)
 pub fn ParameterValue::equal(Self, Self) -> Bool
 pub fn ParameterValue::not_equal(Self, Self) -> Bool
@@ -221,6 +252,7 @@ pub(all) enum RequestOkContext {
   Publish
   RequestUpdate
   TrackStatus
+  Namespace
 } derive(Eq, @debug.Debug)
 pub fn RequestOkContext::equal(Self, Self) -> Bool
 pub fn RequestOkContext::not_equal(Self, Self) -> Bool
@@ -332,6 +364,13 @@ pub(all) struct TrackName {
 pub fn TrackName::equal(Self, Self) -> Bool
 pub fn TrackName::not_equal(Self, Self) -> Bool
 pub fn TrackName::to_repr(Self) -> @debug.Repr
+
+pub(all) struct TrackNamespace {
+  fields : Array[Bytes]
+} derive(Eq, @debug.Debug)
+pub fn TrackNamespace::equal(Self, Self) -> Bool
+pub fn TrackNamespace::not_equal(Self, Self) -> Bool
+pub fn TrackNamespace::to_repr(Self) -> @debug.Repr
 
 // Type aliases
 
