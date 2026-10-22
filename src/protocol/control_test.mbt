@@ -101,6 +101,14 @@ test "Draft 18 namespace message golden bytes and incremental decoding" {
     @protocol.decode_control(done_wire),
     @protocol.Complete(@protocol.NamespaceDone(suffix), done_wire.length()),
   )
+  for wire in [namespace_wire, done_wire] {
+    for split = 0; split < wire.length(); split = split + 1 {
+      assert_eq(
+        @protocol.decode_control(wire[:split].to_owned()),
+        @protocol.Incomplete,
+      )
+    }
+  }
 }
 
 ///|
@@ -161,6 +169,13 @@ test "namespace tuple and prefix parameter validation" {
     @protocol.join_track_namespace({ fields: Array::make(32, b"x"), }, {
       fields: [b"y"],
     })
+    is Err(@protocol.InvalidTrackName),
+  )
+  assert_true(
+    @protocol.join_track_namespace(
+      { fields: [Bytes::from_array(Array::make(4096, 0x78))], },
+      { fields: [b"y"], },
+    )
     is Err(@protocol.InvalidTrackName),
   )
   assert_eq(
