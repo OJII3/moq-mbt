@@ -35,6 +35,37 @@ fn validate_datagram_send(
 }
 
 ///|
+/// Retire the buffer associated with an MsQuic stream send completion.
+fn Client::record_send_complete(self : Client, stream : Int64) -> Unit {
+  for i in 0..<self.send_sizes.length() {
+    if self.send_sizes[i].0 == stream {
+      self.pending_send_bytes -= self.send_sizes[i].1
+      ignore(self.send_sizes.remove(i))
+      break
+    }
+  }
+}
+
+///|
+/// Retire a datagram buffer only once MsQuic reports a final send state.
+fn Client::record_datagram_send_state(
+  self : Client,
+  id : Int64,
+  state : DatagramSendState,
+) -> Unit raise TransportError {
+  if state.is_final() {
+    match self.datagram_send_sizes.get(id) {
+      Some(size) => {
+        self.pending_datagram_bytes -= size
+        self.pending_datagrams -= 1
+        self.datagram_send_sizes.remove(id)
+      }
+      None => raise TransportError("unknown datagram send ID \{id}")
+    }
+  }
+}
+
+///|
 /// Native QUIC client. Call `close` when finished; methods run on the calling thread.
 pub struct Client {
   priv mut raw : RawClient?
@@ -281,13 +312,7 @@ pub fn Client::next_event(
       7 => return StreamReset(native_event_id(raw), native_event_code(raw))
       8 => {
         let id = native_event_id(raw)
-        for i in 0..<self.send_sizes.length() {
-          if self.send_sizes[i].0 == id {
-            self.pending_send_bytes -= self.send_sizes[i].1
-            ignore(self.send_sizes.remove(i))
-            break
-          }
-        }
+        self.record_send_complete(id)
         return SendComplete(id, native_event_code(raw) != 0L)
       }
       9 => return SendStopped(native_event_id(raw), native_event_code(raw))
@@ -320,16 +345,7 @@ pub fn Client::next_event(
         let state = datagram_send_state_from_code(
           native_event_code(raw).to_int(),
         )
-        if state.is_final() {
-          match self.datagram_send_sizes.get(id) {
-            Some(size) => {
-              self.pending_datagram_bytes -= size
-              self.pending_datagrams -= 1
-              self.datagram_send_sizes.remove(id)
-            }
-            None => raise TransportError("unknown datagram send ID \{id}")
-          }
-        }
+        self.record_datagram_send_state(id, state)
         return DatagramSendStateChanged(id, state)
       }
       14 =>

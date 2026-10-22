@@ -43,3 +43,59 @@ test "datagram send preflight reports disabled, size, and queue limits" {
   }
   assert_eq(queue_full, 1)
 }
+
+///|
+test "stream send completion releases only its matching queued buffer" {
+  let client : Client = {
+    raw: None,
+    streams: {},
+    send_sizes: [(7L, 4), (11L, 6)],
+    datagram_send_sizes: {},
+    next_datagram_id: 1L,
+    pending_send_bytes: 10,
+    pending_datagram_bytes: 0,
+    pending_datagrams: 0,
+  }
+  client.record_send_complete(11L)
+  assert_eq(client.pending_send_bytes, 4)
+  assert_eq(client.send_sizes, [(7L, 4)])
+
+  client.record_send_complete(99L)
+  assert_eq(client.pending_send_bytes, 4)
+  assert_eq(client.send_sizes, [(7L, 4)])
+}
+
+///|
+test "interim datagram states retain buffers and final states release them" {
+  let client : Client = {
+    raw: None,
+    streams: {},
+    send_sizes: [],
+    datagram_send_sizes: {},
+    next_datagram_id: 3L,
+    pending_send_bytes: 0,
+    pending_datagram_bytes: 9,
+    pending_datagrams: 2,
+  }
+  client.datagram_send_sizes[1L] = 5
+  client.datagram_send_sizes[2L] = 4
+
+  client.record_datagram_send_state(1L, LostSuspect)
+  assert_eq(client.pending_datagram_bytes, 9)
+  assert_eq(client.pending_datagrams, 2)
+
+  client.record_datagram_send_state(1L, Acknowledged)
+  assert_eq(client.pending_datagram_bytes, 4)
+  assert_eq(client.pending_datagrams, 1)
+  assert_true(client.datagram_send_sizes.get(1L) is None)
+  assert_eq(client.datagram_send_sizes.get(2L), Some(4))
+
+  let unknown_final = try {
+    client.record_datagram_send_state(99L, Canceled)
+    false
+  } catch {
+    TransportError(_) => true
+    _ => false
+  }
+  assert_true(unknown_final)
+}
