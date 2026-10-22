@@ -75,6 +75,45 @@ test "subscriber keeps its request stream open and matches one update response" 
 }
 
 ///|
+test "Joining FETCH can follow a pending Forward State 0 to 1 update" {
+  let subscriber = subscriber_started()
+  let (off_id, _) = subscriber
+    .update_subscription(0UL, [forward_parameter(0)])
+    .unwrap()
+  assert_eq(off_id, 2UL)
+  ignore(
+    subscriber.receive(
+      @session.StreamData(
+        30,
+        @protocol.encode_request_ok_for(
+          update_ok(),
+          @protocol.RequestOkContext::RequestUpdate,
+        ).unwrap(),
+      ),
+    ),
+  )
+
+  let (on_id, _) = subscriber
+    .update_subscription(0UL, [forward_parameter(1)])
+    .unwrap()
+  assert_eq(on_id, 4UL)
+  let (fetch_id, actions) = subscriber.fetch_relative(0UL, 2UL, []).unwrap()
+  assert_eq(fetch_id, 6UL)
+  assert_eq(actions, [
+    @session.OpenStream(@session.Bidirectional, @session.Request(6UL)),
+  ])
+  let fetch : @protocol.FetchMessage = {
+    request_id: fetch_id,
+    fetch_type: @protocol.RelativeJoiningFetch(0UL, 2UL),
+    parameters: [],
+  }
+  assert_eq(
+    subscriber.receive(@session.StreamOpened(@session.Request(fetch_id), 32)),
+    Ok([@session.Send(32, @protocol.encode_fetch(fetch).unwrap(), false)]),
+  )
+}
+
+///|
 test "datagrams and subgroup objects use the accepted subscription FORWARD state" {
   let subscriber = subscriber_started()
   let forward_off = [forward_parameter(0)]
@@ -243,6 +282,253 @@ test "publisher datagram send obeys the same FORWARD update and alias checks" {
   assert_eq(
     publisher.send_object_datagram(40, update_datagram(99, 2, b"payload")),
     Err(@session.Track(@session.AliasMismatch)),
+  )
+}
+
+///|
+test "Joining FETCH waits for REQUEST_UPDATE Forward transition and keeps its range" {
+  let publisher = publisher_announced()
+  let track = publisher_track()
+  let first_subscribe = @protocol.encode_subscribe({
+    request_id: 1UL,
+    track,
+    parameters: [],
+  }).unwrap()
+  ignore(
+    publisher.receive(@session.InboundStreamStarted(40, @session.Bidirectional)),
+  )
+  ignore(publisher.receive(@session.StreamData(40, first_subscribe)))
+  ignore(publisher.accept_subscription(40).unwrap())
+  let header : @protocol.SubgroupHeader = {
+    track_alias: 1UL,
+    group_id: 10UL,
+    subgroup_id_mode: @protocol.Zero,
+    publisher_priority: None,
+    end_of_group: false,
+    first_object: true,
+    has_properties: false,
+  }
+  ignore(publisher.open_object_stream(40, header).unwrap())
+  ignore(publisher.receive(@session.StreamOpened(@session.Object(0UL), 30)))
+  ignore(publisher.send_object(30, publisher_frame(3UL, b"object")).unwrap())
+
+  let second_subscribe = @protocol.encode_subscribe({
+    request_id: 3UL,
+    track,
+    parameters: [forward_parameter(0)],
+  }).unwrap()
+  ignore(
+    publisher.receive(@session.InboundStreamStarted(42, @session.Bidirectional)),
+  )
+  ignore(publisher.receive(@session.StreamData(42, second_subscribe)))
+  ignore(publisher.accept_subscription(42).unwrap())
+  let update = @protocol.encode_request_update({
+    request_id: 5UL,
+    parameters: [forward_parameter(1)],
+  }).unwrap()
+  assert_eq(
+    publisher.receive(@session.StreamData(42, update)),
+    Ok([
+      @session.Notify(
+        @session.SubscriptionUpdateRequested(
+          3UL,
+          5UL,
+          42,
+          [forward_parameter(1)],
+          [forward_parameter(1)],
+        ),
+      ),
+    ]),
+  )
+  ignore(
+    publisher.receive(@session.InboundStreamStarted(44, @session.Bidirectional)),
+  )
+  let joining_fetch = @protocol.encode_fetch({
+    request_id: 9UL,
+    fetch_type: @protocol.RelativeJoiningFetch(3UL, 2UL),
+    parameters: [],
+  }).unwrap()
+  ignore(
+    publisher.receive(@session.InboundStreamStarted(46, @session.Bidirectional)),
+  )
+  let update_id_as_join = @protocol.encode_fetch({
+    request_id: 7UL,
+    fetch_type: @protocol.RelativeJoiningFetch(5UL, 0UL),
+    parameters: [],
+  }).unwrap()
+  let invalid_joining_id : @protocol.RequestErrorMessage = {
+    code: 0x32UL,
+    retry_interval: 0UL,
+    reason: b"",
+    redirect: b"",
+  }
+  assert_eq(
+    publisher.receive(@session.StreamData(46, update_id_as_join)),
+    Ok([
+      @session.Send(
+        46,
+        @protocol.encode_request_error(invalid_joining_id).unwrap(),
+        true,
+      ),
+      @session.Notify(@session.FetchRejected(7UL, 46, invalid_joining_id)),
+    ]),
+  )
+  assert_eq(publisher.receive(@session.StreamData(44, joining_fetch)), Ok([]))
+  let largest : @protocol.MessageParameter = {
+    kind: 0x09UL,
+    value: @protocol.Location(10UL, 3UL),
+  }
+  let response : @protocol.RequestOkMessage = {
+    parameters: [],
+    properties: b"",
+  }
+  assert_eq(
+    publisher.accept_subscription_update(42, 5UL, response),
+    Ok([
+      @session.Send(
+        42,
+        @protocol.encode_request_ok_for(
+          { parameters: [largest], properties: b"", },
+          @protocol.RequestOkContext::RequestUpdate,
+        ).unwrap(),
+        false,
+      ),
+      @session.Notify(
+        @session.SubscriptionUpdateApplied(3UL, 5UL, 42, [forward_parameter(1)]),
+      ),
+      @session.Notify(
+        @session.FetchRequested(
+          9UL,
+          44,
+          track,
+          { group: 8UL, object: 0UL, },
+          { group: 10UL, object: 4UL, },
+          [],
+        ),
+      ),
+    ]),
+  )
+  assert_eq(
+    publisher.accept_fetch(9UL, {
+      end_of_track: 0,
+      end_location: { group: 10UL, object: 4UL, },
+      parameters: [],
+      track_properties: b"",
+    }),
+    Ok([
+      @session.Send(
+        44,
+        @protocol.encode_fetch_ok({
+          end_of_track: 0,
+          end_location: { group: 10UL, object: 4UL, },
+          parameters: [],
+          track_properties: b"",
+        }).unwrap(),
+        false,
+      ),
+      @session.Notify(@session.FetchAccepted(9UL, 44)),
+      @session.OpenStream(@session.Unidirectional, @session.FetchData(9UL)),
+    ]),
+  )
+  assert_eq(
+    publisher.receive(@session.StreamOpened(@session.FetchData(9UL), 48)),
+    Ok([
+      @session.Send(
+        48,
+        @protocol.encode_fetch_header({ request_id: 9UL, }),
+        false,
+      ),
+    ]),
+  )
+  assert_eq(
+    publisher.receive(
+      @session.StreamData(
+        42,
+        request_update_bytes(11UL, [forward_parameter(0)]),
+      ),
+    ),
+    Ok([
+      @session.Notify(
+        @session.SubscriptionUpdateRequested(
+          3UL,
+          11UL,
+          42,
+          [forward_parameter(0)],
+          [forward_parameter(0)],
+        ),
+      ),
+    ]),
+  )
+  assert_eq(
+    publisher.accept_subscription_update(42, 11UL, update_ok()),
+    Ok([
+      @session.Send(
+        42,
+        @protocol.encode_request_ok_for(
+          update_ok(),
+          @protocol.RequestOkContext::RequestUpdate,
+        ).unwrap(),
+        false,
+      ),
+      @session.Notify(
+        @session.SubscriptionUpdateApplied(3UL, 11UL, 42, [forward_parameter(0)]),
+      ),
+    ]),
+  )
+  ignore(
+    publisher.receive(@session.InboundStreamStarted(50, @session.Bidirectional)),
+  )
+  let after_forward_off = @protocol.encode_fetch({
+    request_id: 13UL,
+    fetch_type: @protocol.RelativeJoiningFetch(3UL, 0UL),
+    parameters: [],
+  }).unwrap()
+  let invalid_range : @protocol.RequestErrorMessage = {
+    code: 0x10UL,
+    retry_interval: 0UL,
+    reason: b"",
+    redirect: b"",
+  }
+  assert_eq(
+    publisher.receive(@session.StreamData(50, after_forward_off)),
+    Ok([
+      @session.Send(
+        50,
+        @protocol.encode_request_error(invalid_range).unwrap(),
+        true,
+      ),
+      @session.Notify(@session.FetchRejected(13UL, 50, invalid_range)),
+    ]),
+  )
+  assert_eq(
+    publisher.send_fetch_object(9UL, {
+      group_id: 8UL,
+      subgroup_id: Some(0UL),
+      object_id: 0UL,
+      publisher_priority: 0,
+      datagram_forwarding: false,
+      properties: b"",
+      payload: b"historical",
+    }),
+    Ok([
+      @session.Send(
+        48,
+        @protocol.FetchDataEncoder::new(@protocol.Ascending)
+        .encode(
+          @protocol.FetchDataObject({
+            group_id: 8UL,
+            subgroup_id: Some(0UL),
+            object_id: 0UL,
+            publisher_priority: 0,
+            datagram_forwarding: false,
+            properties: b"",
+            payload: b"historical",
+          }),
+        )
+        .unwrap(),
+        false,
+      ),
+    ]),
   )
 }
 

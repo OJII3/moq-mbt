@@ -58,34 +58,8 @@ fn ClientSession::receive_peer_request(
             }
             self.peer_request_ids[request.request_id] = stream
             self.note_peer_request_id(request.request_id)
-            let (track, start, end) = match request.fetch_type {
-              @protocol.StandaloneFetch(track, start, end) =>
-                (track, start, end)
-              _ => {
-                let error : @protocol.RequestErrorMessage = {
-                  code: 0x03UL,
-                  retry_interval: 0UL,
-                  reason: b"",
-                  redirect: b"",
-                }
-                let error_bytes = match @protocol.encode_request_error(error) {
-                  Ok(value) => value
-                  Err(codec_error) => return Err(Encoding(codec_error))
-                }
-                actions.push(Send(stream, error_bytes, true))
-                continue
-              }
-            }
             if !valid_fetch_group_order(request.parameters) {
-              return Err(UnexpectedMessage)
-            }
-            if self.control_goaway_sent {
-              let error : @protocol.RequestErrorMessage = {
-                code: request_error_going_away,
-                retry_interval: 0UL,
-                reason: b"",
-                redirect: b"",
-              }
+              let error = joining_fetch_error(request_error_invalid_range)
               let error_bytes = match @protocol.encode_request_error(error) {
                 Ok(value) => value
                 Err(codec_error) => return Err(Encoding(codec_error))
@@ -94,29 +68,82 @@ fn ClientSession::receive_peer_request(
               actions.push(
                 Notify(FetchRejected(request.request_id, stream, error)),
               )
-            } else {
-              self.fetch_streams[stream] = request.request_id
-              self.fetches[request.request_id] = new_client_fetch(
-                request.request_id,
-                track,
-                start,
-                end,
-                false,
-                Some(stream),
-                request.parameters,
-              )
-              actions.push(
-                Notify(
-                  FetchRequested(
+              continue
+            }
+            match request.fetch_type {
+              @protocol.StandaloneFetch(track, start, end) =>
+                if self.control_goaway_sent {
+                  let error : @protocol.RequestErrorMessage = {
+                    code: request_error_going_away,
+                    retry_interval: 0UL,
+                    reason: b"",
+                    redirect: b"",
+                  }
+                  let error_bytes = match
+                    @protocol.encode_request_error(error) {
+                    Ok(value) => value
+                    Err(codec_error) => return Err(Encoding(codec_error))
+                  }
+                  actions.push(Send(stream, error_bytes, true))
+                  actions.push(
+                    Notify(FetchRejected(request.request_id, stream, error)),
+                  )
+                } else {
+                  self.fetch_streams[stream] = request.request_id
+                  self.fetches[request.request_id] = new_client_fetch(
                     request.request_id,
-                    stream,
                     track,
                     start,
                     end,
+                    false,
+                    Some(stream),
                     request.parameters,
-                  ),
-                ),
-              )
+                  )
+                  actions.push(
+                    Notify(
+                      FetchRequested(
+                        request.request_id,
+                        stream,
+                        track,
+                        start,
+                        end,
+                        request.parameters,
+                      ),
+                    ),
+                  )
+                }
+              @protocol.RelativeJoiningFetch(joining_id, joining_start) =>
+                match
+                  self.receive_joining_fetch(
+                    stream,
+                    request.request_id,
+                    joining_id,
+                    joining_start,
+                    true,
+                    request.parameters,
+                  ) {
+                  Ok(values) =>
+                    for action in values {
+                      actions.push(action)
+                    }
+                  Err(error) => return Err(error)
+                }
+              @protocol.AbsoluteJoiningFetch(joining_id, joining_start) =>
+                match
+                  self.receive_joining_fetch(
+                    stream,
+                    request.request_id,
+                    joining_id,
+                    joining_start,
+                    false,
+                    request.parameters,
+                  ) {
+                  Ok(values) =>
+                    for action in values {
+                      actions.push(action)
+                    }
+                  Err(error) => return Err(error)
+                }
             }
           }
           (None, @protocol.SubscribeNamespace(request)) => {
@@ -409,18 +436,30 @@ pub fn ClientSession::accept_subscription(
       self.largest_published_locations.get(inbound.publisher_request_id),
     ),
     request_id: inbound.request_id,
+    joining_location: if subscription_forward(inbound.parameters) {
+      match self.largest_published_locations.get(inbound.publisher_request_id) {
+        Some((group_id, object_id)) =>
+          Some({ group: group_id, object: object_id, })
+        None => None
+      }
+    } else {
+      None
+    },
   }
   Ok(
-    self.finish_actions([
-      Send(stream, response, false),
-      Notify(
-        SubscriptionAccepted(
-          inbound.request_id,
-          stream,
-          request.track_alias.unwrap(),
+    self.finish_actions(
+      [
+        Send(stream, response, false),
+        Notify(
+          SubscriptionAccepted(
+            inbound.request_id,
+            stream,
+            request.track_alias.unwrap(),
+          ),
         ),
-      ),
-    ]),
+      ] +
+      self.drain_joining_fetches(inbound.request_id, stream),
+    ),
   )
 }
 
@@ -448,11 +487,18 @@ pub fn ClientSession::reject_subscription(
   }
   inbound.state = Ended
   self.note_request_local_fin(stream)
+  let joining_actions = self.fail_pending_joining_fetches(
+    inbound.request_id,
+    request_error_invalid_joining_request_id,
+  )
   Ok(
-    self.finish_actions([
-      Send(stream, response, true),
-      Notify(SubscriptionRejected(inbound.request_id, stream)),
-    ]),
+    self.finish_actions(
+      [
+        Send(stream, response, true),
+        Notify(SubscriptionRejected(inbound.request_id, stream)),
+      ] +
+      joining_actions,
+    ),
   )
 }
 
@@ -479,7 +525,10 @@ fn ClientSession::end_inbound_subscription(
   let error_code = inbound.lifetime.cancel_error_code.unwrap()
   inbound.state = Ended
   self.inbound_buffers.remove(stream)
-  let actions : Array[ClientSessionAction] = []
+  let actions = self.fail_pending_joining_fetches(
+    inbound.request_id,
+    request_error_invalid_joining_request_id,
+  )
   if effects.abort_send {
     actions.push(AbortSend(stream, error_code))
   }

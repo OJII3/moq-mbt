@@ -118,10 +118,8 @@ fn ClientSession::stream_opened(
           }
           let encoded = @protocol.encode_fetch({
             request_id,
-            fetch_type: @protocol.StandaloneFetch(
-              fetch.track,
-              fetch.start,
-              fetch.end,
+            fetch_type: fetch.outgoing_fetch_type.unwrap_or(
+              @protocol.StandaloneFetch(fetch.track, fetch.start, fetch.end),
             ),
             parameters: fetch.parameters,
           })

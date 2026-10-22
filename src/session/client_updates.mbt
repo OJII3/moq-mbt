@@ -245,6 +245,20 @@ pub fn ClientSession::accept_subscription_update(
     None => self.largest_published_locations.get(publisher_request_id)
   }
   let mut response_parameters = response.parameters
+  let was_forwarding = subscription_forward(subscription.parameters)
+  let forwarding = subscription_forward(pending.effective_parameters)
+  if !was_forwarding &&
+    forwarding &&
+    subscription_largest_location(response.parameters) is None {
+    match response_largest {
+      Some((group_id, object_id)) =>
+        response_parameters = merge_subscription_parameters(
+          response_parameters,
+          [{ kind: 0x09UL, value: @protocol.Location(group_id, object_id), }],
+        )
+      None => ()
+    }
+  }
   if filter_was_updated &&
     subscription_has_relative_filter(pending.effective_parameters) &&
     subscription_largest_location(response.parameters) is None {
@@ -269,10 +283,15 @@ pub fn ClientSession::accept_subscription_update(
     Ok(value) => value
     Err(error) => return Err(Encoding(error))
   }
-  let was_forwarding = subscription_forward(subscription.parameters)
-  let forwarding = subscription_forward(pending.effective_parameters)
   ignore(subscription.pending_updates.remove(0))
   subscription.parameters = pending.effective_parameters
+  if !was_forwarding && forwarding {
+    subscription.joining_location = match response_largest {
+      Some((group_id, object_id)) =>
+        Some({ group: group_id, object: object_id, })
+      None => None
+    }
+  }
   if filter_was_updated {
     subscription.resolved_filter = resolve_subscription_filter(
       subscription.parameters,
@@ -300,7 +319,8 @@ pub fn ClientSession::accept_subscription_update(
             subscription.parameters,
           ),
         ),
-      ],
+      ] +
+      self.drain_joining_fetches(subscription.request_id, stream),
     ),
   )
 }
@@ -347,7 +367,11 @@ pub fn ClientSession::reject_subscription_update(
     reason: b"",
   }
   subscription.pending_failure = Some(failure)
-  let actions : Array[ClientSessionAction] = [Send(stream, error_bytes, false)]
+  let actions : Array[ClientSessionAction] = [Send(stream, error_bytes, false)] +
+    self.fail_pending_joining_fetches(
+      subscription.request_id,
+      request_error_invalid_joining_request_id,
+    )
   for action in self.stop_subscription_object_sends(stream, 0UL) {
     actions.push(action)
   }
