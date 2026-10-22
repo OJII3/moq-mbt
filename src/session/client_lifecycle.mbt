@@ -73,22 +73,7 @@ fn ClientSession::note_send_complete(
 
 ///|
 fn ClientSession::has_active_requests(self : ClientSession) -> Bool {
-  for (_, request) in self.requests {
-    if request.has_active_work() {
-      return true
-    }
-  }
-  for (_, inbound) in self.inbound_subscriptions {
-    if inbound.state != Ended {
-      return true
-    }
-  }
-  for (_, fetch) in self.fetches {
-    if fetch.state != FetchTerminal {
-      return true
-    }
-  }
-  if self.has_active_namespace_work() {
+  if self.has_active_request_family_work() {
     return true
   }
   self.incoming_object_streams.length() > 0 ||
@@ -378,18 +363,7 @@ fn ClientSession::receive_request_goaway(
   if message.timeout_ms > 0UL {
     self.request_goaway_deadlines[stream] = self.now_ms + message.timeout_ms
   }
-  let request_id = match self.request_streams.get(stream) {
-    Some(value) => value
-    None =>
-      match self.namespace_request_streams.get(stream) {
-        Some(value) => value
-        None =>
-          match self.inbound_subscriptions.get(stream) {
-            Some(inbound) => inbound.request_id
-            None => self.fetch_streams.get(stream).unwrap_or(0UL)
-          }
-      }
-  }
+  let request_id = self.request_stream_id(stream)
   [
     Notify(
       RequestGoAwayReceived(request_id, stream, message.uri, message.timeout_ms),
