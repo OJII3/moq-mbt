@@ -25,6 +25,10 @@ jobs:
             curl -fsSL "https://raw.githubusercontent.com/microsoft/msquic/v2.5.12/src/inc/$header" -o "$RUNNER_TEMP/$header"
           done
           sudo install -m 0644 "$RUNNER_TEMP"/*.h /usr/local/include/
+          msquic_lib="$(ldconfig -p | awk '$1 == "libmsquic.so.2" { print $NF; exit }')"
+          test -n "$msquic_lib"
+          sudo ln -s "$msquic_lib" /usr/local/lib/libmsquic.so
+          sudo ldconfig
 
       - name: Install MoonBit
         shell: bash
