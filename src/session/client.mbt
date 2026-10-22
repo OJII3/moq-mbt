@@ -62,6 +62,7 @@ pub(all) enum ClientSessionNotice {
     Array[@protocol.MessageParameter]
   )
   FetchAccepted(UInt64, Int64)
+  FetchResponseAccepted(UInt64, Int64, @protocol.FetchOkMessage)
   FetchRejected(UInt64, Int64, @protocol.RequestErrorMessage)
   FetchObjectReceived(UInt64, @protocol.FetchObject)
   FetchRangeEnded(UInt64, @protocol.FetchRangeEnd)

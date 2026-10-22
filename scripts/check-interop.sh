@@ -179,6 +179,24 @@ run_interop() {
     return 1
   fi
 
+  if [[ "$relay" == moq5 ]]; then
+    if ! moon run --release --target native src/cmd/track_probe -- \
+      fetch 127.0.0.1 4443 /moq interop multi-object 0 2 --insecure \
+      >"$prefix-fetch.log" 2>&1; then
+      cat "$prefix-publisher.log" "$prefix-fetch.log" "$prefix-relay.log" >&2
+      return 1
+    fi
+    local fetched_objects
+    fetched_objects=$(awk '/^Received FETCH Object / { count++ } END { print count+0 }' "$prefix-fetch.log")
+    if [[ "$fetched_objects" != "$expected_objects" ]] || \
+      ! grep -Fq 'Verified 6 FETCH Objects; FETCH data FIN received' "$prefix-fetch.log"; then
+      cat "$prefix-publisher.log" "$prefix-fetch.log" "$prefix-relay.log" >&2
+      echo "moq5 standalone FETCH did not verify all $expected_objects retained Objects" >&2
+      return 1
+    fi
+    cat "$prefix-fetch.log"
+  fi
+
   cat "$prefix-publisher.log" "$prefix-subscriber.log"
   stop_relay
 }
@@ -211,6 +229,63 @@ run_lifecycle_interop() {
   stop_relay
 }
 
+run_namespace_interop() {
+  local prefix="$task_tmp/moq5-namespace"
+  echo "Checking Draft 18 Namespace interoperability with moq5"
+  start_relay moq5
+  if ! moon run --release --target native src/cmd/track_probe -- \
+    namespace 127.0.0.1 4443 /moq --insecure >"$prefix.log" 2>&1; then
+    cat "$prefix.log" "$task_tmp/moq5-relay.log" >&2
+    return 1
+  fi
+  for expected in \
+    'SUBSCRIBE_NAMESPACE established' \
+    'PUBLISH_NAMESPACE accepted' \
+    'NAMESPACE discovered with matching prefix and suffix' \
+    'Namespace publication cancelled' \
+    'NAMESPACE_DONE received for withdrawn namespace' \
+    'Namespace publication request stream shutdown completed' \
+    'Namespace subscription cancelled' \
+    'moq5 closed the Namespace subscriber session after cancellation' \
+    'Namespace subscriber session closed after subscription cancellation' \
+    'moq5 closed the subscriber session, so independent track continuation is covered by Sans-I/O tests' \
+    'Verified Namespace discovery, withdrawal, and subscription cancellation'; do
+    if ! grep -Fq "$expected" "$prefix.log"; then
+      cat "$prefix.log" "$task_tmp/moq5-relay.log" >&2
+      echo "moq5 Namespace probe did not report: $expected" >&2
+      return 1
+    fi
+  done
+  cat "$prefix.log"
+  stop_relay
+}
+
+run_joining_fetch_interop() {
+  local prefix="$task_tmp/moq5-joining-fetch"
+  echo "Checking Draft 18 joining FETCH interoperability with moq5"
+  start_relay moq5
+  if ! moon run --release --target native src/cmd/track_probe -- \
+    joining-fetch 127.0.0.1 4443 /moq --insecure >"$prefix.log" 2>&1; then
+    cat "$prefix.log" "$task_tmp/moq5-relay.log" >&2
+    return 1
+  fi
+  for expected in \
+    'Joining FETCH live subscription accepted' \
+    'Joining FETCH request sent' \
+    'moq5 rejected Joining FETCH with INVALID_RANGE (0x10)' \
+    'Joining FETCH overlap remains covered by Sans-I/O; moq5 rejected this relay scenario before forwarding'; do
+    if ! grep -Fq "$expected" "$prefix.log"; then
+      cat "$prefix.log" "$task_tmp/moq5-relay.log" >&2
+      echo "moq5 joining FETCH probe did not report: $expected" >&2
+      return 1
+    fi
+  done
+  cat "$prefix.log"
+  stop_relay
+}
+
 run_interop moq5
 run_lifecycle_interop
+run_namespace_interop
+run_joining_fetch_interop
 run_interop moq-rs

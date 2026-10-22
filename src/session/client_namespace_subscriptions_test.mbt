@@ -607,6 +607,80 @@ test "namespace prefix updates reject overlap and rejection leaves other subscri
 }
 
 ///|
+test "canceling namespace discovery leaves an independent track subscription active" {
+  let client = client_session_ready()
+  let prefix = test_namespace([b"room"])
+  let (namespace_id, _) = client.subscribe_namespace(prefix).unwrap()
+  let track : @protocol.TrackName = {
+    namespace_fields: [b"independent"],
+    name: b"live",
+  }
+  let (track_id, _) = client.subscribe_track(track).unwrap()
+  ignore(
+    client.receive(@session.StreamOpened(@session.Request(namespace_id), 30)),
+  )
+  ignore(client.receive(@session.StreamOpened(@session.Request(track_id), 32)))
+  ignore(
+    client.receive(
+      @session.StreamData(
+        30,
+        @protocol.encode_request_ok_for(
+          { parameters: [], properties: b"", },
+          @protocol.Namespace,
+        ).unwrap(),
+      ),
+    ),
+  )
+  ignore(
+    client.receive(
+      @session.StreamData(
+        30,
+        @protocol.encode_namespace({ track_namespace: test_namespace([]), }).unwrap(),
+      ),
+    ),
+  )
+  ignore(
+    client.receive(
+      @session.StreamData(
+        32,
+        @protocol.encode_subscribe_ok({
+          track_alias: 10UL,
+          parameters: [],
+          properties: b"",
+        }).unwrap(),
+      ),
+    ),
+  )
+  assert_true(
+    client
+    .cancel_request(namespace_id)
+    .unwrap()
+    .contains(
+      @session.Notify(@session.NamespaceSubscriptionEnded(namespace_id, 30)),
+    ),
+  )
+  let header = client_subgroup_header(10UL, 0UL)
+  let frame = client_object(0UL, b"still-live")
+  ignore(
+    client.receive(@session.InboundStreamStarted(60, @session.Unidirectional)),
+  )
+  ignore(
+    client.receive(
+      @session.StreamData(60, @protocol.encode_subgroup_header(header)),
+    ),
+  )
+  assert_eq(
+    client.receive(
+      @session.StreamData(
+        60,
+        @protocol.encode_subgroup_frame(header, None, frame).unwrap(),
+      ),
+    ),
+    Ok([@session.Notify(@session.ObjectReceived(track_id, header, [frame]))]),
+  )
+}
+
+///|
 test "canceling a namespace subscription during prefix update ignores a late response" {
   let client = client_session_ready()
   let (request_id, _) = client

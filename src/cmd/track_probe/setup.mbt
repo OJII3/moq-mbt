@@ -4,6 +4,11 @@ fn probe_payload(group_id : UInt64, object_id : UInt64) -> Bytes {
 }
 
 ///|
+fn probe_properties() -> Bytes {
+  b"\x02\x2a"
+}
+
+///|
 fn client_stream_direction(
   direction : @transport.StreamDirection,
 ) -> @session.ClientStreamDirection {

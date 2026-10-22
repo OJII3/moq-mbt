@@ -1,6 +1,6 @@
 # Draft 18 相互接続
 
-Native QUIC 上で Draft 18 の SETUP、複数 Group/Object の publish/subscribe、`PUBLISH_DONE`、REQUEST_UPDATE、購読解除、Object Datagram を確認する。各 Group の Subgroup stream では Object ID、payload、Group 終端、stream 数を検証する。moq5 の lifecycle probe は2つの track を購読し、track A の `FORWARD=0/1` 更新応答、track A を再開後の Object 配送、track A の解除、解除後も続く track B の配送を確認する。FORWARD 停止中のデータ抑止や更新失敗後の `PUBLISH_DONE(UPDATE_FAILED)` は Sans-I/O テストで決定的に確認する。
+Native QUIC 上で Draft 18 の SETUP、複数 Group/Object の publish/subscribe、`PUBLISH_DONE`、REQUEST_UPDATE、購読解除、Standalone FETCH、Object Datagram を確認する。各 Group の Subgroup stream では Object ID、payload、Properties、Group 終端、stream 数を検証する。Standalone FETCH では retained Object の範囲・順序・payload・Properties、FETCH_OK end location、end-of-track flag と FETCH data stream の FIN を確認する。Namespace probe は購読・公開・発見・撤回・取消を確認する。固定 moq5 は Namespace 購読取消後に subscriber session を error code 3 で閉じるため、取消後の独立 track 継続は Sans-I/O で確認し、実ネットワーク項目には含めない。Draft 18 Namespace prefix 更新も固定 moq5 ではサポートされず、Sans-I/O で検証する。Joining FETCH probe は LargestObject filter 付き SUBSCRIBE 後に相対 Joining FETCH を送り、固定 moq5 が `INVALID_RANGE` で拒否することを記録する。この relay 実行では FETCH から live への切替を検証できないため、Joining FETCH の範囲解決と重複しない受信は Sans-I/O で確認する。moq5 の lifecycle probe は2つの track を購読し、track A の `FORWARD=0/1` 更新応答、track A を再開後の Object 配送、track A の解除、解除後も続く track B の配送を確認する。FORWARD 停止中のデータ抑止や更新失敗後の `PUBLISH_DONE(UPDATE_FAILED)` は Sans-I/O テストで決定的に確認する。
 
 Datagram probe は stream Object と同じ track 上で Object Datagram を送受信し、Alias、payload、通常 Object の Group 終端、`EndOfGroup`、`EndOfTrack` status を検証する。通常 payload のサンプルを少なくとも1つ受信したことを確認する。Datagram の追加マーカーは受信したものを検証するが、全件受信や順序は成功条件にしない。Datagram は Subgroup stream と混在させ、`PUBLISH_DONE` の stream 数には加えない。
 
@@ -28,6 +28,13 @@ Track A subscription cancelled
 Received track B group 1 after track A cancellation
 Verified track B PUBLISH_DONE (2 object streams)
 Lifecycle and independent-track scenario passed
+~~~
+
+Standalone FETCH probe は retained log から START_GROUP〜END_GROUP（両端を含む）の全 Object を取得し、順序、payload、Properties、FETCH_OK end location、data stream FIN を検証する。事前に同じ relay へ `interop/multi-object` track の group 0〜2 を publish しておく。
+
+~~~sh
+nix develop -c moon run --release --target native src/cmd/track_probe -- \
+  fetch 127.0.0.1 4443 /moq interop multi-object 0 2 --insecure
 ~~~
 
 Datagram smoke を個別に実行するには、moq5-relay が 127.0.0.1:4443 で待ち受けている状態で次を実行する。

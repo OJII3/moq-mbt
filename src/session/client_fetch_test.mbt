@@ -56,6 +56,7 @@ test "Standalone FETCH accepts data before its response and finishes after FIN" 
     ),
     Ok([
       @session.Notify(@session.FetchAccepted(request_id, 20)),
+      @session.Notify(@session.FetchResponseAccepted(request_id, 20, response)),
       @session.Notify(@session.FetchFinished(request_id)),
     ]),
   )
@@ -194,6 +195,32 @@ test "local Joining FETCH uses the referenced SUBSCRIBE request ID" {
   assert_eq(
     client.fetch_absolute(0UL, 13UL, []),
     Err(@session.InvalidFetchRange),
+  )
+}
+
+///|
+test "SUBSCRIBE sends its initial filter parameters" {
+  let client = client_session_ready()
+  let track = client_track(b"live")
+  let parameters : Array[@protocol.MessageParameter] = [
+    { kind: 0x21UL, value: @protocol.Filter(@protocol.LargestObject), },
+  ]
+  let (request_id, actions) = client
+    .subscribe_track_with_parameters(track, parameters)
+    .unwrap()
+  assert_eq(request_id, 0UL)
+  assert_eq(actions, [
+    @session.OpenStream(@session.Bidirectional, @session.Request(0UL)),
+  ])
+  assert_eq(
+    client.receive(@session.StreamOpened(@session.Request(0UL), 20)),
+    Ok([
+      @session.Send(
+        20,
+        @protocol.encode_subscribe({ request_id, track, parameters, }).unwrap(),
+        false,
+      ),
+    ]),
   )
 }
 
@@ -750,6 +777,7 @@ test "empty successful FETCH requires an empty data stream and request errors fa
     ),
     Ok([
       @session.Notify(@session.FetchAccepted(request_id, 20)),
+      @session.Notify(@session.FetchResponseAccepted(request_id, 20, response)),
       @session.Notify(@session.FetchEndOfTrack(request_id)),
       @session.Notify(@session.FetchFinished(request_id)),
     ]),

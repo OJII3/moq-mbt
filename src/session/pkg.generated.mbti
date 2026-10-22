@@ -64,6 +64,7 @@ pub fn ClientSession::start(Self) -> Result[Array[ClientSessionAction], ClientSe
 pub fn ClientSession::state(Self) -> ClientSessionState
 pub fn ClientSession::subscribe_namespace(Self, @protocol.TrackNamespace) -> Result[(UInt64, Array[ClientSessionAction]), ClientSessionError]
 pub fn ClientSession::subscribe_track(Self, @protocol.TrackName) -> Result[(UInt64, Array[ClientSessionAction]), ClientSessionError]
+pub fn ClientSession::subscribe_track_with_parameters(Self, @protocol.TrackName, Array[@protocol.MessageParameter]) -> Result[(UInt64, Array[ClientSessionAction]), ClientSessionError]
 pub fn ClientSession::update_fetch(Self, UInt64, Array[@protocol.MessageParameter]) -> Result[(UInt64, Array[ClientSessionAction]), ClientSessionError]
 pub fn ClientSession::update_namespace_subscription(Self, UInt64, @protocol.TrackNamespace) -> Result[(UInt64, Array[ClientSessionAction]), ClientSessionError]
 pub fn ClientSession::update_published_namespace(Self, UInt64, Array[@protocol.MessageParameter]) -> Result[(UInt64, Array[ClientSessionAction]), ClientSessionError]
@@ -148,6 +149,7 @@ pub(all) enum ClientSessionNotice {
   SubscriptionRequested(UInt64, Int64, @protocol.TrackName)
   FetchRequested(UInt64, Int64, @protocol.TrackName, @protocol.FetchLocation, @protocol.FetchLocation, Array[@protocol.MessageParameter])
   FetchAccepted(UInt64, Int64)
+  FetchResponseAccepted(UInt64, Int64, @protocol.FetchOkMessage)
   FetchRejected(UInt64, Int64, @protocol.RequestErrorMessage)
   FetchObjectReceived(UInt64, @protocol.FetchObject)
   FetchRangeEnded(UInt64, @protocol.FetchRangeEnd)
