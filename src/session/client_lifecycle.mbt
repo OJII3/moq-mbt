@@ -83,6 +83,11 @@ fn ClientSession::has_active_requests(self : ClientSession) -> Bool {
       return true
     }
   }
+  for (_, request) in self.namespace_requests {
+    if request.state != NamespaceTerminal {
+      return true
+    }
+  }
   self.incoming_object_streams.length() > 0 ||
   self.ignored_object_streams.length() > 0 ||
   self.pending_object_streams.length() > 0 ||
@@ -324,9 +329,13 @@ fn ClientSession::receive_request_goaway(
   let request_id = match self.request_streams.get(stream) {
     Some(value) => value
     None =>
-      match self.inbound_subscriptions.get(stream) {
-        Some(inbound) => inbound.request_id
-        None => 0UL
+      match self.namespace_request_streams.get(stream) {
+        Some(value) => value
+        None =>
+          match self.inbound_subscriptions.get(stream) {
+            Some(inbound) => inbound.request_id
+            None => 0UL
+          }
       }
   }
   [
