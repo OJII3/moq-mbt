@@ -21,14 +21,15 @@ MoQ (Media over QUIC Transport) implementation in [MoonBit](https://www.moonbitl
 
 This project is currently under early and active development. The current
 Draft 18 implementation supports SETUP, multi-track requests, subscription
-updates and cancellation, GOAWAY draining, reliable Subgroup streams, and
+updates and cancellation, GOAWAY draining, Namespace publication and
+subscription, Standalone and Joining FETCH, reliable Subgroup streams, and
 Object Datagrams:
 
 - `protocol`: vi64 integers, SETUP and request framing, Subgroup objects.
-- `session`: incremental handshake, multiple track requests, subscription lifecycle, and multiple Object streams.
+- `session`: incremental handshake, track and Namespace request lifecycles, Standalone and Joining FETCH, and multiple Object streams.
 - `transport`: native MsQuic client using the `moqt-18` ALPN.
 - `cmd/setup_probe`: a client that exchanges SETUP with an external relay.
-- `cmd/track_probe`: publisher and subscriber probes for configurable Object counts across Groups.
+- `cmd/track_probe`: publisher, subscriber, lifecycle, Namespace, Standalone FETCH, and Joining FETCH probes for Draft 18 relays.
 
 The JavaScript WebTransport adapter is not implemented yet.
 
@@ -42,10 +43,16 @@ nix develop -c bash scripts/check-interop.sh
 ```
 
 The check starts pinned moq5 and moq-rs relays on `127.0.0.1:4443`. It verifies
-SETUP, multi-Object/Group delivery, `PUBLISH_DONE`, moq5 subscription updates,
-unsubscription with an independent track continuing, and Object Datagram
-fields. Refusal and relay-originated GOAWAY cases use deterministic Sans-I/O
-session tests because the relay CLI cannot trigger them.
+SETUP, multi-Object/Group delivery, `PUBLISH_DONE`, moq5 standalone FETCH of
+retained Objects, Namespace discovery and withdrawal, subscription updates,
+unsubscription with an independent track continuing, Joining FETCH availability,
+and Object Datagram fields. Refusal and relay-originated
+GOAWAY cases use deterministic Sans-I/O session tests because the relay CLI
+cannot trigger them. The pinned moq5 revision closes the Namespace subscriber
+session after Namespace subscription cancellation, so independent track
+continuation is verified in Sans-I/O rather than claimed as relay behavior.
+The pinned relay rejects the current Joining FETCH probe with `INVALID_RANGE`;
+joining range and no-overlap behavior remain covered by Sans-I/O tests.
 See [interop notes](docs/interop.md) for details and connecting to another relay.
 
 ## References

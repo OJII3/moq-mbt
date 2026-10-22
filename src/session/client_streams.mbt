@@ -213,7 +213,7 @@ fn ClientSession::stream_opened(
           @protocol.encode_subscribe({
             request_id,
             track: request.track,
-            parameters: [],
+            parameters: request.parameters,
           })
       }
       let bytes = match encoded {
@@ -602,15 +602,26 @@ fn ClientSession::send_complete(
           }
         }
         None =>
-          if self.namespace_request_streams.get(stream) is Some(request_id) &&
-            self.namespace_requests.get(request_id).unwrap().lifetime.cancelled {
-            Ok([])
-          } else {
-            match self.request_streams.get(stream) {
-              Some(request_id) if self.requests.get(request_id).unwrap().lifetime.cancelled =>
-                Ok([])
-              _ => Ok([Notify(SendFinished(stream, canceled))])
-            }
+          match self.namespace_request_streams.get(stream) {
+            Some(request_id) =>
+              match self.namespace_requests.get(request_id) {
+                Some(request) if request.lifetime.cancelled => Ok([])
+                _ => Ok([Notify(SendFinished(stream, canceled))])
+              }
+            None =>
+              match self.namespace_subscription_streams.get(stream) {
+                Some(request_id) =>
+                  match self.namespace_subscriptions.get(request_id) {
+                    Some(request) if request.lifetime.cancelled => Ok([])
+                    _ => Ok([Notify(SendFinished(stream, canceled))])
+                  }
+                None =>
+                  match self.request_streams.get(stream) {
+                    Some(request_id) if self.requests.get(request_id).unwrap().lifetime.cancelled =>
+                      Ok([])
+                    _ => Ok([Notify(SendFinished(stream, canceled))])
+                  }
+              }
           }
       }
   }

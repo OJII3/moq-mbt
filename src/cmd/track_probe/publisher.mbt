@@ -34,7 +34,7 @@ fn start_probe_group(
     publisher_priority: None,
     end_of_group: true,
     first_object: true,
-    has_properties: false,
+    has_properties: true,
   }
   let (more, opened) = drive_session_result(
     client,
@@ -58,7 +58,7 @@ fn start_probe_group(
     let frame : @protocol.SubgroupFrame = {
       object_id: object_index.to_uint64(),
       status: @protocol.Normal,
-      properties: b"",
+      properties: probe_properties(),
       payload: probe_payload(group_id, object_index.to_uint64()),
     }
     let (object_notices, _) = drive_session_result(

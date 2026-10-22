@@ -52,6 +52,11 @@ fn handle_subscriber_notices(
             )
           }
           let expected_payload = probe_payload(header.group_id, frame.object_id)
+          guard frame.properties == probe_properties() else {
+            fail(
+              "properties mismatch for group \{header.group_id}, object \{frame.object_id}",
+            )
+          }
           guard frame.payload == expected_payload else {
             fail(
               "payload mismatch for group \{header.group_id}, object \{frame.object_id}",

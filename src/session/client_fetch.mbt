@@ -984,6 +984,7 @@ fn ClientSession::receive_fetch_response(
           fetch.state = FetchAccepted
           let values : Array[ClientSessionAction] = [
             Notify(FetchAccepted(request_id, stream)),
+            Notify(FetchResponseAccepted(request_id, stream, response)),
           ]
           if fetch.end_of_track {
             values.push(Notify(FetchEndOfTrack(request_id)))

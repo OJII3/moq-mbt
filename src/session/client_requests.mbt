@@ -667,6 +667,16 @@ pub fn ClientSession::subscribe_track(
   self : ClientSession,
   track : @protocol.TrackName,
 ) -> Result[(UInt64, Array[ClientSessionAction]), ClientSessionError] {
+  self.subscribe_track_with_parameters(track, [])
+}
+
+///|
+/// Start a local SUBSCRIBE request with initial parameters.
+pub fn ClientSession::subscribe_track_with_parameters(
+  self : ClientSession,
+  track : @protocol.TrackName,
+  parameters : Array[@protocol.MessageParameter],
+) -> Result[(UInt64, Array[ClientSessionAction]), ClientSessionError] {
   match self.ensure_new_request_allowed() {
     Ok(_) => ()
     Err(error) => return Err(error)
@@ -689,7 +699,7 @@ pub fn ClientSession::subscribe_track(
       active_streams: 0UL,
       pending_done: None,
     },
-    parameters: [],
+    parameters,
     joining_location: None,
     pending_local_update: None,
     update_failed: false,
