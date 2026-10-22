@@ -351,10 +351,8 @@ pub fn ClientSession::receive(
       if self.inbound_stream_kinds.get(stream) is Some(_) ||
         self.inbound_unclassified_buffers.get(stream) is Some(_) ||
         self.inbound_buffers.get(stream) is Some(_) ||
-        self.inbound_subscriptions.get(stream) is Some(_) ||
-        self.fetch_streams.get(stream) is Some(_) ||
         self.inbound_fetch_streams.get(stream) is Some(_) ||
-        self.request_streams.get(stream) is Some(_) ||
+        self.request_stream_exists(stream) ||
         self.incoming_object_streams.get(stream) is Some(_) {
         return Err(DuplicateStream)
       }
@@ -469,9 +467,7 @@ fn ClientSession::protocol_error_actions(
       } else if self.namespace_subscription_streams.get(stream) is Some(_) ||
         self.inbound_namespace_subscriptions.get(stream) is Some(_) {
         Some(self.end_session(Local(code, b""), Some(code), b""))
-      } else if self.request_streams.get(stream) is Some(_) ||
-        self.inbound_subscriptions.get(stream) is Some(_) ||
-        self.namespace_request_streams.get(stream) is Some(_) {
+      } else if self.request_stream_requires_cancel(stream) {
         match self.namespace_request_streams.get(stream) {
           Some(request_id) if self.namespace_requests.get(request_id).unwrap().locally_initiated =>
             Some(self.end_session(Local(code, b""), Some(code), b""))

@@ -307,26 +307,9 @@ fn ClientSession::stream_finished(
       Ok(actions)
     }
     None => {
-      match self.finish_namespace_stream(stream) {
+      match self.finish_request_stream(stream) {
         Some(result) => return result
         None => ()
-      }
-      if self.inbound_subscriptions.get(stream) is Some(_) ||
-        self.request_streams.get(stream) is Some(_) {
-        match self.inbound_subscriptions.get(stream) {
-          Some(inbound) => ignore(inbound.lifetime.transition(PeerFin, true))
-          None =>
-            match self.request_streams.get(stream) {
-              Some(request_id) => {
-                let request = self.requests.get(request_id).unwrap()
-                ignore(request.lifetime.transition(PeerFin, true))
-                request.response_buffer = b""
-              }
-              None => ()
-            }
-        }
-        self.inbound_buffers.remove(stream)
-        return Ok([])
       }
       if self.inbound_unclassified_buffers.get(stream) is Some(_) {
         self.inbound_unclassified_buffers.remove(stream)
@@ -389,14 +372,9 @@ fn ClientSession::stream_reset(
       Ok(actions)
     }
     None => {
-      match self.reset_namespace_stream(stream, error_code) {
+      match self.reset_request_stream(stream, error_code) {
         Some(result) => return result
         None => ()
-      }
-      if self.inbound_subscriptions.get(stream) is Some(_) ||
-        self.request_streams.get(stream) is Some(_) ||
-        self.fetch_streams.get(stream) is Some(_) {
-        return Ok(self.end_request_stream(stream, PeerReset(error_code)))
       }
       self.inbound_buffers.remove(stream)
       self.incoming_object_streams.remove(stream)
