@@ -304,10 +304,7 @@ fn ClientSession::receive_subgroup(
     Ok([])
   } else {
     let request = self.requests.get(request_id).unwrap()
-    if request.kind == Subscribing &&
-      request.is_accepted() &&
-      !request.update_failed &&
-      subscription_forward(request.parameters) {
+    if request.can_receive_object_data() {
       Ok([Notify(ObjectReceived(request_id, header, frames))])
     } else {
       Ok([])
@@ -341,7 +338,7 @@ fn ClientSession::receive_object_datagram(
     None => return Ok([])
   }
   let request = self.requests.get(request_id).unwrap()
-  if !request.can_receive_object_datagram() {
+  if !request.can_receive_object_data() {
     return Ok([])
   }
   Ok([Notify(ObjectDatagramReceived(request_id, datagram))])

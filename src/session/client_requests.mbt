@@ -72,10 +72,12 @@ fn ClientRequest::has_active_work(self : ClientRequest) -> Bool {
 }
 
 ///|
-fn ClientRequest::can_receive_object_datagram(self : ClientRequest) -> Bool {
+fn ClientRequest::can_receive_object_data(self : ClientRequest) -> Bool {
   self.kind == Subscribing &&
-  self.is_accepted() &&
-  (!self.is_terminal() || self.object_drain.has_pending_done()) &&
+  (
+    self.is_accepted() ||
+    (self.is_terminal() && self.object_drain.has_pending_done())
+  ) &&
   !self.lifetime.cancelled &&
   !self.update_failed &&
   subscription_forward(self.parameters)
