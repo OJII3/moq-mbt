@@ -22,6 +22,181 @@ priv struct NamespaceRequest {
 }
 
 ///|
+fn ClientSession::receive_peer_namespace_publication(
+  self : ClientSession,
+  stream : Int64,
+  message : @protocol.NamespaceRequestMessage,
+) -> Result[Array[ClientSessionAction], ClientSessionError] {
+  if self.namespace_request_streams.get(stream) is Some(_) {
+    return Err(UnexpectedMessage)
+  }
+  if (message.request_id & 1UL) != 1UL {
+    return Err(InvalidRequestId)
+  }
+  if self.peer_request_ids.get(message.request_id) is Some(_) {
+    return Err(DuplicateRequestId)
+  }
+  self.peer_request_ids[message.request_id] = stream
+  self.note_peer_request_id(message.request_id)
+  if self.control_goaway_sent {
+    let error = match
+      @protocol.encode_request_error({
+        code: request_error_going_away,
+        retry_interval: 0UL,
+        reason: b"",
+        redirect: b"",
+      }) {
+      Ok(value) => value
+      Err(error) => return Err(Encoding(error))
+    }
+    return Ok([Send(stream, error, true)])
+  }
+  self.namespace_requests[message.request_id] = {
+    track_namespace: message.track_namespace,
+    parameters: message.parameters,
+    locally_initiated: false,
+    announced: true,
+    stream: Some(stream),
+    response_buffer: b"",
+    state: NamespacePending,
+    ignore_late_bytes: false,
+    lifetime: RequestLifetime::new(),
+    pending_updates: [],
+    pending_local_update_id: None,
+    pending_local_update_parameters: [],
+  }
+  self.namespace_request_streams[stream] = message.request_id
+  Ok([
+    Notify(
+      NamespacePublicationRequested(
+        message.request_id,
+        stream,
+        message.track_namespace,
+        message.parameters,
+      ),
+    ),
+  ])
+}
+
+///|
+fn ClientSession::ignore_late_namespace_peer_request(
+  self : ClientSession,
+  stream : Int64,
+) -> Bool {
+  match self.namespace_request_streams.get(stream) {
+    Some(request_id) => {
+      let request = self.namespace_requests.get(request_id).unwrap()
+      if request.lifetime.cancelled ||
+        request.lifetime.peer_send_closed ||
+        request.state == NamespaceTerminal {
+        return true
+      }
+    }
+    None => ()
+  }
+  match self.inbound_namespace_subscriptions.get(stream) {
+    Some(inbound) if inbound.lifetime.cancelled ||
+      inbound.lifetime.peer_send_closed ||
+      inbound.state == Ended => true
+    _ => false
+  }
+}
+
+///|
+fn ClientSession::namespace_stream_exists(
+  self : ClientSession,
+  stream : Int64,
+) -> Bool {
+  self.namespace_request_streams.get(stream) is Some(_) ||
+  self.namespace_subscription_streams.get(stream) is Some(_)
+}
+
+///|
+fn ClientSession::open_namespace_stream(
+  self : ClientSession,
+  request_id : UInt64,
+  stream : Int64,
+) -> Result[Array[ClientSessionAction], ClientSessionError]? {
+  match self.namespace_subscriptions.get(request_id) {
+    Some(request) if request.stream is None => {
+      request.stream = Some(stream)
+      self.namespace_subscription_streams[stream] = request_id
+      self.request_streams[stream] = request_id
+      if request.lifetime.cancelled {
+        return Some(Ok([AbortSend(stream, 1UL), StopReceiving(stream, 1UL)]))
+      }
+      let bytes = match
+        @protocol.encode_subscribe_namespace({
+          request_id,
+          track_namespace: request.prefix,
+          parameters: [],
+        }) {
+        Ok(value) => value
+        Err(error) => return Some(Err(Encoding(error)))
+      }
+      Some(Ok([Send(stream, bytes, false)]))
+    }
+    Some(_) => Some(Err(DuplicateStream))
+    None =>
+      match self.namespace_requests.get(request_id) {
+        Some(request) if request.stream is None => {
+          request.stream = Some(stream)
+          self.namespace_request_streams[stream] = request_id
+          if request.locally_initiated {
+            self.request_streams[stream] = request_id
+          }
+          if request.state == NamespaceTerminal {
+            if request.lifetime.cancelled {
+              let error_code = request.lifetime.cancel_error_code.unwrap()
+              return Some(
+                Ok(self.end_namespace_request(stream, Cancel(error_code))),
+              )
+            }
+            return Some(Ok([]))
+          }
+          let bytes = match
+            @protocol.encode_publish_namespace({
+              request_id,
+              track_namespace: request.track_namespace,
+              parameters: request.parameters,
+            }) {
+            Ok(value) => value
+            Err(error) => return Some(Err(Encoding(error)))
+          }
+          request.announced = true
+          Some(Ok([Send(stream, bytes, false)]))
+        }
+        Some(_) => Some(Err(DuplicateStream))
+        None => None
+      }
+  }
+}
+
+///|
+fn ClientSession::namespace_send_complete(
+  self : ClientSession,
+  stream : Int64,
+  canceled : Bool,
+) -> Array[ClientSessionAction]? {
+  match self.namespace_request_streams.get(stream) {
+    Some(request_id) =>
+      match self.namespace_requests.get(request_id) {
+        Some(request) if request.lifetime.cancelled => Some([])
+        _ => Some([Notify(SendFinished(stream, canceled))])
+      }
+    None =>
+      match self.namespace_subscription_streams.get(stream) {
+        Some(request_id) =>
+          match self.namespace_subscriptions.get(request_id) {
+            Some(request) if request.lifetime.cancelled => Some([])
+            _ => Some([Notify(SendFinished(stream, canceled))])
+          }
+        None => None
+      }
+  }
+}
+
+///|
 /// Advertise a local Track Namespace on a new bidirectional request stream.
 pub fn ClientSession::publish_namespace(
   self : ClientSession,
@@ -484,6 +659,114 @@ fn ClientSession::end_namespace_request(
         actions.push(Notify(NamespaceWithdrawn(request_id, stream)))
       } else {
         actions.push(Notify(NamespaceAcceptanceRevoked(request_id, stream)))
+      }
+    }
+  }
+  actions
+}
+
+///|
+fn ClientSession::finish_namespace_stream(
+  self : ClientSession,
+  stream : Int64,
+) -> Result[Array[ClientSessionAction], ClientSessionError]? {
+  match self.finish_namespace_subscription_stream(stream) {
+    Some(result) => return Some(result)
+    None => ()
+  }
+  match self.namespace_request_streams.get(stream) {
+    Some(request_id) => {
+      let request = self.namespace_requests.get(request_id).unwrap()
+      if (request.locally_initiated && request.state == NamespacePending) ||
+        !request.response_buffer.is_empty() ||
+        (
+          request.locally_initiated &&
+          request.pending_local_update_id is Some(_)
+        ) ||
+        !self.inbound_buffers.get(stream).unwrap_or(b"").is_empty() {
+        return Some(Err(UnexpectedMessage))
+      }
+      ignore(request.lifetime.transition(PeerFin, true))
+      request.response_buffer = b""
+      self.inbound_buffers.remove(stream)
+      Some(Ok([]))
+    }
+    None => None
+  }
+}
+
+///|
+fn ClientSession::reset_namespace_stream(
+  self : ClientSession,
+  stream : Int64,
+  error_code : UInt64,
+) -> Result[Array[ClientSessionAction], ClientSessionError]? {
+  match self.reset_namespace_subscription_stream(stream, error_code) {
+    Some(result) => return Some(result)
+    None => ()
+  }
+  if self.namespace_request_streams.get(stream) is Some(_) {
+    return Some(Ok(self.end_namespace_request(stream, PeerReset(error_code))))
+  }
+  None
+}
+
+///|
+fn ClientSession::has_active_namespace_work(self : ClientSession) -> Bool {
+  for (_, request) in self.namespace_requests {
+    if request.state != NamespaceTerminal {
+      return true
+    }
+  }
+  for (_, request) in self.namespace_subscriptions {
+    if !request.lifetime.cancelled && !request.lifetime.peer_send_closed {
+      return true
+    }
+  }
+  for (_, subscription) in self.inbound_namespace_subscriptions {
+    if subscription.state != Ended {
+      return true
+    }
+  }
+  false
+}
+
+///|
+fn ClientSession::reject_namespace_requests_for_goaway(
+  self : ClientSession,
+  request_id_boundary : UInt64,
+) -> Array[ClientSessionAction] {
+  let actions : Array[ClientSessionAction] = []
+  for (request_id, request) in self.namespace_requests {
+    if request.locally_initiated &&
+      request_id >= request_id_boundary &&
+      request.state == NamespacePending {
+      request.state = NamespaceTerminal
+      request.pending_local_update_id = None
+      request.pending_local_update_parameters = []
+      request.pending_updates = []
+      let effects = request.lifetime.transition(
+        Cancel(request_reset_going_away),
+        request.stream is Some(_),
+      )
+      request.lifetime.end_notified = true
+      if request.stream is Some(stream) {
+        if effects.abort_send {
+          actions.push(AbortSend(stream, request_reset_going_away))
+        }
+        if effects.stop_receiving {
+          actions.push(StopReceiving(stream, request_reset_going_away))
+        }
+        actions.push(
+          Notify(
+            NamespacePublicationRejected(request_id, stream, {
+              code: request_error_going_away,
+              retry_interval: 0UL,
+              reason: b"",
+              redirect: b"",
+            }),
+          ),
+        )
       }
     }
   }

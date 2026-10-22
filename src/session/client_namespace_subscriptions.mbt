@@ -127,6 +127,73 @@ fn ClientSession::receive_peer_namespace_subscription_update(
 }
 
 ///|
+fn ClientSession::receive_peer_namespace_subscription(
+  self : ClientSession,
+  stream : Int64,
+  message : @protocol.NamespaceRequestMessage,
+) -> Result[Array[ClientSessionAction], ClientSessionError] {
+  if self.namespace_subscription_streams.get(stream) is Some(_) ||
+    self.namespace_request_streams.get(stream) is Some(_) {
+    return Err(UnexpectedMessage)
+  }
+  if (message.request_id & 1UL) != 1UL {
+    return Err(InvalidRequestId)
+  }
+  if self.peer_request_ids.get(message.request_id) is Some(_) {
+    return Err(DuplicateRequestId)
+  }
+  self.peer_request_ids[message.request_id] = stream
+  self.note_peer_request_id(message.request_id)
+  let mut overlaps = false
+  for (_, existing) in self.inbound_namespace_subscriptions {
+    if existing.state == Active &&
+      namespace_prefixes_overlap(existing.prefix, message.track_namespace) {
+      overlaps = true
+    }
+  }
+  if self.control_goaway_sent || overlaps {
+    let error : @protocol.RequestErrorMessage = {
+      code: if overlaps {
+        0x30UL
+      } else {
+        request_error_going_away
+      },
+      retry_interval: 0UL,
+      reason: b"",
+      redirect: b"",
+    }
+    let bytes = match @protocol.encode_request_error(error) {
+      Ok(value) => value
+      Err(value) => return Err(Encoding(value))
+    }
+    let actions : Array[ClientSessionAction] = [Send(stream, bytes, true)]
+    if overlaps {
+      actions.push(
+        Notify(NamespaceSubscriptionRejected(message.request_id, stream, error)),
+      )
+    }
+    return Ok(actions)
+  }
+  self.inbound_namespace_subscriptions[stream] = {
+    request_id: message.request_id,
+    prefix: message.track_namespace,
+    active_namespaces: [],
+    pending_updates: [],
+    state: Pending,
+    lifetime: RequestLifetime::new(),
+  }
+  Ok([
+    Notify(
+      NamespaceSubscriptionRequested(
+        message.request_id,
+        stream,
+        message.track_namespace,
+      ),
+    ),
+  ])
+}
+
+///|
 /// Request ns discovery on a new bidirectional stream.
 pub fn ClientSession::subscribe_namespace(
   self : ClientSession,
@@ -880,4 +947,47 @@ fn ClientSession::end_inbound_namespace_subscription(
     actions.push(Notify(NamespaceSubscriptionEnded(inbound.request_id, stream)))
   }
   actions
+}
+
+///|
+fn ClientSession::finish_namespace_subscription_stream(
+  self : ClientSession,
+  stream : Int64,
+) -> Result[Array[ClientSessionAction], ClientSessionError]? {
+  if self.inbound_namespace_subscriptions.get(stream) is Some(_) {
+    return Some(Ok(self.end_inbound_namespace_subscription(stream, PeerFin)))
+  }
+  match self.namespace_subscription_streams.get(stream) {
+    Some(request_id) => {
+      let request = self.namespace_subscriptions.get(request_id).unwrap()
+      if request.rejected {
+        ignore(request.lifetime.transition(PeerFin, true))
+        return Some(Ok([]))
+      }
+      if !request.established {
+        return Some(Err(UnexpectedMessage))
+      }
+      Some(Ok(self.end_namespace_subscription(stream, PeerFin)))
+    }
+    None => None
+  }
+}
+
+///|
+fn ClientSession::reset_namespace_subscription_stream(
+  self : ClientSession,
+  stream : Int64,
+  error_code : UInt64,
+) -> Result[Array[ClientSessionAction], ClientSessionError]? {
+  if self.inbound_namespace_subscriptions.get(stream) is Some(_) {
+    return Some(
+      Ok(self.end_inbound_namespace_subscription(stream, PeerReset(error_code))),
+    )
+  }
+  if self.namespace_subscription_streams.get(stream) is Some(_) {
+    return Some(
+      Ok(self.end_namespace_subscription(stream, PeerReset(error_code))),
+    )
+  }
+  None
 }

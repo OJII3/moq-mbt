@@ -12,22 +12,8 @@ fn ClientSession::receive_peer_request(
       inbound.lifetime.peer_send_closed => return Ok([])
     _ => ()
   }
-  match self.namespace_request_streams.get(stream) {
-    Some(request_id) => {
-      let request = self.namespace_requests.get(request_id).unwrap()
-      if request.lifetime.cancelled ||
-        request.lifetime.peer_send_closed ||
-        request.state == NamespaceTerminal {
-        return Ok([])
-      }
-    }
-    None => ()
-  }
-  match self.inbound_namespace_subscriptions.get(stream) {
-    Some(inbound) if inbound.lifetime.cancelled ||
-      inbound.lifetime.peer_send_closed ||
-      inbound.state == Ended => return Ok([])
-    _ => ()
+  if self.ignore_late_namespace_peer_request(stream) {
+    return Ok([])
   }
   let buffer = match self.inbound_buffers.get(stream) {
     Some(value) => value
@@ -146,77 +132,14 @@ fn ClientSession::receive_peer_request(
                 }
             }
           }
-          (None, @protocol.SubscribeNamespace(request)) => {
-            if self.namespace_subscription_streams.get(stream) is Some(_) ||
-              self.namespace_request_streams.get(stream) is Some(_) {
-              return Err(UnexpectedMessage)
+          (None, @protocol.SubscribeNamespace(request)) =>
+            match self.receive_peer_namespace_subscription(stream, request) {
+              Ok(values) =>
+                for action in values {
+                  actions.push(action)
+                }
+              Err(error) => return Err(error)
             }
-            if (request.request_id & 1UL) != 1UL {
-              return Err(InvalidRequestId)
-            }
-            if self.peer_request_ids.get(request.request_id) is Some(_) {
-              return Err(DuplicateRequestId)
-            }
-            self.peer_request_ids[request.request_id] = stream
-            self.note_peer_request_id(request.request_id)
-            let mut overlaps = false
-            for (_, existing) in self.inbound_namespace_subscriptions {
-              if existing.state == Active &&
-                namespace_prefixes_overlap(
-                  existing.prefix,
-                  request.track_namespace,
-                ) {
-                overlaps = true
-              }
-            }
-            if self.control_goaway_sent || overlaps {
-              let error = match
-                @protocol.encode_request_error({
-                  code: if overlaps {
-                    0x30UL
-                  } else {
-                    request_error_going_away
-                  },
-                  retry_interval: 0UL,
-                  reason: b"",
-                  redirect: b"",
-                }) {
-                Ok(value) => value
-                Err(error) => return Err(Encoding(error))
-              }
-              actions.push(Send(stream, error, true))
-              if overlaps {
-                actions.push(
-                  Notify(
-                    NamespaceSubscriptionRejected(request.request_id, stream, {
-                      code: 0x30UL,
-                      retry_interval: 0UL,
-                      reason: b"",
-                      redirect: b"",
-                    }),
-                  ),
-                )
-              }
-            } else {
-              self.inbound_namespace_subscriptions[stream] = {
-                request_id: request.request_id,
-                prefix: request.track_namespace,
-                active_namespaces: [],
-                pending_updates: [],
-                state: Pending,
-                lifetime: RequestLifetime::new(),
-              }
-              actions.push(
-                Notify(
-                  NamespaceSubscriptionRequested(
-                    request.request_id,
-                    stream,
-                    request.track_namespace,
-                  ),
-                ),
-              )
-            }
-          }
           (None, @protocol.Subscribe(request)) => {
             if (request.request_id & 1UL) != 1UL {
               return Err(InvalidRequestId)
@@ -262,59 +185,14 @@ fn ClientSession::receive_peer_request(
               )
             }
           }
-          (None, @protocol.PublishNamespace(request)) => {
-            if self.namespace_request_streams.get(stream) is Some(_) {
-              return Err(UnexpectedMessage)
+          (None, @protocol.PublishNamespace(request)) =>
+            match self.receive_peer_namespace_publication(stream, request) {
+              Ok(values) =>
+                for action in values {
+                  actions.push(action)
+                }
+              Err(error) => return Err(error)
             }
-            if (request.request_id & 1UL) != 1UL {
-              return Err(InvalidRequestId)
-            }
-            if self.peer_request_ids.get(request.request_id) is Some(_) {
-              return Err(DuplicateRequestId)
-            }
-            self.peer_request_ids[request.request_id] = stream
-            self.note_peer_request_id(request.request_id)
-            if self.control_goaway_sent {
-              let error = match
-                @protocol.encode_request_error({
-                  code: request_error_going_away,
-                  retry_interval: 0UL,
-                  reason: b"",
-                  redirect: b"",
-                }) {
-                Ok(value) => value
-                Err(error) => return Err(Encoding(error))
-              }
-              actions.push(Send(stream, error, true))
-            } else {
-              let namespace_request : NamespaceRequest = {
-                track_namespace: request.track_namespace,
-                parameters: request.parameters,
-                locally_initiated: false,
-                announced: true,
-                stream: Some(stream),
-                response_buffer: b"",
-                state: NamespacePending,
-                ignore_late_bytes: false,
-                lifetime: RequestLifetime::new(),
-                pending_updates: [],
-                pending_local_update_id: None,
-                pending_local_update_parameters: [],
-              }
-              self.namespace_requests[request.request_id] = namespace_request
-              self.namespace_request_streams[stream] = request.request_id
-              actions.push(
-                Notify(
-                  NamespacePublicationRequested(
-                    request.request_id,
-                    stream,
-                    request.track_namespace,
-                    request.parameters,
-                  ),
-                ),
-              )
-            }
-          }
           (Some(inbound), @protocol.GoAwayRequest(goaway)) => {
             for action in self.receive_request_goaway(stream, goaway) {
               actions.push(action)
