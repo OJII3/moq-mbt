@@ -34,6 +34,36 @@ pub(all) struct RequestUpdateMessage {
 } derive(Debug, Eq)
 
 ///|
+pub(all) struct FetchLocation {
+  group : UInt64
+  object : UInt64
+} derive(Debug, Eq)
+
+///|
+/// End Location stores the wire value: Object is exclusive (last Object + 1),
+/// and zero requests the entire Group.
+pub(all) enum FetchType {
+  StandaloneFetch(TrackName, FetchLocation, FetchLocation)
+  RelativeJoiningFetch(UInt64, UInt64)
+  AbsoluteJoiningFetch(UInt64, UInt64)
+} derive(Debug, Eq)
+
+///|
+pub(all) struct FetchMessage {
+  request_id : UInt64
+  fetch_type : FetchType
+  parameters : Array[MessageParameter]
+} derive(Debug, Eq)
+
+///|
+pub(all) struct FetchOkMessage {
+  end_of_track : Byte
+  end_location : FetchLocation
+  parameters : Array[MessageParameter]
+  track_properties : Bytes
+} derive(Debug, Eq)
+
+///|
 pub(all) struct GoAwayControlMessage {
   uri : Bytes
   timeout_ms : UInt64
@@ -60,6 +90,7 @@ pub(all) enum ControlStreamContext {
   ControlStream
   RequestStream
   RequestStreamFor(RequestOkContext)
+  FetchRequestStream
 } derive(Debug, Eq)
 
 ///|
@@ -68,6 +99,9 @@ priv enum ParameterScope {
   Publish
   SubscribeOk
   RequestUpdate
+  Fetch
+  FetchUpdate
+  FetchOk
   NamespaceRequest
   RequestOk(RequestOkContext)
 }
@@ -106,6 +140,8 @@ pub(all) enum ControlMessage {
   SubscribeOk(SubscribeOkMessage)
   RequestOk(RequestOkMessage)
   RequestUpdate(RequestUpdateMessage)
+  Fetch(FetchMessage)
+  FetchOk(FetchOkMessage)
   GoAwayControl(GoAwayControlMessage)
   GoAwayRequest(GoAwayRequestMessage)
   RequestError(RequestErrorMessage)
@@ -234,6 +270,103 @@ pub fn encode_request_update(
     Err(error) => return Err(error)
   }
   control_frame(2, encode_vi64(message.request_id) + parameters)
+}
+
+///|
+/// Encode a REQUEST_UPDATE using the scope of the request it updates.
+pub fn encode_request_update_for(
+  message : RequestUpdateMessage,
+  context : ControlStreamContext,
+) -> Result[Bytes, CodecError] {
+  let scope = if context == FetchRequestStream {
+    FetchUpdate
+  } else {
+    RequestUpdate
+  }
+  match validate_parameters_scope(message.parameters, scope) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  let parameters = match encode_parameters(message.parameters) {
+    Ok(bytes) => bytes
+    Err(error) => return Err(error)
+  }
+  control_frame(2, encode_vi64(message.request_id) + parameters)
+}
+
+///|
+/// Encode a Draft 18 FETCH request (type 0x16).
+pub fn encode_fetch(message : FetchMessage) -> Result[Bytes, CodecError] {
+  match validate_parameters_scope(message.parameters, Fetch) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  let mut payload = encode_vi64(message.request_id)
+  match message.fetch_type {
+    StandaloneFetch(track, start, end) => {
+      if start.group > end.group ||
+        (
+          start.group == end.group &&
+          end.object != 0UL &&
+          start.object >= end.object
+        ) {
+        return Err(InvalidFetchRange)
+      }
+      let track_bytes = match encode_track_name(track) {
+        Ok(bytes) => bytes
+        Err(error) => return Err(error)
+      }
+      payload = payload +
+        encode_vi64(1UL) +
+        track_bytes +
+        encode_vi64(start.group) +
+        encode_vi64(start.object) +
+        encode_vi64(end.group) +
+        encode_vi64(end.object)
+    }
+    RelativeJoiningFetch(joining_request_id, joining_start) =>
+      payload = payload +
+        encode_vi64(2UL) +
+        encode_vi64(joining_request_id) +
+        encode_vi64(joining_start)
+    AbsoluteJoiningFetch(joining_request_id, joining_start) =>
+      payload = payload +
+        encode_vi64(3UL) +
+        encode_vi64(joining_request_id) +
+        encode_vi64(joining_start)
+  }
+  let parameters = match encode_parameters(message.parameters) {
+    Ok(bytes) => bytes
+    Err(error) => return Err(error)
+  }
+  control_frame(0x16, payload + parameters)
+}
+
+///|
+/// Encode FETCH_OK, the first successful response to a FETCH request.
+pub fn encode_fetch_ok(message : FetchOkMessage) -> Result[Bytes, CodecError] {
+  if message.end_of_track > 1 {
+    return Err(InvalidEndOfTrack)
+  }
+  match validate_parameters_scope(message.parameters, FetchOk) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  if !valid_object_properties(message.track_properties) {
+    return Err(InvalidTrackProperties)
+  }
+  let parameters = match encode_parameters(message.parameters) {
+    Ok(bytes) => bytes
+    Err(error) => return Err(error)
+  }
+  control_frame(
+    0x18,
+    Bytes::from_array([message.end_of_track]) +
+    encode_vi64(message.end_location.group) +
+    encode_vi64(message.end_location.object) +
+    parameters +
+    message.track_properties,
+  )
 }
 
 ///|
@@ -477,6 +610,7 @@ pub fn decode_control_with_context(
       }
       let response_context = match context {
         RequestStreamFor(value) => Some(value)
+        FetchRequestStream => return invalid
         ControlStream | RequestStream => return invalid
         AnyStream => None
       }
@@ -502,7 +636,11 @@ pub fn decode_control_with_context(
         Some(pair) => pair
         None => return invalid
       }
-      match validate_request_update_parameters(parameters) {
+      let update_context = match context {
+        FetchRequestStream => FetchUpdate
+        _ => RequestUpdate
+      }
+      match validate_parameters_scope(parameters, update_context) {
         Ok(_) => ()
         Err(_) => return invalid
       }
@@ -510,6 +648,135 @@ pub fn decode_control_with_context(
         return invalid
       }
       Complete(RequestUpdate({ request_id, parameters, }), end)
+    }
+    0x16 => {
+      if context == ControlStream {
+        return invalid
+      }
+      let (request_id, offset) = match read_varint_at(input, start, end) {
+        Some(pair) => pair
+        None => return invalid
+      }
+      let (fetch_kind, offset) = match read_varint_at(input, offset, end) {
+        Some(pair) => pair
+        None => return invalid
+      }
+      let fetch_type = match fetch_kind {
+        1 => {
+          let (track, offset) = match read_track_at(input, offset, end) {
+            Some(pair) => pair
+            None => return invalid
+          }
+          let (start_group, offset) = match read_varint_at(input, offset, end) {
+            Some(pair) => pair
+            None => return invalid
+          }
+          let (start_object, offset) = match
+            read_varint_at(input, offset, end) {
+            Some(pair) => pair
+            None => return invalid
+          }
+          let (end_group, offset) = match read_varint_at(input, offset, end) {
+            Some(pair) => pair
+            None => return invalid
+          }
+          let (end_object, offset) = match read_varint_at(input, offset, end) {
+            Some(pair) => pair
+            None => return invalid
+          }
+          if start_group > end_group ||
+            (
+              start_group == end_group &&
+              end_object != 0UL &&
+              start_object >= end_object
+            ) {
+            return invalid
+          }
+          (
+            StandaloneFetch(
+              track,
+              { group: start_group, object: start_object, },
+              { group: end_group, object: end_object, },
+            ),
+            offset,
+          )
+        }
+        2 | 3 => {
+          let (joining_request_id, offset) = match
+            read_varint_at(input, offset, end) {
+            Some(pair) => pair
+            None => return invalid
+          }
+          let (joining_start, offset) = match
+            read_varint_at(input, offset, end) {
+            Some(pair) => pair
+            None => return invalid
+          }
+          let value = if fetch_kind == 2 {
+            RelativeJoiningFetch(joining_request_id, joining_start)
+          } else {
+            AbsoluteJoiningFetch(joining_request_id, joining_start)
+          }
+          (value, offset)
+        }
+        _ => return invalid
+      }
+      let (parameters, offset) = match
+        read_parameters_at(input, fetch_type.1, end) {
+        Some(pair) => pair
+        None => return invalid
+      }
+      match validate_parameters_scope(parameters, Fetch) {
+        Ok(_) => ()
+        Err(_) => return invalid
+      }
+      if offset != end {
+        return invalid
+      }
+      Complete(
+        Fetch({ request_id, fetch_type: fetch_type.0, parameters, }),
+        end,
+      )
+    }
+    0x18 => {
+      match context {
+        ControlStream | RequestStream => return invalid
+        FetchRequestStream => ()
+        RequestStreamFor(_) => return invalid
+        AnyStream => ()
+      }
+      if start >= end || input[start] > 1 {
+        return invalid
+      }
+      let (end_group, offset) = match read_varint_at(input, start + 1, end) {
+        Some(pair) => pair
+        None => return invalid
+      }
+      let (end_object, offset) = match read_varint_at(input, offset, end) {
+        Some(pair) => pair
+        None => return invalid
+      }
+      let (parameters, offset) = match read_parameters_at(input, offset, end) {
+        Some(pair) => pair
+        None => return invalid
+      }
+      match validate_parameters_scope(parameters, FetchOk) {
+        Ok(_) => ()
+        Err(_) => return invalid
+      }
+      let track_properties = input[offset:end].to_owned()
+      if !valid_object_properties(track_properties) {
+        return invalid
+      }
+      Complete(
+        FetchOk({
+          end_of_track: input[start],
+          end_location: { group: end_group, object: end_object, },
+          parameters,
+          track_properties,
+        }),
+        end,
+      )
     }
     0x10 => {
       let (uri, offset) = match read_bytes_at(input, start, end) {
@@ -534,7 +801,7 @@ pub fn decode_control_with_context(
           }
           Complete(GoAwayControl({ uri, timeout_ms, request_id, }), end)
         }
-        RequestStream | RequestStreamFor(_) => {
+        RequestStream | RequestStreamFor(_) | FetchRequestStream => {
           if offset != end {
             return invalid
           }
@@ -557,6 +824,9 @@ pub fn decode_control_with_context(
       }
     }
     5 => {
+      if context == ControlStream {
+        return invalid
+      }
       let (code, offset) = match read_varint_at(input, start, end) {
         Some(pair) => pair
         None => return invalid
@@ -694,6 +964,9 @@ fn parameter_allowed(kind : UInt64, context : ParameterScope) -> Bool {
       kind == 0x21 ||
       kind == 0x32 ||
       kind == 0x34
+    Fetch => kind == 0x03 || kind == 0x0a || kind == 0x20 || kind == 0x22
+    FetchUpdate => kind == 0x20
+    FetchOk => false
     NamespaceRequest => kind == 0x03
     RequestOk(context) =>
       match context {
@@ -757,6 +1030,30 @@ pub extend RequestUpdateMessage with Debug::{to_repr}
 
 ///|
 pub extend RequestUpdateMessage with Eq::{equal, not_equal}
+
+///|
+pub extend FetchLocation with Debug::{to_repr}
+
+///|
+pub extend FetchLocation with Eq::{equal, not_equal}
+
+///|
+pub extend FetchType with Debug::{to_repr}
+
+///|
+pub extend FetchType with Eq::{equal, not_equal}
+
+///|
+pub extend FetchMessage with Debug::{to_repr}
+
+///|
+pub extend FetchMessage with Eq::{equal, not_equal}
+
+///|
+pub extend FetchOkMessage with Debug::{to_repr}
+
+///|
+pub extend FetchOkMessage with Eq::{equal, not_equal}
 
 ///|
 pub extend GoAwayControlMessage with Debug::{to_repr}

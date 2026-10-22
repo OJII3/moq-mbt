@@ -98,7 +98,7 @@ fn encode_parameters(
         append_vi64s(encoded, group)
         append_vi64s(encoded, object)
       }
-      (0x02 | 0x04 | 0x06 | 0x08 | 0x32, VarInt(value)) =>
+      (0x02 | 0x04 | 0x06 | 0x08 | 0x0a | 0x32, VarInt(value)) =>
         append_vi64s(encoded, value)
       (0x03, Data(value)) => {
         append_vi64s(encoded, value.length().to_uint64())
@@ -356,7 +356,7 @@ fn read_parameters_at(
         next = after_object
         Location(group, object)
       }
-      0x02 | 0x04 | 0x06 | 0x08 | 0x32 => {
+      0x02 | 0x04 | 0x06 | 0x08 | 0x0a | 0x32 => {
         let (value, after_value) = match
           read_varint_at(input, after_delta, end) {
           Some(pair) => pair
