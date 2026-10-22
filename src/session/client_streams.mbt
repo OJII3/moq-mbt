@@ -82,8 +82,31 @@ fn ClientSession::stream_opened(
     }
     Request(request_id) => {
       if self.request_streams.get(stream) is Some(_) ||
-        self.namespace_request_streams.get(stream) is Some(_) {
+        self.namespace_request_streams.get(stream) is Some(_) ||
+        self.namespace_subscription_streams.get(stream) is Some(_) {
         return Err(DuplicateStream)
+      }
+      match self.namespace_subscriptions.get(request_id) {
+        Some(request) if request.stream is None => {
+          request.stream = Some(stream)
+          self.namespace_subscription_streams[stream] = request_id
+          self.request_streams[stream] = request_id
+          if request.lifetime.cancelled {
+            return Ok([AbortSend(stream, 1UL), StopReceiving(stream, 1UL)])
+          }
+          let encoded = @protocol.encode_subscribe_namespace({
+            request_id,
+            track_namespace: request.prefix,
+            parameters: [],
+          })
+          let bytes = match encoded {
+            Ok(value) => value
+            Err(error) => return Err(Encoding(error))
+          }
+          return Ok([Send(stream, bytes, false)])
+        }
+        Some(_) => return Err(DuplicateStream)
+        None => ()
       }
       match self.namespace_requests.get(request_id) {
         Some(request) if request.stream is None => {
@@ -267,6 +290,22 @@ fn ClientSession::stream_finished(
       Ok(actions)
     }
     None => {
+      if self.inbound_namespace_subscriptions.get(stream) is Some(_) {
+        return Ok(self.end_inbound_namespace_subscription(stream, PeerFin))
+      }
+      if self.namespace_subscription_streams.get(stream) is Some(_) {
+        let request = self.namespace_subscriptions
+          .get(self.namespace_subscription_streams.get(stream).unwrap())
+          .unwrap()
+        if request.rejected {
+          ignore(request.lifetime.transition(PeerFin, true))
+          return Ok([])
+        }
+        if !request.established {
+          return Err(UnexpectedMessage)
+        }
+        return Ok(self.end_namespace_subscription(stream, PeerFin))
+      }
       if self.namespace_request_streams.get(stream) is Some(_) {
         let request = self.namespace_requests
           .get(self.namespace_request_streams.get(stream).unwrap())
@@ -359,6 +398,16 @@ fn ClientSession::stream_reset(
       Ok(actions)
     }
     None => {
+      if self.inbound_namespace_subscriptions.get(stream) is Some(_) {
+        return Ok(
+          self.end_inbound_namespace_subscription(stream, PeerReset(error_code)),
+        )
+      }
+      if self.namespace_subscription_streams.get(stream) is Some(_) {
+        return Ok(
+          self.end_namespace_subscription(stream, PeerReset(error_code)),
+        )
+      }
       if self.namespace_request_streams.get(stream) is Some(_) {
         return Ok(self.end_namespace_request(stream, PeerReset(error_code)))
       }

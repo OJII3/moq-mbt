@@ -300,7 +300,17 @@ fn ClientSession::receive_namespace_response(
       let actions = match (request.state, message) {
         (NamespacePending, @protocol.RequestOk(_)) => {
           request.state = NamespaceAccepted
-          [Notify(NamespacePublicationAccepted(request_id, stream))]
+          let actions : Array[ClientSessionAction] = [
+            Notify(NamespacePublicationAccepted(request_id, stream)),
+          ]
+          match self.broadcast_namespace_available(request.track_namespace) {
+            Ok(extra) =>
+              for action in extra {
+                actions.push(action)
+              }
+            Err(error) => return Err(error)
+          }
+          actions
         }
         (NamespacePending, @protocol.RequestError(error)) => {
           request.state = NamespaceTerminal
@@ -432,6 +442,8 @@ fn ClientSession::end_namespace_request(
     None => return []
   }
   let request = self.namespace_requests.get(request_id).unwrap()
+  let was_active = request.locally_initiated &&
+    request.state == NamespaceAccepted
   let effects = request.lifetime.transition(event, true)
   if !effects.abort_send && !effects.stop_receiving && !effects.notify_end {
     return []
@@ -446,6 +458,15 @@ fn ClientSession::end_namespace_request(
   self.request_goaway_deadlines.remove(stream)
   let error_code = request.lifetime.cancel_error_code.unwrap()
   let actions : Array[ClientSessionAction] = []
+  if was_active {
+    match self.broadcast_namespace_done(request.track_namespace) {
+      Ok(values) =>
+        for action in values {
+          actions.push(action)
+        }
+      Err(_) => ()
+    }
+  }
   if effects.abort_send {
     actions.push(AbortSend(stream, error_code))
   }

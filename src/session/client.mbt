@@ -70,6 +70,12 @@ pub(all) enum ClientSessionNotice {
   NamespaceUpdateRejected(UInt64, UInt64, @protocol.RequestErrorMessage)
   NamespaceWithdrawn(UInt64, Int64)
   NamespaceAcceptanceRevoked(UInt64, Int64)
+  NamespaceSubscriptionRequested(UInt64, Int64, @protocol.TrackNamespace)
+  NamespaceSubscriptionEstablished(UInt64, Int64)
+  NamespaceSubscriptionRejected(UInt64, Int64, @protocol.RequestErrorMessage)
+  NamespaceDiscovered(UInt64, @protocol.TrackNamespace)
+  NamespaceNoLongerAvailable(UInt64, @protocol.TrackNamespace)
+  NamespaceSubscriptionEnded(UInt64, Int64)
   SubscriptionAccepted(UInt64, Int64, UInt64)
   SubscriptionRejected(UInt64, Int64)
   SubscriptionUpdateRequested(
@@ -182,6 +188,13 @@ pub struct ClientSession {
   priv peer_request_ids : Map[UInt64, Int64]
   priv namespace_requests : Map[UInt64, NamespaceRequest]
   priv namespace_request_streams : Map[Int64, UInt64]
+  priv namespace_subscriptions : Map[UInt64, NamespaceSubscription]
+  priv namespace_subscription_streams : Map[Int64, UInt64]
+  priv inbound_namespace_subscriptions : Map[
+    Int64,
+    InboundNamespaceSubscription,
+  ]
+  priv application_namespaces : Array[@protocol.TrackNamespace]
   priv published_requests : Array[UInt64]
   priv largest_published_locations : Map[UInt64, (UInt64, UInt64)]
   priv aliases : Map[UInt64, UInt64]
@@ -232,6 +245,10 @@ pub fn ClientSession::new(
         peer_request_ids: {},
         namespace_requests: {},
         namespace_request_streams: {},
+        namespace_subscriptions: {},
+        namespace_subscription_streams: {},
+        inbound_namespace_subscriptions: {},
+        application_namespaces: [],
         published_requests: [],
         largest_published_locations: {},
         aliases: {},
@@ -369,6 +386,9 @@ fn ClientSession::protocol_error_actions(
     | SendStopped(stream, _) => {
       let kind = self.inbound_stream_kinds.get(stream)
       if self.peer_control_stream == Some(stream) || kind is Some(Control) {
+        Some(self.end_session(Local(code, b""), Some(code), b""))
+      } else if self.namespace_subscription_streams.get(stream) is Some(_) ||
+        self.inbound_namespace_subscriptions.get(stream) is Some(_) {
         Some(self.end_session(Local(code, b""), Some(code), b""))
       } else if self.request_streams.get(stream) is Some(_) ||
         self.inbound_subscriptions.get(stream) is Some(_) ||

@@ -24,6 +24,7 @@ pub struct ClientSession {
   // private fields
 }
 pub fn ClientSession::accept_namespace_publication(Self, Int64) -> Result[Array[ClientSessionAction], ClientSessionError]
+pub fn ClientSession::accept_namespace_subscription(Self, Int64, Array[@protocol.TrackNamespace]) -> Result[Array[ClientSessionAction], ClientSessionError]
 pub fn ClientSession::accept_namespace_update(Self, Int64, UInt64, @protocol.RequestOkMessage) -> Result[Array[ClientSessionAction], ClientSessionError]
 pub fn ClientSession::accept_subscription(Self, Int64) -> Result[Array[ClientSessionAction], ClientSessionError]
 pub fn ClientSession::accept_subscription_update(Self, Int64, UInt64, @protocol.RequestOkMessage) -> Result[Array[ClientSessionAction], ClientSessionError]
@@ -33,11 +34,13 @@ pub fn ClientSession::finish_object_stream(Self, Int64) -> Result[Array[ClientSe
 pub fn ClientSession::finish_subscription_updates(Self, UInt64) -> Result[Array[ClientSessionAction], ClientSessionError]
 pub fn ClientSession::new(Version, @protocol.Setup) -> Result[Self, @protocol.CodecError]
 pub fn ClientSession::open_object_stream(Self, Int64, @protocol.SubgroupHeader) -> Result[Array[ClientSessionAction], ClientSessionError]
+pub fn ClientSession::publish_application_namespace(Self, @protocol.TrackNamespace) -> Result[Array[ClientSessionAction], ClientSessionError]
 pub fn ClientSession::publish_done(Self, Int64, UInt64, Bytes) -> Result[Array[ClientSessionAction], ClientSessionError]
 pub fn ClientSession::publish_namespace(Self, @protocol.TrackNamespace, Array[@protocol.MessageParameter]) -> Result[(UInt64, Array[ClientSessionAction]), ClientSessionError]
 pub fn ClientSession::publish_track(Self, @protocol.TrackName, UInt64) -> Result[(UInt64, Array[ClientSessionAction]), ClientSessionError]
 pub fn ClientSession::receive(Self, ClientSessionEvent) -> Result[Array[ClientSessionAction], ClientSessionError]
 pub fn ClientSession::reject_namespace_publication(Self, Int64, @protocol.RequestErrorMessage) -> Result[Array[ClientSessionAction], ClientSessionError]
+pub fn ClientSession::reject_namespace_subscription(Self, Int64, @protocol.RequestErrorMessage) -> Result[Array[ClientSessionAction], ClientSessionError]
 pub fn ClientSession::reject_namespace_update(Self, Int64, UInt64, @protocol.RequestErrorMessage) -> Result[Array[ClientSessionAction], ClientSessionError]
 pub fn ClientSession::reject_subscription(Self, Int64, @protocol.RequestErrorMessage) -> Result[Array[ClientSessionAction], ClientSessionError]
 pub fn ClientSession::reject_subscription_update(Self, Int64, UInt64, @protocol.RequestErrorMessage) -> Result[Array[ClientSessionAction], ClientSessionError]
@@ -46,9 +49,11 @@ pub fn ClientSession::send_object(Self, Int64, @protocol.SubgroupFrame) -> Resul
 pub fn ClientSession::send_object_datagram(Self, Int64, @protocol.ObjectDatagram) -> Result[Array[ClientSessionAction], ClientSessionError]
 pub fn ClientSession::start(Self) -> Result[Array[ClientSessionAction], ClientSessionError]
 pub fn ClientSession::state(Self) -> ClientSessionState
+pub fn ClientSession::subscribe_namespace(Self, @protocol.TrackNamespace) -> Result[(UInt64, Array[ClientSessionAction]), ClientSessionError]
 pub fn ClientSession::subscribe_track(Self, @protocol.TrackName) -> Result[(UInt64, Array[ClientSessionAction]), ClientSessionError]
 pub fn ClientSession::update_published_namespace(Self, UInt64, Array[@protocol.MessageParameter]) -> Result[(UInt64, Array[ClientSessionAction]), ClientSessionError]
 pub fn ClientSession::update_subscription(Self, UInt64, Array[@protocol.MessageParameter]) -> Result[(UInt64, Array[ClientSessionAction]), ClientSessionError]
+pub fn ClientSession::withdraw_application_namespace(Self, @protocol.TrackNamespace) -> Result[Array[ClientSessionAction], ClientSessionError]
 
 pub(all) enum ClientSessionAction {
   OpenStream(ClientStreamDirection, ClientStreamPurpose)
@@ -132,6 +137,12 @@ pub(all) enum ClientSessionNotice {
   NamespaceUpdateRejected(UInt64, UInt64, @protocol.RequestErrorMessage)
   NamespaceWithdrawn(UInt64, Int64)
   NamespaceAcceptanceRevoked(UInt64, Int64)
+  NamespaceSubscriptionRequested(UInt64, Int64, @protocol.TrackNamespace)
+  NamespaceSubscriptionEstablished(UInt64, Int64)
+  NamespaceSubscriptionRejected(UInt64, Int64, @protocol.RequestErrorMessage)
+  NamespaceDiscovered(UInt64, @protocol.TrackNamespace)
+  NamespaceNoLongerAvailable(UInt64, @protocol.TrackNamespace)
+  NamespaceSubscriptionEnded(UInt64, Int64)
   SubscriptionAccepted(UInt64, Int64, UInt64)
   SubscriptionRejected(UInt64, Int64)
   SubscriptionUpdateRequested(UInt64, UInt64, Int64, Array[@protocol.MessageParameter], Array[@protocol.MessageParameter])

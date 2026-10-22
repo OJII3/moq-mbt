@@ -23,6 +23,12 @@ fn ClientSession::receive_peer_request(
     }
     None => ()
   }
+  match self.inbound_namespace_subscriptions.get(stream) {
+    Some(inbound) if inbound.lifetime.cancelled ||
+      inbound.lifetime.peer_send_closed ||
+      inbound.state == Ended => return Ok([])
+    _ => ()
+  }
   let buffer = match self.inbound_buffers.get(stream) {
     Some(value) => value
     None => b""
@@ -43,6 +49,76 @@ fn ClientSession::receive_peer_request(
       @protocol.Complete(message, consumed) => {
         remaining = remaining[consumed:].to_owned()
         match (self.inbound_subscriptions.get(stream), message) {
+          (None, @protocol.SubscribeNamespace(request)) => {
+            if self.namespace_subscription_streams.get(stream) is Some(_) ||
+              self.namespace_request_streams.get(stream) is Some(_) {
+              return Err(UnexpectedMessage)
+            }
+            if (request.request_id & 1UL) != 1UL {
+              return Err(InvalidRequestId)
+            }
+            if self.peer_request_ids.get(request.request_id) is Some(_) {
+              return Err(DuplicateRequestId)
+            }
+            self.peer_request_ids[request.request_id] = stream
+            self.note_peer_request_id(request.request_id)
+            let mut overlaps = false
+            for (_, existing) in self.inbound_namespace_subscriptions {
+              if existing.state == Active &&
+                namespace_prefixes_overlap(
+                  existing.prefix,
+                  request.track_namespace,
+                ) {
+                overlaps = true
+              }
+            }
+            if self.control_goaway_sent || overlaps {
+              let error = match
+                @protocol.encode_request_error({
+                  code: if overlaps {
+                    0x30UL
+                  } else {
+                    request_error_going_away
+                  },
+                  retry_interval: 0UL,
+                  reason: b"",
+                  redirect: b"",
+                }) {
+                Ok(value) => value
+                Err(error) => return Err(Encoding(error))
+              }
+              actions.push(Send(stream, error, true))
+              if overlaps {
+                actions.push(
+                  Notify(
+                    NamespaceSubscriptionRejected(request.request_id, stream, {
+                      code: 0x30UL,
+                      retry_interval: 0UL,
+                      reason: b"",
+                      redirect: b"",
+                    }),
+                  ),
+                )
+              }
+            } else {
+              self.inbound_namespace_subscriptions[stream] = {
+                request_id: request.request_id,
+                prefix: request.track_namespace,
+                active_namespaces: [],
+                state: Pending,
+                lifetime: RequestLifetime::new(),
+              }
+              actions.push(
+                Notify(
+                  NamespaceSubscriptionRequested(
+                    request.request_id,
+                    stream,
+                    request.track_namespace,
+                  ),
+                ),
+              )
+            }
+          }
           (None, @protocol.Subscribe(request)) => {
             if (request.request_id & 1UL) != 1UL {
               return Err(InvalidRequestId)
@@ -151,6 +227,13 @@ fn ClientSession::receive_peer_request(
             ignore(inbound)
           }
           (None, @protocol.GoAwayRequest(goaway)) if self.namespace_request_streams.get(
+              stream,
+            )
+            is Some(_) =>
+            for action in self.receive_request_goaway(stream, goaway) {
+              actions.push(action)
+            }
+          (None, @protocol.GoAwayRequest(goaway)) if self.inbound_namespace_subscriptions.get(
               stream,
             )
             is Some(_) =>
