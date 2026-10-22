@@ -47,13 +47,11 @@ fn ClientSession::receive_stream_data(
         Some(Subgroup) => self.receive_subgroup(stream, bytes)
         Some(Padding) | Some(Discarded) => Ok([])
         None =>
-          match self.namespace_request_streams.get(stream) {
-            Some(_) => self.receive_request(stream, bytes)
-            None =>
-              match self.request_streams.get(stream) {
-                Some(_) => self.receive_request(stream, bytes)
-                None => Err(UnknownStream)
-              }
+          match self.request_stream_route(stream) {
+            NamespaceSubscriptionResponse(_)
+            | NamespacePublicationResponse(_)
+            | TrackResponse(_) => self.receive_request(stream, bytes)
+            UnknownRequestStream => Err(UnknownStream)
           }
       }
   }

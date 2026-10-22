@@ -208,19 +208,37 @@ fn ClientSession::receive_request(
   stream : Int64,
   bytes : Bytes,
 ) -> Result[Array[ClientSessionAction], ClientSessionError] {
-  match self.namespace_subscription_streams.get(stream) {
-    Some(request_id) =>
+  match self.request_stream_route(stream) {
+    NamespaceSubscriptionResponse(request_id) =>
       self.receive_namespace_subscription_response(request_id, stream, bytes)
-    None =>
-      match self.namespace_request_streams.get(stream) {
-        Some(request_id) if self.namespace_requests.get(request_id).unwrap().locally_initiated =>
-          self.receive_namespace_response(request_id, stream, bytes)
-        _ =>
-          match self.request_streams.get(stream) {
-            Some(request_id) => self.receive_response(request_id, stream, bytes)
-            None => self.receive_peer_request(stream, bytes)
-          }
-      }
+    NamespacePublicationResponse(request_id) =>
+      self.receive_namespace_response(request_id, stream, bytes)
+    TrackResponse(request_id) =>
+      self.receive_response(request_id, stream, bytes)
+    UnknownRequestStream => self.receive_peer_request(stream, bytes)
+  }
+}
+
+///|
+/// Resolve the protocol owner of a bidirectional request stream from the
+/// session's request indexes. Keep the precedence in one place because some
+/// Namespace requests also have entries in the general request index.
+fn ClientSession::request_stream_route(
+  self : ClientSession,
+  stream : Int64,
+) -> RequestStreamRoute {
+  match self.namespace_subscription_streams.get(stream) {
+    Some(request_id) => return NamespaceSubscriptionResponse(request_id)
+    None => ()
+  }
+  match self.namespace_request_streams.get(stream) {
+    Some(request_id) if self.namespace_requests.get(request_id).unwrap().locally_initiated =>
+      return NamespacePublicationResponse(request_id)
+    _ => ()
+  }
+  match self.request_streams.get(stream) {
+    Some(request_id) => TrackResponse(request_id)
+    None => UnknownRequestStream
   }
 }
 
