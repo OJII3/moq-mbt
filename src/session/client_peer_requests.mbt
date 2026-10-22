@@ -89,6 +89,9 @@ fn ClientSession::receive_peer_request(
             }
           }
           (None, @protocol.PublishNamespace(request)) => {
+            if self.namespace_request_streams.get(stream) is Some(_) {
+              return Err(UnexpectedMessage)
+            }
             if (request.request_id & 1UL) != 1UL {
               return Err(InvalidRequestId)
             }

@@ -271,7 +271,13 @@ fn ClientSession::stream_finished(
         let request = self.namespace_requests
           .get(self.namespace_request_streams.get(stream).unwrap())
           .unwrap()
-        if request.locally_initiated && request.state == NamespacePending {
+        if (request.locally_initiated && request.state == NamespacePending) ||
+          !request.response_buffer.is_empty() ||
+          (
+            request.locally_initiated &&
+            request.pending_local_update_id is Some(_)
+          ) ||
+          !self.inbound_buffers.get(stream).unwrap_or(b"").is_empty() {
           return Err(UnexpectedMessage)
         }
         ignore(request.lifetime.transition(PeerFin, true))

@@ -718,7 +718,7 @@ pub fn ClientSession::cancel_request(
         None => {
           request.state = NamespaceTerminal
           ignore(request.lifetime.transition(Cancel(1UL), false))
-          Ok([])
+          Ok(self.finish_actions([]))
         }
       }
     }

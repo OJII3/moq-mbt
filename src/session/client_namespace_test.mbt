@@ -202,6 +202,21 @@ test "namespace request updates are surfaced before and after acceptance" {
   }
   assert_eq(
     subscriber.accept_namespace_update(40, 3UL, update_ok),
+    Err(@session.UnexpectedMessage),
+  )
+  assert_eq(
+    subscriber.accept_namespace_publication(40),
+    Ok([
+      @session.Send(
+        40,
+        @protocol.encode_request_ok_for(update_ok, @protocol.Namespace).unwrap(),
+        false,
+      ),
+      @session.Notify(@session.NamespacePublicationAccepted(1UL, 40)),
+    ]),
+  )
+  assert_eq(
+    subscriber.accept_namespace_update(40, 3UL, update_ok),
     Ok([
       @session.Send(
         40,
@@ -220,17 +235,6 @@ test "namespace request updates are surfaced before and after acceptance" {
         false,
       ),
       @session.Notify(@session.NamespaceUpdateAccepted(1UL, 5UL, update_ok)),
-    ]),
-  )
-  assert_eq(
-    subscriber.accept_namespace_publication(40),
-    Ok([
-      @session.Send(
-        40,
-        @protocol.encode_request_ok_for(update_ok, @protocol.Namespace).unwrap(),
-        false,
-      ),
-      @session.Notify(@session.NamespacePublicationAccepted(1UL, 40)),
     ]),
   )
 
@@ -409,7 +413,7 @@ test "PUBLISH_NAMESPACE reset and cancellation crossed events notify only once" 
     publisher.receive(@session.StreamReset(30, 7UL)),
     Ok([
       @session.AbortSend(30, 7UL),
-      @session.Notify(@session.NamespaceWithdrawn(request_id, 30)),
+      @session.Notify(@session.NamespaceAcceptanceRevoked(request_id, 30)),
     ]),
   )
   assert_eq(publisher.cancel_request(request_id), Ok([]))
@@ -524,6 +528,196 @@ test "request GOAWAY timeout terminates a namespace request through its lifetime
       @session.AbortSend(30, 4UL),
       @session.StopReceiving(30, 4UL),
       @session.Notify(@session.NamespaceWithdrawn(request_id, 30)),
+    ]),
+  )
+}
+
+///|
+test "PUBLISH_NAMESPACE must be the only initial request on its bidi" {
+  let subscriber = client_session_ready()
+  ignore(
+    subscriber.receive(
+      @session.InboundStreamStarted(40, @session.Bidirectional),
+    ),
+  )
+  let first : @protocol.NamespaceRequestMessage = {
+    request_id: 1UL,
+    track_namespace: namespace_request(),
+    parameters: [],
+  }
+  let second : @protocol.NamespaceRequestMessage = {
+    request_id: 3UL,
+    track_namespace: namespace_request(),
+    parameters: [],
+  }
+  ignore(
+    subscriber.receive(
+      @session.StreamData(
+        40,
+        @protocol.encode_publish_namespace(first).unwrap(),
+      ),
+    ),
+  )
+  assert_eq(
+    subscriber.receive(
+      @session.StreamData(
+        40,
+        @protocol.encode_publish_namespace(second).unwrap(),
+      ),
+    ),
+    Ok([
+      @session.AbortSend(40, 3UL),
+      @session.StopReceiving(40, 3UL),
+      @session.Notify(@session.NamespaceAcceptanceRevoked(1UL, 40)),
+    ]),
+  )
+}
+
+///|
+test "GOAWAY cancels an opening namespace request before its delayed stream opens" {
+  let publisher = client_session_ready()
+  let (request_id, _) = publisher
+    .publish_namespace(namespace_request(), [])
+    .unwrap()
+  let (accepted_id, _) = publisher
+    .publish_namespace(namespace_request(), [])
+    .unwrap()
+  ignore(
+    publisher.receive(@session.StreamOpened(@session.Request(accepted_id), 32)),
+  )
+  ignore(
+    publisher.receive(
+      @session.StreamData(
+        32,
+        @protocol.encode_request_ok_for(
+          { parameters: [], properties: b"", },
+          @protocol.Namespace,
+        ).unwrap(),
+      ),
+    ),
+  )
+  assert_eq(
+    publisher.receive(
+      @session.StreamData(11, client_goaway_control(0UL, 0UL, b"")),
+    ),
+    Ok([
+      @session.Notify(
+        @session.ControlMessageReceived(
+          @protocol.GoAwayControl({
+            uri: b"",
+            timeout_ms: 0UL,
+            request_id: 0UL,
+          }),
+        ),
+      ),
+      @session.Notify(@session.ControlGoAwayReceived(b"", 0UL, 0UL)),
+    ]),
+  )
+  assert_eq(
+    publisher.receive(@session.StreamOpened(@session.Request(request_id), 30)),
+    Ok([@session.AbortSend(30, 4UL), @session.StopReceiving(30, 4UL)]),
+  )
+}
+
+///|
+test "GOAWAY rejects a namespace REQUEST_UPDATE and closes its bidi" {
+  let subscriber = client_session_ready()
+  let request : @protocol.NamespaceRequestMessage = {
+    request_id: 1UL,
+    track_namespace: namespace_request(),
+    parameters: [],
+  }
+  ignore(
+    subscriber.receive(
+      @session.InboundStreamStarted(40, @session.Bidirectional),
+    ),
+  )
+  ignore(
+    subscriber.receive(
+      @session.StreamData(
+        40,
+        @protocol.encode_publish_namespace(request).unwrap(),
+      ),
+    ),
+  )
+  ignore(subscriber.accept_namespace_publication(40))
+  ignore(subscriber.send_goaway(0UL))
+  let update : @protocol.RequestUpdateMessage = {
+    request_id: 3UL,
+    parameters: [{ kind: 0x03UL, value: @protocol.Data(b"new-token"), }],
+  }
+  let error : @protocol.RequestErrorMessage = {
+    code: 6UL,
+    retry_interval: 0UL,
+    reason: b"",
+    redirect: b"",
+  }
+  assert_eq(
+    subscriber.receive(
+      @session.StreamData(40, @protocol.encode_request_update(update).unwrap()),
+    ),
+    Ok([
+      @session.Send(40, @protocol.encode_request_error(error).unwrap(), true),
+      @session.Notify(@session.NamespaceUpdateRejected(1UL, 3UL, error)),
+      @session.StopReceiving(40, 4UL),
+      @session.Notify(@session.NamespaceAcceptanceRevoked(1UL, 40)),
+    ]),
+  )
+}
+
+///|
+test "GOAWAY cannot be the initial PUBLISH_NAMESPACE response" {
+  let publisher = client_session_ready()
+  let (request_id, _) = publisher
+    .publish_namespace(namespace_request(), [])
+    .unwrap()
+  ignore(
+    publisher.receive(@session.StreamOpened(@session.Request(request_id), 30)),
+  )
+  let goaway = @protocol.encode_goaway_request({ uri: b"", timeout_ms: 0UL, }).unwrap()
+  assert_eq(
+    publisher.receive(@session.StreamData(30, goaway)),
+    Ok([
+      @session.CloseConnection(3UL, b""),
+      @session.Notify(@session.SessionEnded(@session.Local(3UL, b""))),
+    ]),
+  )
+}
+
+///|
+test "FIN during a namespace REQUEST_UPDATE response is a protocol violation" {
+  let publisher = client_session_ready()
+  let (request_id, _) = publisher
+    .publish_namespace(namespace_request(), [])
+    .unwrap()
+  ignore(
+    publisher.receive(@session.StreamOpened(@session.Request(request_id), 30)),
+  )
+  ignore(
+    publisher.receive(
+      @session.StreamData(
+        30,
+        @protocol.encode_request_ok_for(
+          { parameters: [], properties: b"", },
+          @protocol.Namespace,
+        ).unwrap(),
+      ),
+    ),
+  )
+  ignore(publisher.update_published_namespace(request_id, []).unwrap())
+  let response = @protocol.encode_request_ok_for(
+    { parameters: [], properties: b"", },
+    @protocol.RequestUpdate,
+  ).unwrap()
+  assert_eq(
+    publisher.receive(@session.StreamData(30, response[:1].to_owned())),
+    Ok([]),
+  )
+  assert_eq(
+    publisher.receive(@session.StreamFinished(30)),
+    Ok([
+      @session.CloseConnection(3UL, b""),
+      @session.Notify(@session.SessionEnded(@session.Local(3UL, b""))),
     ]),
   )
 }
