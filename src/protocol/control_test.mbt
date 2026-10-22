@@ -54,6 +54,122 @@ test "Draft 18 single-track request and response wire formats" {
 }
 
 ///|
+test "Draft 18 namespace message golden bytes and incremental decoding" {
+  let request : @protocol.NamespaceRequestMessage = {
+    request_id: 1,
+    track_namespace: { fields: [b"a", b"b"], },
+    parameters: [],
+  }
+  let publish_wire = b"\x06\x00\x07\x01\x02\x01a\x01b\x00"
+  assert_eq(@protocol.encode_publish_namespace(request), Ok(publish_wire))
+  assert_eq(
+    @protocol.decode_control(publish_wire),
+    @protocol.Complete(
+      @protocol.PublishNamespace(request),
+      publish_wire.length(),
+    ),
+  )
+  let subscribe_wire = b"\x50\x00\x07\x01\x02\x01a\x01b\x00"
+  assert_eq(@protocol.encode_subscribe_namespace(request), Ok(subscribe_wire))
+  assert_eq(
+    @protocol.decode_control(subscribe_wire),
+    @protocol.Complete(
+      @protocol.SubscribeNamespace(request),
+      subscribe_wire.length(),
+    ),
+  )
+  for wire in [publish_wire, subscribe_wire] {
+    for split = 0; split < wire.length(); split = split + 1 {
+      assert_eq(
+        @protocol.decode_control(wire[:split].to_owned()),
+        @protocol.Incomplete,
+      )
+    }
+  }
+  let suffix : @protocol.NamespaceSuffixMessage = {
+    track_namespace: { fields: [b"a"], },
+  }
+  let namespace_wire = b"\x08\x00\x03\x01\x01a"
+  let done_wire = b"\x0e\x00\x03\x01\x01a"
+  assert_eq(@protocol.encode_namespace(suffix), Ok(namespace_wire))
+  assert_eq(@protocol.encode_namespace_done(suffix), Ok(done_wire))
+  assert_eq(
+    @protocol.decode_control(namespace_wire),
+    @protocol.Complete(@protocol.Namespace(suffix), namespace_wire.length()),
+  )
+  assert_eq(
+    @protocol.decode_control(done_wire),
+    @protocol.Complete(@protocol.NamespaceDone(suffix), done_wire.length()),
+  )
+}
+
+///|
+test "namespace tuple and prefix parameter validation" {
+  let invalid : @protocol.NamespaceRequestMessage = {
+    request_id: 0,
+    track_namespace: { fields: [b""], },
+    parameters: [],
+  }
+  assert_true(
+    @protocol.encode_subscribe_namespace(invalid)
+    is Err(@protocol.InvalidTrackName),
+  )
+  let prefix : @protocol.RequestUpdateMessage = {
+    request_id: 2,
+    parameters: [
+      { kind: 0x34, value: @protocol.NamespacePrefix({ fields: [b"a"], }), },
+    ],
+  }
+  assert_eq(
+    @protocol.encode_request_update(prefix),
+    Ok(b"\x02\x00\x07\x02\x01\x34\x03\x01\x01a"),
+  )
+  assert_true(
+    @protocol.encode_subscribe_namespace({
+      request_id: 1,
+      track_namespace: { fields: [], },
+      parameters: [{ kind: 0x02, value: @protocol.VarInt(1), }],
+    })
+    is Err(@protocol.InvalidParameterScope(0x02)),
+  )
+  assert_true(
+    @protocol.encode_request_update({
+      request_id: 2,
+      parameters: [
+        { kind: 0x34, value: @protocol.NamespacePrefix({ fields: [b""], }), },
+      ],
+    })
+    is Err(@protocol.InvalidTrackName),
+  )
+  assert_eq(
+    @protocol.encode_namespace({ track_namespace: { fields: [], }, }),
+    Ok(b"\x08\x00\x01\x00"),
+  )
+  assert_true(
+    @protocol.encode_namespace({
+      track_namespace: { fields: Array::make(32, b"x"), },
+    })
+    is Ok(_),
+  )
+  assert_true(
+    @protocol.encode_namespace({
+      track_namespace: { fields: Array::make(33, b"x"), },
+    })
+    is Err(@protocol.InvalidTrackName),
+  )
+  assert_true(
+    @protocol.join_track_namespace({ fields: Array::make(32, b"x"), }, {
+      fields: [b"y"],
+    })
+    is Err(@protocol.InvalidTrackName),
+  )
+  assert_eq(
+    @protocol.decode_control(b"\x08\x00\x03\x01\x00x"),
+    @protocol.Invalid(@protocol.MalformedControlMessage),
+  )
+}
+
+///|
 test "control message parsing handles every split and trailing frames" {
   let message : @protocol.SubscribeMessage = {
     request_id: 0,

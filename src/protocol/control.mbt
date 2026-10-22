@@ -51,6 +51,7 @@ pub(all) enum RequestOkContext {
   Publish
   RequestUpdate
   TrackStatus
+  Namespace
 } derive(Debug, Eq)
 
 ///|
@@ -67,6 +68,7 @@ priv enum ParameterScope {
   Publish
   SubscribeOk
   RequestUpdate
+  NamespaceRequest
   RequestOk(RequestOkContext)
 }
 
@@ -86,6 +88,18 @@ pub(all) struct PublishDoneMessage {
 } derive(Debug, Eq)
 
 ///|
+pub(all) struct NamespaceRequestMessage {
+  request_id : UInt64
+  track_namespace : TrackNamespace
+  parameters : Array[MessageParameter]
+} derive(Debug, Eq)
+
+///|
+pub(all) struct NamespaceSuffixMessage {
+  track_namespace : TrackNamespace
+} derive(Debug, Eq)
+
+///|
 pub(all) enum ControlMessage {
   Subscribe(SubscribeMessage)
   Publish(PublishMessage)
@@ -96,6 +110,10 @@ pub(all) enum ControlMessage {
   GoAwayRequest(GoAwayRequestMessage)
   RequestError(RequestErrorMessage)
   PublishDone(PublishDoneMessage)
+  PublishNamespace(NamespaceRequestMessage)
+  SubscribeNamespace(NamespaceRequestMessage)
+  Namespace(NamespaceSuffixMessage)
+  NamespaceDone(NamespaceSuffixMessage)
 } derive(Debug, Eq)
 
 ///|
@@ -255,6 +273,66 @@ fn encode_goaway_payload(
     None => ()
   }
   control_frame(0x10, payload)
+}
+
+///|
+pub fn encode_publish_namespace(
+  message : NamespaceRequestMessage,
+) -> Result[Bytes, CodecError] {
+  encode_namespace_request(6, message)
+}
+
+///|
+pub fn encode_subscribe_namespace(
+  message : NamespaceRequestMessage,
+) -> Result[Bytes, CodecError] {
+  encode_namespace_request(0x50, message)
+}
+
+///|
+fn encode_namespace_request(
+  kind : UInt64,
+  message : NamespaceRequestMessage,
+) -> Result[Bytes, CodecError] {
+  match validate_parameters_scope(message.parameters, NamespaceRequest) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  let ns_bytes = match encode_track_namespace(message.track_namespace) {
+    Ok(bytes) => bytes
+    Err(error) => return Err(error)
+  }
+  let parameters = match encode_parameters(message.parameters) {
+    Ok(bytes) => bytes
+    Err(error) => return Err(error)
+  }
+  control_frame(kind, encode_vi64(message.request_id) + ns_bytes + parameters)
+}
+
+///|
+pub fn encode_namespace(
+  message : NamespaceSuffixMessage,
+) -> Result[Bytes, CodecError] {
+  encode_namespace_suffix(8, message)
+}
+
+///|
+pub fn encode_namespace_done(
+  message : NamespaceSuffixMessage,
+) -> Result[Bytes, CodecError] {
+  encode_namespace_suffix(0xe, message)
+}
+
+///|
+fn encode_namespace_suffix(
+  kind : UInt64,
+  message : NamespaceSuffixMessage,
+) -> Result[Bytes, CodecError] {
+  let ns_bytes = match encode_track_namespace(message.track_namespace) {
+    Ok(bytes) => bytes
+    Err(error) => return Err(error)
+  }
+  control_frame(kind, ns_bytes)
 }
 
 ///|
@@ -519,6 +597,55 @@ pub fn decode_control_with_context(
       }
       Complete(PublishDone({ code, stream_count, reason, }), end)
     }
+    6 | 0x50 => {
+      if context == ControlStream {
+        return invalid
+      }
+      let (request_id, offset) = match read_varint_at(input, start, end) {
+        Some(pair) => pair
+        None => return invalid
+      }
+      let (track_namespace, offset) = match
+        read_track_namespace_at(input, offset, end) {
+        Some(pair) => pair
+        None => return invalid
+      }
+      let (parameters, offset) = match read_parameters_at(input, offset, end) {
+        Some(pair) => pair
+        None => return invalid
+      }
+      match validate_parameters_scope(parameters, NamespaceRequest) {
+        Ok(_) => ()
+        Err(_) => return invalid
+      }
+      if offset != end {
+        return invalid
+      }
+      let message = { request_id, track_namespace, parameters, }
+      if kind == 6 {
+        Complete(PublishNamespace(message), end)
+      } else {
+        Complete(SubscribeNamespace(message), end)
+      }
+    }
+    8 | 0xe => {
+      if context == ControlStream {
+        return invalid
+      }
+      let (track_namespace, offset) = match
+        read_track_namespace_at(input, start, end) {
+        Some(pair) => pair
+        None => return invalid
+      }
+      if offset != end {
+        return invalid
+      }
+      if kind == 8 {
+        Complete(Namespace({ track_namespace, }), end)
+      } else {
+        Complete(NamespaceDone({ track_namespace, }), end)
+      }
+    }
     _ => Invalid(UnsupportedControlMessage(kind))
   }
 }
@@ -565,7 +692,9 @@ fn parameter_allowed(kind : UInt64, context : ParameterScope) -> Bool {
       kind == 0x10 ||
       kind == 0x20 ||
       kind == 0x21 ||
-      kind == 0x32
+      kind == 0x32 ||
+      kind == 0x34
+    NamespaceRequest => kind == 0x03
     RequestOk(context) =>
       match context {
         Publish =>
@@ -579,6 +708,7 @@ fn parameter_allowed(kind : UInt64, context : ParameterScope) -> Bool {
           kind == 0x32
         RequestUpdate => kind == 0x08 || kind == 0x09
         TrackStatus => kind == 0x09
+        Namespace => false
       }
   }
 }
@@ -663,6 +793,18 @@ pub extend PublishDoneMessage with Debug::{to_repr}
 
 ///|
 pub extend PublishDoneMessage with Eq::{equal, not_equal}
+
+///|
+pub extend NamespaceRequestMessage with Debug::{to_repr}
+
+///|
+pub extend NamespaceRequestMessage with Eq::{equal, not_equal}
+
+///|
+pub extend NamespaceSuffixMessage with Debug::{to_repr}
+
+///|
+pub extend NamespaceSuffixMessage with Eq::{equal, not_equal}
 
 ///|
 pub extend ControlMessage with Debug::{to_repr}
