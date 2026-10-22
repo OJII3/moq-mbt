@@ -14,6 +14,7 @@ priv struct PublishedSubscription {
   mut pending_failure : @protocol.PublishDoneMessage?
   mut resolved_filter : ResolvedSubscriptionFilter?
   request_id : UInt64
+  mut joining_location : @protocol.FetchLocation?
 }
 
 ///|
@@ -519,6 +520,20 @@ fn ClientSession::note_published_location(
       self.largest_published_locations[publisher_request_id] = (
         group_id, object_id,
       )
+  }
+  for (stream, subscription) in self.published_subscriptions {
+    let matches_publisher = match self.inbound_subscriptions.get(stream) {
+      Some(inbound) => inbound.publisher_request_id == publisher_request_id
+      None => subscription.request_id == publisher_request_id
+    }
+    if matches_publisher &&
+      subscription.joining_location is None &&
+      subscription_forward(subscription.parameters) {
+      subscription.joining_location = Some({
+        group: group_id,
+        object: object_id,
+      })
+    }
   }
 }
 

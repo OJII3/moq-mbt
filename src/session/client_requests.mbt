@@ -23,6 +23,7 @@ priv struct ClientRequest {
   lifetime : RequestLifetime
   object_drain : ObjectDrain
   mut parameters : Array[@protocol.MessageParameter]
+  mut joining_location : @protocol.FetchLocation?
   mut pending_local_update : PendingSubscriptionUpdate?
   mut update_failed : Bool
 }
@@ -301,8 +302,18 @@ fn ClientSession::receive_response(
               self.largest_published_locations.get(request_id),
             ),
             request_id,
+            joining_location: if subscription_forward(response.parameters) {
+              match subscription_largest_location(response.parameters) {
+                Some((group_id, object_id)) =>
+                  Some({ group: group_id, object: object_id, })
+                None => None
+              }
+            } else {
+              None
+            },
           }
-          [Notify(PublishAccepted(request_id))]
+          [Notify(PublishAccepted(request_id))] +
+          self.drain_joining_fetches(request_id, stream)
         }
         (Subscribing, @protocol.SubscribeOk(response)) if !request.is_accepted() => {
           let dynamic_groups = match
@@ -323,13 +334,23 @@ fn ClientSession::receive_response(
           self.aliases[response.track_alias] = request_id
           request.track_alias = Some(response.track_alias)
           request.dynamic_groups = dynamic_groups
+          request.parameters = response.parameters
+          request.joining_location = match
+            subscription_largest_location(response.parameters) {
+            Some((group_id, object_id)) =>
+              Some({ group: group_id, object: object_id, })
+            None => None
+          }
           request.mark_accepted()
           [Notify(SubscribeEstablished(request_id, response.track_alias))]
         }
         (Publishing, @protocol.RequestError(error)) if !request.is_accepted() => {
           request.mark_terminal()
           self.request_local_fin_actions(stream) +
-          [Notify(PublishRejected(request_id, error))]
+          [Notify(PublishRejected(request_id, error))] +
+          self.fail_pending_joining_fetches(
+            request_id, request_error_invalid_joining_request_id,
+          )
         }
         (Subscribing, @protocol.RequestError(error)) if !request.is_accepted() => {
           request.mark_terminal()
@@ -343,7 +364,17 @@ fn ClientSession::receive_response(
           }
         (Subscribing, @protocol.RequestOk(response)) if request.pending_local_update
           is Some(pending) => {
+          let was_forwarding = subscription_forward(request.parameters)
+          let forwarding = subscription_forward(pending.effective_parameters)
           request.parameters = pending.effective_parameters
+          if !was_forwarding && forwarding {
+            request.joining_location = match
+              subscription_largest_location(response.parameters) {
+              Some((group_id, object_id)) =>
+                Some({ group: group_id, object: object_id, })
+              None => request.joining_location
+            }
+          }
           request.pending_local_update = None
           [
             Notify(
@@ -617,6 +648,7 @@ pub fn ClientSession::publish_track(
       pending_done: None,
     },
     parameters: [],
+    joining_location: None,
     pending_local_update: None,
     update_failed: false,
   }
@@ -658,6 +690,7 @@ pub fn ClientSession::subscribe_track(
       pending_done: None,
     },
     parameters: [],
+    joining_location: None,
     pending_local_update: None,
     update_failed: false,
   }
@@ -790,6 +823,8 @@ fn ClientSession::end_request_stream(
         return []
       }
       fetch.state = FetchTerminal
+      fetch.pending_deadline = None
+      self.remove_pending_joining_fetch(request_id)
       let code = fetch.lifetime.cancel_error_code.unwrap()
       let actions : Array[ClientSessionAction] = []
       if effects.abort_send {
@@ -859,7 +894,13 @@ fn ClientSession::end_request_stream(
   request.pending_local_update = None
   request.object_drain.cancel()
 
-  let actions : Array[ClientSessionAction] = []
+  let actions : Array[ClientSessionAction] = if request.kind == Publishing {
+    self.fail_pending_joining_fetches(
+      request_id, request_error_invalid_joining_request_id,
+    )
+  } else {
+    []
+  }
   if effects.abort_send {
     actions.push(AbortSend(stream, error_code))
   }

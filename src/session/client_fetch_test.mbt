@@ -136,6 +136,586 @@ test "peer Standalone FETCH is accepted and served on one data stream" {
 }
 
 ///|
+test "local Joining FETCH uses the referenced SUBSCRIBE request ID" {
+  let publishing_endpoint = client_session_ready()
+  ignore(
+    publishing_endpoint.publish_track(client_track(b"published"), 9UL).unwrap(),
+  )
+  assert_eq(
+    publishing_endpoint.fetch_relative(0UL, 0UL, []),
+    Err(@session.UnknownRequest),
+  )
+
+  let client = client_session_ready()
+  let track = client_track(b"live")
+  let (subscription_id, _) = client.subscribe_track(track).unwrap()
+  assert_eq(subscription_id, 0UL)
+  ignore(client.receive(@session.StreamOpened(@session.Request(0UL), 20)))
+  let subscribe_ok : @protocol.SubscribeOkMessage = {
+    track_alias: 7UL,
+    parameters: [{ kind: 0x09UL, value: @protocol.Location(12UL, 3UL), }],
+    properties: b"",
+  }
+  assert_eq(
+    client.receive(
+      @session.StreamData(
+        20,
+        @protocol.encode_subscribe_ok(subscribe_ok).unwrap(),
+      ),
+    ),
+    Ok([@session.Notify(@session.SubscribeEstablished(0UL, 7UL))]),
+  )
+  let (fetch_id, actions) = client.fetch_relative(0UL, 4UL, []).unwrap()
+  assert_eq(fetch_id, 2UL)
+  assert_eq(actions, [
+    @session.OpenStream(@session.Bidirectional, @session.Request(2UL)),
+  ])
+  let fetch : @protocol.FetchMessage = {
+    request_id: fetch_id,
+    fetch_type: @protocol.RelativeJoiningFetch(0UL, 4UL),
+    parameters: [],
+  }
+  assert_eq(
+    client.receive(@session.StreamOpened(@session.Request(fetch_id), 22)),
+    Ok([@session.Send(22, @protocol.encode_fetch(fetch).unwrap(), false)]),
+  )
+  let (absolute_id, _) = client.fetch_absolute(0UL, 8UL, []).unwrap()
+  let absolute_fetch : @protocol.FetchMessage = {
+    request_id: absolute_id,
+    fetch_type: @protocol.AbsoluteJoiningFetch(0UL, 8UL),
+    parameters: [],
+  }
+  assert_eq(
+    client.receive(@session.StreamOpened(@session.Request(absolute_id), 24)),
+    Ok([
+      @session.Send(24, @protocol.encode_fetch(absolute_fetch).unwrap(), false),
+    ]),
+  )
+  assert_eq(
+    client.fetch_absolute(0UL, 13UL, []),
+    Err(@session.InvalidFetchRange),
+  )
+}
+
+///|
+test "pending Joining FETCH resolves against the accepted subscription snapshot" {
+  let publisher = client_session_ready()
+  let track = client_track(b"live")
+  ignore(publisher.publish_track(track, 7UL).unwrap())
+  ignore(publisher.receive(@session.StreamOpened(@session.Request(0UL), 20)))
+  ignore(publisher.receive(@session.StreamData(20, b"\x07\x00\x01\x00")))
+
+  ignore(
+    publisher.receive(@session.InboundStreamStarted(40, @session.Bidirectional)),
+  )
+  ignore(
+    publisher.receive(
+      @session.StreamData(
+        40,
+        @protocol.encode_subscribe({ request_id: 1UL, track, parameters: [], }).unwrap(),
+      ),
+    ),
+  )
+  ignore(publisher.accept_subscription(40).unwrap())
+  let header : @protocol.SubgroupHeader = {
+    track_alias: 7UL,
+    group_id: 12UL,
+    subgroup_id_mode: @protocol.Zero,
+    publisher_priority: None,
+    end_of_group: false,
+    first_object: true,
+    has_properties: false,
+  }
+  ignore(publisher.open_object_stream(40, header).unwrap())
+  ignore(publisher.receive(@session.StreamOpened(@session.Object(0UL), 30)))
+  ignore(
+    publisher
+    .send_object(30, {
+      object_id: 3UL,
+      status: @protocol.Normal,
+      properties: b"",
+      payload: b"live-edge",
+    })
+    .unwrap(),
+  )
+
+  ignore(
+    publisher.receive(@session.InboundStreamStarted(42, @session.Bidirectional)),
+  )
+  ignore(
+    publisher.receive(
+      @session.StreamData(
+        42,
+        @protocol.encode_subscribe({ request_id: 3UL, track, parameters: [], }).unwrap(),
+      ),
+    ),
+  )
+  ignore(
+    publisher.receive(@session.InboundStreamStarted(44, @session.Bidirectional)),
+  )
+  let fetch : @protocol.FetchMessage = {
+    request_id: 5UL,
+    fetch_type: @protocol.RelativeJoiningFetch(3UL, 4UL),
+    parameters: [],
+  }
+  assert_eq(
+    publisher.receive(
+      @session.StreamData(44, @protocol.encode_fetch(fetch).unwrap()),
+    ),
+    Ok([]),
+  )
+  assert_eq(
+    publisher.accept_subscription(42),
+    Ok([
+      @session.Send(
+        42,
+        @protocol.encode_subscribe_ok({
+          track_alias: 7UL,
+          parameters: [{ kind: 0x09UL, value: @protocol.Location(12UL, 3UL), }],
+          properties: b"",
+        }).unwrap(),
+        false,
+      ),
+      @session.Notify(@session.SubscriptionAccepted(3UL, 42, 7UL)),
+      @session.Notify(
+        @session.FetchRequested(
+          5UL,
+          44,
+          track,
+          { group: 8UL, object: 0UL, },
+          { group: 12UL, object: 4UL, },
+          [],
+        ),
+      ),
+    ]),
+  )
+  ignore(
+    publisher.receive(@session.InboundStreamStarted(46, @session.Bidirectional)),
+  )
+  let absolute_fetch = @protocol.encode_fetch({
+    request_id: 7UL,
+    fetch_type: @protocol.AbsoluteJoiningFetch(3UL, 9UL),
+    parameters: [],
+  }).unwrap()
+  assert_eq(
+    publisher.receive(@session.StreamData(46, absolute_fetch)),
+    Ok([
+      @session.Notify(
+        @session.FetchRequested(
+          7UL,
+          46,
+          track,
+          { group: 9UL, object: 0UL, },
+          { group: 12UL, object: 4UL, },
+          [],
+        ),
+      ),
+    ]),
+  )
+  ignore(
+    publisher
+    .send_object(30, {
+      object_id: 4UL,
+      status: @protocol.Normal,
+      properties: b"",
+      payload: b"first-live-object-after-join",
+    })
+    .unwrap(),
+  )
+  ignore(
+    publisher.receive(@session.InboundStreamStarted(48, @session.Bidirectional)),
+  )
+  let relative_underflow = @protocol.encode_fetch({
+    request_id: 9UL,
+    fetch_type: @protocol.RelativeJoiningFetch(3UL, 13UL),
+    parameters: [],
+  }).unwrap()
+  let invalid_range : @protocol.RequestErrorMessage = {
+    code: 0x10UL,
+    retry_interval: 0UL,
+    reason: b"",
+    redirect: b"",
+  }
+  assert_eq(
+    publisher.receive(@session.StreamData(48, relative_underflow)),
+    Ok([
+      @session.Send(
+        48,
+        @protocol.encode_request_error(invalid_range).unwrap(),
+        true,
+      ),
+      @session.Notify(@session.FetchRejected(9UL, 48, invalid_range)),
+    ]),
+  )
+
+  ignore(
+    publisher
+    .send_object(30, {
+      object_id: 0x3fffffffffffffffUL,
+      status: @protocol.Normal,
+      properties: b"",
+      payload: b"edge",
+    })
+    .unwrap(),
+  )
+  ignore(
+    publisher.receive(@session.InboundStreamStarted(50, @session.Bidirectional)),
+  )
+  ignore(
+    publisher.receive(
+      @session.StreamData(
+        50,
+        @protocol.encode_subscribe({ request_id: 11UL, track, parameters: [], }).unwrap(),
+      ),
+    ),
+  )
+  ignore(publisher.accept_subscription(50).unwrap())
+  ignore(
+    publisher.receive(@session.InboundStreamStarted(52, @session.Bidirectional)),
+  )
+  let end_overflow = @protocol.encode_fetch({
+    request_id: 13UL,
+    fetch_type: @protocol.RelativeJoiningFetch(11UL, 0UL),
+    parameters: [],
+  }).unwrap()
+  assert_eq(
+    publisher.receive(@session.StreamData(52, end_overflow)),
+    Ok([
+      @session.Send(
+        52,
+        @protocol.encode_request_error(invalid_range).unwrap(),
+        true,
+      ),
+      @session.Notify(@session.FetchRejected(13UL, 52, invalid_range)),
+    ]),
+  )
+}
+
+///|
+test "pending Joining FETCH times out and reports TIMEOUT" {
+  let publisher = client_session_ready()
+  let track = client_track(b"live")
+  ignore(publisher.publish_track(track, 7UL).unwrap())
+  ignore(publisher.receive(@session.StreamOpened(@session.Request(0UL), 20)))
+  ignore(publisher.receive(@session.StreamData(20, b"\x07\x00\x01\x00")))
+  ignore(
+    publisher.receive(@session.InboundStreamStarted(40, @session.Bidirectional)),
+  )
+  ignore(
+    publisher.receive(
+      @session.StreamData(
+        40,
+        @protocol.encode_subscribe({ request_id: 1UL, track, parameters: [], }).unwrap(),
+      ),
+    ),
+  )
+  ignore(
+    publisher.receive(@session.InboundStreamStarted(42, @session.Bidirectional)),
+  )
+  let fetch : @protocol.FetchMessage = {
+    request_id: 3UL,
+    fetch_type: @protocol.RelativeJoiningFetch(1UL, 0UL),
+    parameters: [],
+  }
+  assert_eq(
+    publisher.receive(
+      @session.StreamData(42, @protocol.encode_fetch(fetch).unwrap()),
+    ),
+    Ok([]),
+  )
+  let timeout : @protocol.RequestErrorMessage = {
+    code: 2UL,
+    retry_interval: 0UL,
+    reason: b"",
+    redirect: b"",
+  }
+  assert_eq(
+    publisher.receive(@session.Clock(30000UL)),
+    Ok([
+      @session.Send(42, @protocol.encode_request_error(timeout).unwrap(), true),
+      @session.Notify(@session.FetchRejected(3UL, 42, timeout)),
+    ]),
+  )
+}
+
+///|
+test "Joining FETCH rejects unknown subscriptions and Forward State zero" {
+  let publisher = client_session_ready()
+  let track = client_track(b"live")
+  ignore(publisher.publish_track(track, 7UL).unwrap())
+  ignore(publisher.receive(@session.StreamOpened(@session.Request(0UL), 20)))
+  ignore(publisher.receive(@session.StreamData(20, b"\x07\x00\x01\x00")))
+  let fetch_for = fn(request_id, joining_id) {
+    @protocol.encode_fetch({
+      request_id,
+      fetch_type: @protocol.AbsoluteJoiningFetch(joining_id, 0UL),
+      parameters: [],
+    }).unwrap()
+  }
+  let invalid_joining_id : @protocol.RequestErrorMessage = {
+    code: 0x32UL,
+    retry_interval: 0UL,
+    reason: b"",
+    redirect: b"",
+  }
+  ignore(
+    publisher.receive(@session.InboundStreamStarted(40, @session.Bidirectional)),
+  )
+  assert_eq(
+    publisher.receive(@session.StreamData(40, fetch_for(1UL, 99UL))),
+    Ok([
+      @session.Send(
+        40,
+        @protocol.encode_request_error(invalid_joining_id).unwrap(),
+        true,
+      ),
+      @session.Notify(@session.FetchRejected(1UL, 40, invalid_joining_id)),
+    ]),
+  )
+
+  ignore(
+    publisher.receive(@session.InboundStreamStarted(42, @session.Bidirectional)),
+  )
+  ignore(
+    publisher.receive(
+      @session.StreamData(
+        42,
+        @protocol.encode_subscribe({
+          request_id: 3UL,
+          track,
+          parameters: [{ kind: 0x10UL, value: @protocol.Byte(0), }],
+        }).unwrap(),
+      ),
+    ),
+  )
+  ignore(publisher.accept_subscription(42).unwrap())
+  ignore(
+    publisher.receive(@session.InboundStreamStarted(44, @session.Bidirectional)),
+  )
+  let invalid_range : @protocol.RequestErrorMessage = {
+    code: 0x10UL,
+    retry_interval: 0UL,
+    reason: b"",
+    redirect: b"",
+  }
+  assert_eq(
+    publisher.receive(@session.StreamData(44, fetch_for(5UL, 3UL))),
+    Ok([
+      @session.Send(
+        44,
+        @protocol.encode_request_error(invalid_range).unwrap(),
+        true,
+      ),
+      @session.Notify(@session.FetchRejected(5UL, 44, invalid_range)),
+    ]),
+  )
+}
+
+///|
+test "pending Joining FETCH is rejected when its subscription is refused" {
+  let publisher = client_session_ready()
+  let track = client_track(b"live")
+  ignore(publisher.publish_track(track, 7UL).unwrap())
+  ignore(publisher.receive(@session.StreamOpened(@session.Request(0UL), 20)))
+  ignore(publisher.receive(@session.StreamData(20, b"\x07\x00\x01\x00")))
+  ignore(
+    publisher.receive(@session.InboundStreamStarted(40, @session.Bidirectional)),
+  )
+  ignore(
+    publisher.receive(
+      @session.StreamData(
+        40,
+        @protocol.encode_subscribe({ request_id: 1UL, track, parameters: [], }).unwrap(),
+      ),
+    ),
+  )
+  ignore(
+    publisher.receive(@session.InboundStreamStarted(42, @session.Bidirectional)),
+  )
+  let fetch : @protocol.FetchMessage = {
+    request_id: 3UL,
+    fetch_type: @protocol.RelativeJoiningFetch(1UL, 0UL),
+    parameters: [],
+  }
+  assert_eq(
+    publisher.receive(
+      @session.StreamData(42, @protocol.encode_fetch(fetch).unwrap()),
+    ),
+    Ok([]),
+  )
+  let subscribe_error : @protocol.RequestErrorMessage = {
+    code: 0x20UL,
+    retry_interval: 0UL,
+    reason: b"not interested",
+    redirect: b"",
+  }
+  let joining_error : @protocol.RequestErrorMessage = {
+    code: 0x32UL,
+    retry_interval: 0UL,
+    reason: b"",
+    redirect: b"",
+  }
+  assert_eq(
+    publisher.reject_subscription(40, subscribe_error),
+    Ok([
+      @session.Send(
+        40,
+        @protocol.encode_request_error(subscribe_error).unwrap(),
+        true,
+      ),
+      @session.Notify(@session.SubscriptionRejected(1UL, 40)),
+      @session.Send(
+        42,
+        @protocol.encode_request_error(joining_error).unwrap(),
+        true,
+      ),
+      @session.Notify(@session.FetchRejected(3UL, 42, joining_error)),
+    ]),
+  )
+  ignore(
+    publisher.receive(@session.InboundStreamStarted(44, @session.Bidirectional)),
+  )
+  let after_end : @protocol.FetchMessage = {
+    request_id: 5UL,
+    fetch_type: @protocol.RelativeJoiningFetch(1UL, 0UL),
+    parameters: [],
+  }
+  assert_eq(
+    publisher.receive(
+      @session.StreamData(44, @protocol.encode_fetch(after_end).unwrap()),
+    ),
+    Ok([
+      @session.Send(
+        44,
+        @protocol.encode_request_error(joining_error).unwrap(),
+        true,
+      ),
+      @session.Notify(@session.FetchRejected(5UL, 44, joining_error)),
+    ]),
+  )
+}
+
+///|
+test "cancelling a pending subscription releases its Joining FETCH" {
+  let publisher = client_session_ready()
+  let track = client_track(b"live")
+  ignore(publisher.publish_track(track, 7UL).unwrap())
+  ignore(publisher.receive(@session.StreamOpened(@session.Request(0UL), 20)))
+  ignore(publisher.receive(@session.StreamData(20, b"\x07\x00\x01\x00")))
+  ignore(
+    publisher.receive(@session.InboundStreamStarted(40, @session.Bidirectional)),
+  )
+  ignore(
+    publisher.receive(
+      @session.StreamData(
+        40,
+        @protocol.encode_subscribe({ request_id: 1UL, track, parameters: [], }).unwrap(),
+      ),
+    ),
+  )
+  ignore(
+    publisher.receive(@session.InboundStreamStarted(42, @session.Bidirectional)),
+  )
+  let fetch : @protocol.FetchMessage = {
+    request_id: 3UL,
+    fetch_type: @protocol.RelativeJoiningFetch(1UL, 0UL),
+    parameters: [],
+  }
+  assert_eq(
+    publisher.receive(
+      @session.StreamData(42, @protocol.encode_fetch(fetch).unwrap()),
+    ),
+    Ok([]),
+  )
+  let invalid_joining_id : @protocol.RequestErrorMessage = {
+    code: 0x32UL,
+    retry_interval: 0UL,
+    reason: b"",
+    redirect: b"",
+  }
+  assert_eq(
+    publisher.cancel_request(1UL),
+    Ok([
+      @session.Send(
+        42,
+        @protocol.encode_request_error(invalid_joining_id).unwrap(),
+        true,
+      ),
+      @session.Notify(@session.FetchRejected(3UL, 42, invalid_joining_id)),
+      @session.AbortSend(40, 1UL),
+      @session.StopReceiving(40, 1UL),
+      @session.Notify(@session.SubscriptionEnded(1UL, 40)),
+    ]),
+  )
+  assert_eq(publisher.receive(@session.Clock(30000UL)), Ok([]))
+}
+
+///|
+test "PUBLISH request ID is a valid Joining subscription" {
+  let publisher = client_session_ready()
+  let track = client_track(b"live")
+  ignore(publisher.publish_track(track, 7UL).unwrap())
+  ignore(publisher.receive(@session.StreamOpened(@session.Request(0UL), 20)))
+  assert_eq(
+    publisher.receive(
+      @session.StreamData(
+        20,
+        @protocol.encode_request_ok_for(
+          { parameters: [], properties: b"", },
+          @protocol.RequestOkContext::Publish,
+        ).unwrap(),
+      ),
+    ),
+    Ok([@session.Notify(@session.PublishAccepted(0UL))]),
+  )
+
+  let header : @protocol.SubgroupHeader = {
+    track_alias: 7UL,
+    group_id: 4UL,
+    subgroup_id_mode: @protocol.Zero,
+    publisher_priority: None,
+    end_of_group: false,
+    first_object: true,
+    has_properties: false,
+  }
+  ignore(publisher.open_object_stream(20, header).unwrap())
+  ignore(publisher.receive(@session.StreamOpened(@session.Object(0UL), 32)))
+  ignore(
+    publisher
+    .send_object(32, {
+      object_id: 0UL,
+      status: @protocol.Normal,
+      properties: b"",
+      payload: b"new-live-group",
+    })
+    .unwrap(),
+  )
+  ignore(
+    publisher.receive(@session.InboundStreamStarted(34, @session.Bidirectional)),
+  )
+  let joining_fetch = @protocol.encode_fetch({
+    request_id: 1UL,
+    fetch_type: @protocol.AbsoluteJoiningFetch(0UL, 2UL),
+    parameters: [],
+  }).unwrap()
+  assert_eq(
+    publisher.receive(@session.StreamData(34, joining_fetch)),
+    Ok([
+      @session.Notify(
+        @session.FetchRequested(
+          1UL,
+          34,
+          track,
+          { group: 2UL, object: 0UL, },
+          { group: 4UL, object: 1UL, },
+          [],
+        ),
+      ),
+    ]),
+  )
+}
+
+///|
 test "empty successful FETCH requires an empty data stream and request errors fail once" {
   let client = client_session_ready()
   let track = client_track(b"archive")

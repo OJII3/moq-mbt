@@ -145,6 +145,7 @@ fn ClientSession::end_session(
   self.inbound_fetch_streams.clear()
   self.inbound_fetch_request_ids.clear()
   self.outgoing_fetch_streams.clear()
+  self.pending_joining_fetches.clear()
   let actions : Array[ClientSessionAction] = []
   match close_code {
     Some(code) => actions.push(CloseConnection(code, reason))
@@ -163,7 +164,7 @@ fn ClientSession::clock(
     self.now_ms = now_ms
   }
   self.clock_initialized = true
-  let actions : Array[ClientSessionAction] = []
+  let actions : Array[ClientSessionAction] = self.expire_pending_joining_fetches()
   let expired_requests : Array[Int64] = []
   for (stream, deadline) in self.request_goaway_deadlines {
     if self.now_ms >= deadline {

@@ -235,6 +235,7 @@ pub struct ClientSession {
   priv fetch_streams : Map[Int64, UInt64]
   priv inbound_fetch_streams : Map[Int64, InboundFetchDataStream]
   priv inbound_fetch_request_ids : Map[UInt64, Int64]
+  priv pending_joining_fetches : Map[UInt64, Array[UInt64]]
   priv outgoing_fetch_streams : Map[Int64, OutgoingFetchDataStream]
   priv request_streams : Map[Int64, UInt64]
   priv inbound_buffers : Map[Int64, Bytes]
@@ -297,6 +298,7 @@ pub fn ClientSession::new(
         fetch_streams: {},
         inbound_fetch_streams: {},
         inbound_fetch_request_ids: {},
+        pending_joining_fetches: {},
         outgoing_fetch_streams: {},
         request_streams: {},
         inbound_buffers: {},

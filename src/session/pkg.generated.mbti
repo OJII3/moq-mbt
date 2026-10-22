@@ -34,6 +34,8 @@ pub fn ClientSession::accept_subscription_update(Self, Int64, UInt64, @protocol.
 pub fn ClientSession::cancel_fetch(Self, UInt64) -> Result[Array[ClientSessionAction], ClientSessionError]
 pub fn ClientSession::cancel_request(Self, UInt64) -> Result[Array[ClientSessionAction], ClientSessionError]
 pub fn ClientSession::close(Self, UInt64, Bytes) -> Array[ClientSessionAction]
+pub fn ClientSession::fetch_absolute(Self, UInt64, UInt64, Array[@protocol.MessageParameter]) -> Result[(UInt64, Array[ClientSessionAction]), ClientSessionError]
+pub fn ClientSession::fetch_relative(Self, UInt64, UInt64, Array[@protocol.MessageParameter]) -> Result[(UInt64, Array[ClientSessionAction]), ClientSessionError]
 pub fn ClientSession::fetch_track(Self, @protocol.TrackName, @protocol.FetchLocation, @protocol.FetchLocation, Array[@protocol.MessageParameter]) -> Result[(UInt64, Array[ClientSessionAction]), ClientSessionError]
 pub fn ClientSession::finish_fetch(Self, UInt64) -> Result[Array[ClientSessionAction], ClientSessionError]
 pub fn ClientSession::finish_object_stream(Self, Int64) -> Result[Array[ClientSessionAction], ClientSessionError]
