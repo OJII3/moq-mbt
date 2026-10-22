@@ -277,27 +277,7 @@ fn ClientSession::stream_opened(
       }
       Ok([Send(stream, @protocol.encode_subgroup_header(pending.header), false)])
     }
-    FetchData(request_id) => {
-      let fetch = match self.fetches.get(request_id) {
-        Some(value) if !value.locally_initiated && value.state == FetchAccepted =>
-          value
-        _ => return Err(UnknownRequest)
-      }
-      if fetch.data_stream is Some(_) ||
-        self.outgoing_fetch_streams.get(stream) is Some(_) {
-        return Err(DuplicateStream)
-      }
-      fetch.data_stream = Some(stream)
-      self.outgoing_fetch_streams[stream] = {
-        request_id,
-        encoder: @protocol.FetchDataEncoder::new(
-          ClientSession::fetch_group_order(fetch.parameters),
-        ),
-        finishing: false,
-        pending_send_count: 1UL,
-      }
-      Ok([Send(stream, @protocol.encode_fetch_header({ request_id, }), false)])
-    }
+    FetchData(request_id) => self.start_outbound_fetch_data(stream, request_id)
   }
 }
 
@@ -325,27 +305,7 @@ fn ClientSession::stream_finished(
     None => ()
   }
   match self.inbound_fetch_streams.get(stream) {
-    Some(inbound) => {
-      let fetch = self.fetches.get(inbound.request_id).unwrap()
-      if fetch.lifetime.cancelled || fetch.state == FetchTerminal {
-        self.inbound_fetch_streams.remove(stream)
-        self.inbound_fetch_request_ids.remove(inbound.request_id)
-        self.inbound_stream_kinds.remove(stream)
-        return Ok([])
-      }
-      if !inbound.buffer.is_empty() || inbound.decoder is None {
-        self.inbound_fetch_streams.remove(stream)
-        self.inbound_fetch_request_ids.remove(inbound.request_id)
-        self.inbound_stream_kinds.remove(stream)
-        return Err(Track(IncompleteObjectStream))
-      }
-      fetch.data_finished = true
-      fetch.data_stream = None
-      self.inbound_fetch_streams.remove(stream)
-      self.inbound_fetch_request_ids.remove(inbound.request_id)
-      self.inbound_stream_kinds.remove(stream)
-      return Ok(complete_inbound_fetch_if_ready(fetch))
-    }
+    Some(_) => return self.finish_inbound_fetch_data(stream)
     None => ()
   }
   match self.ignored_object_streams.get(stream) {
@@ -468,19 +428,7 @@ fn ClientSession::stream_reset(
     return Err(Handshake(self.handshake.control_closed()))
   }
   match self.inbound_fetch_streams.get(stream) {
-    Some(inbound) => {
-      let fetch = self.fetches.get(inbound.request_id).unwrap()
-      self.inbound_fetch_streams.remove(stream)
-      self.inbound_fetch_request_ids.remove(inbound.request_id)
-      self.inbound_stream_kinds.remove(stream)
-      fetch.data_stream = None
-      if !fetch.terminal_notified {
-        fetch.state = FetchTerminal
-        fetch.terminal_notified = true
-        return Ok([Notify(FetchReset(inbound.request_id, stream, error_code))])
-      }
-      return Ok([])
-    }
+    Some(_) => return self.reset_inbound_fetch_data(stream, error_code)
     None => ()
   }
   match self.ignored_object_streams.get(stream) {
@@ -582,21 +530,30 @@ fn ClientSession::send_complete(
     None =>
       match self.outgoing_fetch_streams.get(stream) {
         Some(outgoing) if canceled => {
-          self.outgoing_fetch_streams.remove(stream)
           let fetch = self.fetches.get(outgoing.request_id).unwrap()
-          fetch.state = FetchTerminal
-          fetch.terminal_notified = true
-          Ok([Notify(SendFinished(stream, true))])
+          Ok(
+            self.terminate_fetch(
+              fetch,
+              [Notify(SendFinished(stream, true))],
+              None,
+              RemoveFetchData,
+            ),
+          )
         }
         Some(outgoing) => {
           if outgoing.pending_send_count > 0UL {
             outgoing.pending_send_count = outgoing.pending_send_count - 1UL
           }
           if outgoing.finishing && outgoing.pending_send_count == 0UL {
-            self.outgoing_fetch_streams.remove(stream)
             let fetch = self.fetches.get(outgoing.request_id).unwrap()
-            fetch.state = FetchTerminal
-            Ok([Notify(SendFinished(stream, false))])
+            Ok(
+              self.terminate_fetch(
+                fetch,
+                [Notify(SendFinished(stream, false))],
+                None,
+                RemoveFetchData,
+              ),
+            )
           } else {
             Ok([Notify(SendFinished(stream, false))])
           }

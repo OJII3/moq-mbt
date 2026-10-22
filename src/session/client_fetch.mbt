@@ -31,6 +31,34 @@ priv struct ClientFetch {
 }
 
 ///|
+priv enum FetchDataDisposition {
+  KeepFetchData
+  StopFetchData(UInt64)
+  AbortFetchData(UInt64)
+  RemoveFetchData
+}
+
+///|
+fn ClientSession::clear_fetch_data_stream(
+  self : ClientSession,
+  fetch : ClientFetch,
+  stream : Int64,
+  discard_inbound : Bool,
+) -> Unit {
+  self.inbound_fetch_streams.remove(stream)
+  self.inbound_fetch_request_ids.remove(fetch.request_id)
+  self.outgoing_fetch_streams.remove(stream)
+  if discard_inbound {
+    self.inbound_stream_kinds[stream] = Discarded
+  } else {
+    self.inbound_stream_kinds.remove(stream)
+  }
+  if fetch.data_stream == Some(stream) {
+    fetch.data_stream = None
+  }
+}
+
+///|
 priv struct InboundFetchDataStream {
   request_id : UInt64
   mut buffer : Bytes
@@ -92,6 +120,42 @@ fn new_client_fetch(
     pending_deadline: None,
     outgoing_fetch_type: None,
   }
+}
+
+///|
+fn ClientSession::terminate_fetch(
+  self : ClientSession,
+  fetch : ClientFetch,
+  actions : Array[ClientSessionAction],
+  notification : ClientSessionAction?,
+  data_disposition : FetchDataDisposition,
+) -> Array[ClientSessionAction] {
+  fetch.state = FetchTerminal
+  let should_notify = !fetch.terminal_notified
+  fetch.terminal_notified = true
+  fetch.pending_deadline = None
+  self.remove_pending_joining_fetch(fetch.request_id)
+  match fetch.data_stream {
+    Some(stream) =>
+      match data_disposition {
+        KeepFetchData => ()
+        StopFetchData(code) => {
+          actions.push(StopReceiving(stream, code))
+          self.clear_fetch_data_stream(fetch, stream, true)
+        }
+        AbortFetchData(code) => {
+          actions.push(AbortSend(stream, code))
+          self.clear_fetch_data_stream(fetch, stream, false)
+        }
+        RemoveFetchData => self.clear_fetch_data_stream(fetch, stream, false)
+      }
+    None => ()
+  }
+  match notification {
+    Some(action) if should_notify => actions.push(action)
+    Some(_) | None => ()
+  }
+  actions
 }
 
 ///|
@@ -327,12 +391,12 @@ fn ClientSession::resolve_joining_fetch(
   let fail = fn(code) {
     let error = joining_fetch_error(code)
     let bytes = @protocol.encode_request_error(error).unwrap()
-    fetch.state = FetchTerminal
-    fetch.pending_deadline = None
-    [
-      Send(stream, bytes, true),
-      Notify(FetchRejected(request_id, stream, error)),
-    ]
+    self.terminate_fetch(
+      fetch,
+      [Send(stream, bytes, true)],
+      Some(Notify(FetchRejected(request_id, stream, error))),
+      RemoveFetchData,
+    )
   }
   if !subscription_forward(subscription.parameters) {
     return fail(request_error_invalid_range)
@@ -428,10 +492,15 @@ fn ClientSession::fail_pending_joining_fetches(
         let stream = fetch.stream.unwrap()
         let error = joining_fetch_error(code)
         let bytes = @protocol.encode_request_error(error).unwrap()
-        fetch.state = FetchTerminal
-        fetch.pending_deadline = None
-        actions.push(Send(stream, bytes, true))
-        actions.push(Notify(FetchRejected(request_id, stream, error)))
+        for
+          action in self.terminate_fetch(
+            fetch,
+            [Send(stream, bytes, true)],
+            Some(Notify(FetchRejected(request_id, stream, error))),
+            RemoveFetchData,
+          ) {
+          actions.push(action)
+        }
       }
       _ => ()
     }
@@ -482,11 +551,16 @@ fn ClientSession::expire_pending_joining_fetches(
     let stream = fetch.stream.unwrap()
     let error = joining_fetch_error(request_error_timeout)
     let bytes = @protocol.encode_request_error(error).unwrap()
-    fetch.state = FetchTerminal
-    fetch.pending_deadline = None
     self.remove_pending_joining_fetch(request_id)
-    actions.push(Send(stream, bytes, true))
-    actions.push(Notify(FetchRejected(request_id, stream, error)))
+    for
+      action in self.terminate_fetch(
+        fetch,
+        [Send(stream, bytes, true)],
+        Some(Notify(FetchRejected(request_id, stream, error))),
+        RemoveFetchData,
+      ) {
+      actions.push(action)
+    }
   }
   actions
 }
@@ -604,14 +678,17 @@ pub fn ClientSession::reject_fetch(
     Ok(value) => value
     Err(codec_error) => return Err(Encoding(codec_error))
   }
-  fetch.state = FetchTerminal
-  fetch.terminal_notified = true
   ignore(fetch.lifetime.transition(LocalFin, true))
   Ok(
-    self.finish_actions([
-      Send(fetch.stream.unwrap(), bytes, true),
-      Notify(FetchRejected(request_id, fetch.stream.unwrap(), error)),
-    ]),
+    self.finish_actions(
+      [Send(fetch.stream.unwrap(), bytes, true)] +
+      self.terminate_fetch(
+        fetch,
+        [],
+        Some(Notify(FetchRejected(request_id, fetch.stream.unwrap(), error))),
+        RemoveFetchData,
+      ),
+    ),
   )
 }
 
@@ -721,7 +798,6 @@ pub fn ClientSession::cancel_fetch(
   if fetch.state == FetchTerminal || fetch.lifetime.cancelled {
     return Ok([])
   }
-  fetch.state = FetchTerminal
   let effects = fetch.lifetime.transition(Cancel(1UL), fetch.stream is Some(_))
   let actions : Array[ClientSessionAction] = []
   match fetch.stream {
@@ -735,21 +811,16 @@ pub fn ClientSession::cancel_fetch(
     }
     None => ()
   }
-  match fetch.data_stream {
-    Some(stream) => {
-      actions.push(StopReceiving(stream, 1UL))
-      self.inbound_fetch_streams.remove(stream)
-      self.inbound_fetch_request_ids.remove(request_id)
-      self.inbound_stream_kinds[stream] = Discarded
-      fetch.data_stream = None
-    }
-    None => ()
-  }
-  if !fetch.terminal_notified {
-    fetch.terminal_notified = true
-    actions.push(Notify(FetchCancelled(request_id, 1UL)))
-  }
-  Ok(self.finish_actions(actions))
+  Ok(
+    self.finish_actions(
+      self.terminate_fetch(
+        fetch,
+        actions,
+        Some(Notify(FetchCancelled(request_id, 1UL))),
+        StopFetchData(1UL),
+      ),
+    ),
+  )
 }
 
 ///|
@@ -788,15 +859,19 @@ pub fn ClientSession::update_fetch(
 }
 
 ///|
-fn complete_inbound_fetch_if_ready(
+fn ClientSession::complete_inbound_fetch_if_ready(
+  self : ClientSession,
   fetch : ClientFetch,
 ) -> Array[ClientSessionAction] {
   if fetch.state == FetchAccepted &&
     fetch.data_finished &&
     !fetch.terminal_notified {
-    fetch.state = FetchTerminal
-    fetch.terminal_notified = true
-    return [Notify(FetchFinished(fetch.request_id))]
+    return self.terminate_fetch(
+      fetch,
+      [],
+      Some(Notify(FetchFinished(fetch.request_id))),
+      KeepFetchData,
+    )
   }
   []
 }
@@ -830,6 +905,77 @@ fn ClientSession::start_inbound_fetch_data(
     decoder: Some(decoder),
   }
   Ok([])
+}
+
+///|
+fn ClientSession::start_outbound_fetch_data(
+  self : ClientSession,
+  stream : Int64,
+  request_id : UInt64,
+) -> Result[Array[ClientSessionAction], ClientSessionError] {
+  let fetch = match self.fetches.get(request_id) {
+    Some(value) if !value.locally_initiated && value.state == FetchAccepted =>
+      value
+    _ => return Err(UnknownRequest)
+  }
+  if fetch.data_stream is Some(_) ||
+    self.outgoing_fetch_streams.get(stream) is Some(_) {
+    return Err(DuplicateStream)
+  }
+  fetch.data_stream = Some(stream)
+  self.outgoing_fetch_streams[stream] = {
+    request_id,
+    encoder: @protocol.FetchDataEncoder::new(
+      ClientSession::fetch_group_order(fetch.parameters),
+    ),
+    finishing: false,
+    pending_send_count: 1UL,
+  }
+  Ok([Send(stream, @protocol.encode_fetch_header({ request_id, }), false)])
+}
+
+///|
+fn ClientSession::finish_inbound_fetch_data(
+  self : ClientSession,
+  stream : Int64,
+) -> Result[Array[ClientSessionAction], ClientSessionError] {
+  let inbound = match self.inbound_fetch_streams.get(stream) {
+    Some(value) => value
+    None => return Err(UnknownStream)
+  }
+  let fetch = self.fetches.get(inbound.request_id).unwrap()
+  if fetch.lifetime.cancelled || fetch.state == FetchTerminal {
+    self.clear_fetch_data_stream(fetch, stream, false)
+    return Ok([])
+  }
+  if !inbound.buffer.is_empty() || inbound.decoder is None {
+    self.clear_fetch_data_stream(fetch, stream, false)
+    return Err(Track(IncompleteObjectStream))
+  }
+  fetch.data_finished = true
+  self.clear_fetch_data_stream(fetch, stream, false)
+  Ok(self.complete_inbound_fetch_if_ready(fetch))
+}
+
+///|
+fn ClientSession::reset_inbound_fetch_data(
+  self : ClientSession,
+  stream : Int64,
+  error_code : UInt64,
+) -> Result[Array[ClientSessionAction], ClientSessionError] {
+  let inbound = match self.inbound_fetch_streams.get(stream) {
+    Some(value) => value
+    None => return Err(UnknownStream)
+  }
+  let fetch = self.fetches.get(inbound.request_id).unwrap()
+  Ok(
+    self.terminate_fetch(
+      fetch,
+      [],
+      Some(Notify(FetchReset(inbound.request_id, stream, error_code))),
+      RemoveFetchData,
+    ),
+  )
 }
 
 ///|
@@ -989,22 +1135,15 @@ fn ClientSession::receive_fetch_response(
           if fetch.end_of_track {
             values.push(Notify(FetchEndOfTrack(request_id)))
           }
-          values + complete_inbound_fetch_if_ready(fetch)
+          values + self.complete_inbound_fetch_if_ready(fetch)
         }
-        @protocol.RequestError(error) if fetch.state == FetchPending => {
-          fetch.state = FetchTerminal
-          fetch.terminal_notified = true
-          let values : Array[ClientSessionAction] = []
-          if fetch.data_stream is Some(data_stream) {
-            values.push(StopReceiving(data_stream, error.code))
-            self.inbound_fetch_streams.remove(data_stream)
-            self.inbound_fetch_request_ids.remove(request_id)
-            self.inbound_stream_kinds[data_stream] = Discarded
-            fetch.data_stream = None
-          }
-          values.push(Notify(FetchFailed(request_id, error)))
-          values
-        }
+        @protocol.RequestError(error) if fetch.state == FetchPending =>
+          self.terminate_fetch(
+            fetch,
+            [],
+            Some(Notify(FetchFailed(request_id, error))),
+            StopFetchData(error.code),
+          )
         @protocol.RequestUpdate(update) if !fetch.locally_initiated &&
           fetch.state == FetchAccepted &&
           !fetch.lifetime.peer_send_closed => {
@@ -1138,22 +1277,18 @@ pub fn ClientSession::reject_fetch_update(
   let actions : Array[ClientSessionAction] = [
     Send(fetch.stream.unwrap(), encoded, false),
   ]
-  match fetch.data_stream {
-    Some(data_stream) => {
-      self.outgoing_fetch_streams.remove(data_stream)
-      actions.push(AbortSend(data_stream, error.code))
-      fetch.data_stream = None
-    }
-    None => ()
-  }
-  fetch.state = FetchTerminal
   fetch.pending_update_id = None
   fetch.pending_update_parameters = []
-  if !fetch.terminal_notified {
-    fetch.terminal_notified = true
-    actions.push(Notify(FetchFailed(request_id, error)))
-  }
-  Ok(self.finish_actions(actions))
+  Ok(
+    self.finish_actions(
+      self.terminate_fetch(
+        fetch,
+        actions,
+        Some(Notify(FetchFailed(request_id, error))),
+        AbortFetchData(error.code),
+      ),
+    ),
+  )
 }
 
 ///|

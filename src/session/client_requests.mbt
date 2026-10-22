@@ -832,9 +832,6 @@ fn ClientSession::end_request_stream(
       if !effects.abort_send && !effects.stop_receiving && !effects.notify_end {
         return []
       }
-      fetch.state = FetchTerminal
-      fetch.pending_deadline = None
-      self.remove_pending_joining_fetch(request_id)
       let code = fetch.lifetime.cancel_error_code.unwrap()
       let actions : Array[ClientSessionAction] = []
       if effects.abort_send {
@@ -843,26 +840,16 @@ fn ClientSession::end_request_stream(
       if effects.stop_receiving {
         actions.push(StopReceiving(stream, code))
       }
-      match fetch.data_stream {
-        Some(data_stream) => {
-          if fetch.locally_initiated {
-            actions.push(StopReceiving(data_stream, code))
-            self.inbound_fetch_streams.remove(data_stream)
-            self.inbound_fetch_request_ids.remove(request_id)
-            self.inbound_stream_kinds[data_stream] = Discarded
-          } else {
-            actions.push(AbortSend(data_stream, code))
-            self.outgoing_fetch_streams.remove(data_stream)
-          }
-          fetch.data_stream = None
-        }
-        None => ()
-      }
-      if !fetch.terminal_notified {
-        fetch.terminal_notified = true
-        actions.push(Notify(FetchCancelled(request_id, code)))
-      }
-      return actions
+      return self.terminate_fetch(
+        fetch,
+        actions,
+        Some(Notify(FetchCancelled(request_id, code))),
+        if fetch.locally_initiated {
+          StopFetchData(code)
+        } else {
+          AbortFetchData(code)
+        },
+      )
     }
     None => ()
   }
