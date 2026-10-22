@@ -25,6 +25,7 @@ pub struct ClientSession {
 }
 pub fn ClientSession::accept_namespace_publication(Self, Int64) -> Result[Array[ClientSessionAction], ClientSessionError]
 pub fn ClientSession::accept_namespace_subscription(Self, Int64, Array[@protocol.TrackNamespace]) -> Result[Array[ClientSessionAction], ClientSessionError]
+pub fn ClientSession::accept_namespace_subscription_update(Self, Int64, UInt64, @protocol.RequestOkMessage) -> Result[Array[ClientSessionAction], ClientSessionError]
 pub fn ClientSession::accept_namespace_update(Self, Int64, UInt64, @protocol.RequestOkMessage) -> Result[Array[ClientSessionAction], ClientSessionError]
 pub fn ClientSession::accept_subscription(Self, Int64) -> Result[Array[ClientSessionAction], ClientSessionError]
 pub fn ClientSession::accept_subscription_update(Self, Int64, UInt64, @protocol.RequestOkMessage) -> Result[Array[ClientSessionAction], ClientSessionError]
@@ -41,6 +42,7 @@ pub fn ClientSession::publish_track(Self, @protocol.TrackName, UInt64) -> Result
 pub fn ClientSession::receive(Self, ClientSessionEvent) -> Result[Array[ClientSessionAction], ClientSessionError]
 pub fn ClientSession::reject_namespace_publication(Self, Int64, @protocol.RequestErrorMessage) -> Result[Array[ClientSessionAction], ClientSessionError]
 pub fn ClientSession::reject_namespace_subscription(Self, Int64, @protocol.RequestErrorMessage) -> Result[Array[ClientSessionAction], ClientSessionError]
+pub fn ClientSession::reject_namespace_subscription_update(Self, Int64, UInt64, @protocol.RequestErrorMessage) -> Result[Array[ClientSessionAction], ClientSessionError]
 pub fn ClientSession::reject_namespace_update(Self, Int64, UInt64, @protocol.RequestErrorMessage) -> Result[Array[ClientSessionAction], ClientSessionError]
 pub fn ClientSession::reject_subscription(Self, Int64, @protocol.RequestErrorMessage) -> Result[Array[ClientSessionAction], ClientSessionError]
 pub fn ClientSession::reject_subscription_update(Self, Int64, UInt64, @protocol.RequestErrorMessage) -> Result[Array[ClientSessionAction], ClientSessionError]
@@ -51,6 +53,7 @@ pub fn ClientSession::start(Self) -> Result[Array[ClientSessionAction], ClientSe
 pub fn ClientSession::state(Self) -> ClientSessionState
 pub fn ClientSession::subscribe_namespace(Self, @protocol.TrackNamespace) -> Result[(UInt64, Array[ClientSessionAction]), ClientSessionError]
 pub fn ClientSession::subscribe_track(Self, @protocol.TrackName) -> Result[(UInt64, Array[ClientSessionAction]), ClientSessionError]
+pub fn ClientSession::update_namespace_subscription(Self, UInt64, @protocol.TrackNamespace) -> Result[(UInt64, Array[ClientSessionAction]), ClientSessionError]
 pub fn ClientSession::update_published_namespace(Self, UInt64, Array[@protocol.MessageParameter]) -> Result[(UInt64, Array[ClientSessionAction]), ClientSessionError]
 pub fn ClientSession::update_subscription(Self, UInt64, Array[@protocol.MessageParameter]) -> Result[(UInt64, Array[ClientSessionAction]), ClientSessionError]
 pub fn ClientSession::withdraw_application_namespace(Self, @protocol.TrackNamespace) -> Result[Array[ClientSessionAction], ClientSessionError]
@@ -93,6 +96,7 @@ pub(all) enum ClientSessionError {
   AliasInUse
   SubscriptionNotAccepted
   RequestUpdatePending
+  PrefixOverlap
   UnexpectedMessage
   BufferLimitExceeded
   DatagramSendUnavailable
@@ -143,6 +147,9 @@ pub(all) enum ClientSessionNotice {
   NamespaceDiscovered(UInt64, @protocol.TrackNamespace)
   NamespaceNoLongerAvailable(UInt64, @protocol.TrackNamespace)
   NamespaceSubscriptionEnded(UInt64, Int64)
+  NamespaceSubscriptionUpdateRequested(UInt64, UInt64, Int64, @protocol.TrackNamespace)
+  NamespaceSubscriptionUpdateAccepted(UInt64, UInt64, @protocol.RequestOkMessage)
+  NamespaceSubscriptionUpdateRejected(UInt64, UInt64, @protocol.RequestErrorMessage)
   SubscriptionAccepted(UInt64, Int64, UInt64)
   SubscriptionRejected(UInt64, Int64)
   SubscriptionUpdateRequested(UInt64, UInt64, Int64, Array[@protocol.MessageParameter], Array[@protocol.MessageParameter])

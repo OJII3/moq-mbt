@@ -76,6 +76,22 @@ pub(all) enum ClientSessionNotice {
   NamespaceDiscovered(UInt64, @protocol.TrackNamespace)
   NamespaceNoLongerAvailable(UInt64, @protocol.TrackNamespace)
   NamespaceSubscriptionEnded(UInt64, Int64)
+  NamespaceSubscriptionUpdateRequested(
+    UInt64,
+    UInt64,
+    Int64,
+    @protocol.TrackNamespace
+  )
+  NamespaceSubscriptionUpdateAccepted(
+    UInt64,
+    UInt64,
+    @protocol.RequestOkMessage
+  )
+  NamespaceSubscriptionUpdateRejected(
+    UInt64,
+    UInt64,
+    @protocol.RequestErrorMessage
+  )
   SubscriptionAccepted(UInt64, Int64, UInt64)
   SubscriptionRejected(UInt64, Int64)
   SubscriptionUpdateRequested(
@@ -138,6 +154,7 @@ pub(all) enum ClientSessionError {
   AliasInUse
   SubscriptionNotAccepted
   RequestUpdatePending
+  PrefixOverlap
   UnexpectedMessage
   BufferLimitExceeded
   DatagramSendUnavailable

@@ -105,6 +105,7 @@ fn ClientSession::receive_peer_request(
                 request_id: request.request_id,
                 prefix: request.track_namespace,
                 active_namespaces: [],
+                pending_updates: [],
                 state: Pending,
                 lifetime: RequestLifetime::new(),
               }
@@ -253,6 +254,18 @@ fn ClientSession::receive_peer_request(
             )
             is Some(_) =>
             match self.receive_peer_namespace_update(stream, update) {
+              Ok(values) =>
+                for action in values {
+                  actions.push(action)
+                }
+              Err(error) => return Err(error)
+            }
+          (None, @protocol.RequestUpdate(update)) if self.inbound_namespace_subscriptions.get(
+              stream,
+            )
+            is Some(_) =>
+            match
+              self.receive_peer_namespace_subscription_update(stream, update) {
               Ok(values) =>
                 for action in values {
                   actions.push(action)
