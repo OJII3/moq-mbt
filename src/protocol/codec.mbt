@@ -20,6 +20,7 @@ pub(all) enum CodecError {
   InvalidGoAwayUri
   InvalidTrackName
   InvalidSubgroup
+  InvalidFetchObject
   InvalidDatagram
 } derive(Debug, Eq)
 
