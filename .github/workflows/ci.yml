@@ -21,6 +21,10 @@ jobs:
           rm packages-microsoft-prod.deb
           sudo apt-get update
           sudo apt-get install -y libmsquic
+          for header in msquic.h msquic_posix.h quic_sal_stub.h; do
+            curl -fsSL "https://raw.githubusercontent.com/microsoft/msquic/v2.5.12/src/inc/$header" -o "$RUNNER_TEMP/$header"
+          done
+          sudo install -m 0644 "$RUNNER_TEMP"/*.h /usr/local/include/
 
       - name: Install MoonBit
         shell: bash
