@@ -14,6 +14,22 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
 
+      - name: Install MsQuic
+        run: |
+          curl -fsSLO https://packages.microsoft.com/config/ubuntu/24.04/packages-microsoft-prod.deb
+          sudo dpkg -i packages-microsoft-prod.deb
+          rm packages-microsoft-prod.deb
+          sudo apt-get update
+          sudo apt-get install -y libmsquic
+          for header in msquic.h msquic_posix.h quic_sal_stub.h; do
+            curl -fsSL "https://raw.githubusercontent.com/microsoft/msquic/v2.5.12/src/inc/$header" -o "$RUNNER_TEMP/$header"
+          done
+          sudo install -m 0644 "$RUNNER_TEMP"/*.h /usr/local/include/
+          msquic_lib="$(ldconfig -p | awk '$1 == "libmsquic.so.2" { print $NF; exit }')"
+          test -n "$msquic_lib"
+          sudo ln -s "$msquic_lib" /usr/local/lib/libmsquic.so
+          sudo ldconfig
+
       - name: Install MoonBit
         shell: bash
         run: |
@@ -22,6 +38,9 @@ jobs:
 
       - name: Check MoonBit packages
         run: moon check --target native --deny-warn
+
+      - name: Run MoonBit tests
+        run: moon test
 
       - name: Check formatting
         run: moon fmt --check
