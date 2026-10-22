@@ -213,6 +213,8 @@ fn ClientSession::receive_request(
       self.receive_namespace_subscription_response(request_id, stream, bytes)
     NamespacePublicationResponse(request_id) =>
       self.receive_namespace_response(request_id, stream, bytes)
+    FetchResponse(request_id) =>
+      self.receive_fetch_response(request_id, stream, bytes)
     TrackResponse(request_id) =>
       self.receive_response(request_id, stream, bytes)
     UnknownRequestStream => self.receive_peer_request(stream, bytes)
@@ -235,6 +237,10 @@ fn ClientSession::request_stream_route(
     Some(request_id) if self.namespace_requests.get(request_id).unwrap().locally_initiated =>
       return NamespacePublicationResponse(request_id)
     _ => ()
+  }
+  match self.fetch_streams.get(stream) {
+    Some(request_id) => return FetchResponse(request_id)
+    None => ()
   }
   match self.request_streams.get(stream) {
     Some(request_id) => TrackResponse(request_id)
@@ -708,6 +714,11 @@ pub fn ClientSession::cancel_request(
     Ok(_) => ()
     Err(error) => return Err(error)
   }
+  match self.fetches.get(request_id) {
+    Some(fetch) if fetch.locally_initiated =>
+      return self.cancel_fetch(request_id)
+    _ => ()
+  }
   match self.requests.get(request_id) {
     Some(request) => {
       let publisher_pending_publish_done = match request.stream {
@@ -771,6 +782,45 @@ fn ClientSession::end_request_stream(
   event : RequestLifetimeEvent,
 ) -> Array[ClientSessionAction] {
   self.request_goaway_deadlines.remove(stream)
+  match self.fetch_streams.get(stream) {
+    Some(request_id) => {
+      let fetch = self.fetches.get(request_id).unwrap()
+      let effects = fetch.lifetime.transition(event, true)
+      if !effects.abort_send && !effects.stop_receiving && !effects.notify_end {
+        return []
+      }
+      fetch.state = FetchTerminal
+      let code = fetch.lifetime.cancel_error_code.unwrap()
+      let actions : Array[ClientSessionAction] = []
+      if effects.abort_send {
+        actions.push(AbortSend(stream, code))
+      }
+      if effects.stop_receiving {
+        actions.push(StopReceiving(stream, code))
+      }
+      match fetch.data_stream {
+        Some(data_stream) => {
+          if fetch.locally_initiated {
+            actions.push(StopReceiving(data_stream, code))
+            self.inbound_fetch_streams.remove(data_stream)
+            self.inbound_fetch_request_ids.remove(request_id)
+            self.inbound_stream_kinds[data_stream] = Discarded
+          } else {
+            actions.push(AbortSend(data_stream, code))
+            self.outgoing_fetch_streams.remove(data_stream)
+          }
+          fetch.data_stream = None
+        }
+        None => ()
+      }
+      if !fetch.terminal_notified {
+        fetch.terminal_notified = true
+        actions.push(Notify(FetchCancelled(request_id, code)))
+      }
+      return actions
+    }
+    None => ()
+  }
   match self.inbound_subscriptions.get(stream) {
     Some(_) => return self.end_inbound_subscription(stream, event)
     None => ()

@@ -26,7 +26,27 @@ fn ClientSession::receive_stream_data(
               self.inbound_stream_kinds[stream] = Control
               self.receive_control(stream, combined)
             }
-            0x05UL => Err(UnexpectedMessage)
+            0x05UL =>
+              match @protocol.decode_fetch_header(combined) {
+                @protocol.Incomplete => Err(UnexpectedMessage)
+                @protocol.Invalid(_) => Err(UnexpectedMessage)
+                @protocol.Complete(header, consumed) => {
+                  self.inbound_stream_kinds[stream] = FetchData
+                  let rest = combined[consumed:].to_owned()
+                  match
+                    self.start_inbound_fetch_data(stream, header.request_id) {
+                    Ok(actions) if self.inbound_stream_kinds.get(stream)
+                      is Some(Discarded) => Ok(actions)
+                    Ok(actions) if rest.is_empty() => Ok(actions)
+                    Ok(actions) =>
+                      match self.receive_fetch_data(stream, rest) {
+                        Ok(more) => Ok(actions + more)
+                        Err(error) => Err(error)
+                      }
+                    Err(error) => Err(error)
+                  }
+                }
+              }
             0x132b3e28UL => {
               self.inbound_stream_kinds[stream] = Padding
               Ok([])
@@ -45,11 +65,13 @@ fn ClientSession::receive_stream_data(
         Some(Control) => self.receive_control(stream, bytes)
         Some(Request) => self.receive_request(stream, bytes)
         Some(Subgroup) => self.receive_subgroup(stream, bytes)
+        Some(FetchData) => self.receive_fetch_data(stream, bytes)
         Some(Padding) | Some(Discarded) => Ok([])
         None =>
           match self.request_stream_route(stream) {
             NamespaceSubscriptionResponse(_)
             | NamespacePublicationResponse(_)
+            | FetchResponse(_)
             | TrackResponse(_) => self.receive_request(stream, bytes)
             UnknownRequestStream => Err(UnknownStream)
           }
@@ -83,6 +105,34 @@ fn ClientSession::stream_opened(
         self.namespace_request_streams.get(stream) is Some(_) ||
         self.namespace_subscription_streams.get(stream) is Some(_) {
         return Err(DuplicateStream)
+      }
+      match self.fetches.get(request_id) {
+        Some(fetch) if fetch.locally_initiated && fetch.stream is None => {
+          fetch.stream = Some(stream)
+          self.fetch_streams[stream] = request_id
+          if fetch.lifetime.cancelled {
+            return Ok([
+              AbortSend(stream, fetch.lifetime.cancel_error_code.unwrap_or(1UL)),
+              StopReceiving(stream, 1UL),
+            ])
+          }
+          let encoded = @protocol.encode_fetch({
+            request_id,
+            fetch_type: @protocol.StandaloneFetch(
+              fetch.track,
+              fetch.start,
+              fetch.end,
+            ),
+            parameters: fetch.parameters,
+          })
+          let bytes = match encoded {
+            Ok(value) => value
+            Err(error) => return Err(Encoding(error))
+          }
+          return Ok([Send(stream, bytes, false)])
+        }
+        Some(_) => return Err(DuplicateStream)
+        None => ()
       }
       match self.namespace_subscriptions.get(request_id) {
         Some(request) if request.stream is None => {
@@ -229,6 +279,27 @@ fn ClientSession::stream_opened(
       }
       Ok([Send(stream, @protocol.encode_subgroup_header(pending.header), false)])
     }
+    FetchData(request_id) => {
+      let fetch = match self.fetches.get(request_id) {
+        Some(value) if !value.locally_initiated && value.state == FetchAccepted =>
+          value
+        _ => return Err(UnknownRequest)
+      }
+      if fetch.data_stream is Some(_) ||
+        self.outgoing_fetch_streams.get(stream) is Some(_) {
+        return Err(DuplicateStream)
+      }
+      fetch.data_stream = Some(stream)
+      self.outgoing_fetch_streams[stream] = {
+        request_id,
+        encoder: @protocol.FetchDataEncoder::new(
+          ClientSession::fetch_group_order(fetch.parameters),
+        ),
+        finishing: false,
+        pending_send_count: 1UL,
+      }
+      Ok([Send(stream, @protocol.encode_fetch_header({ request_id, }), false)])
+    }
   }
 }
 
@@ -240,6 +311,44 @@ fn ClientSession::stream_finished(
   if self.peer_control_stream == Some(stream) ||
     self.inbound_stream_kinds.get(stream) is Some(Control) {
     return Err(Handshake(self.handshake.control_closed()))
+  }
+  match self.fetch_streams.get(stream) {
+    Some(request_id) => {
+      let fetch = self.fetches.get(request_id).unwrap()
+      if fetch.locally_initiated &&
+        (fetch.state == FetchPending || !fetch.response_buffer.is_empty()) {
+        return Err(UnexpectedMessage)
+      }
+      ignore(fetch.lifetime.transition(PeerFin, true))
+      fetch.response_buffer = b""
+      self.inbound_buffers.remove(stream)
+      return Ok([])
+    }
+    None => ()
+  }
+  match self.inbound_fetch_streams.get(stream) {
+    Some(inbound) => {
+      let fetch = self.fetches.get(inbound.request_id).unwrap()
+      if fetch.lifetime.cancelled || fetch.state == FetchTerminal {
+        self.inbound_fetch_streams.remove(stream)
+        self.inbound_fetch_request_ids.remove(inbound.request_id)
+        self.inbound_stream_kinds.remove(stream)
+        return Ok([])
+      }
+      if !inbound.buffer.is_empty() || inbound.decoder is None {
+        self.inbound_fetch_streams.remove(stream)
+        self.inbound_fetch_request_ids.remove(inbound.request_id)
+        self.inbound_stream_kinds.remove(stream)
+        return Err(Track(IncompleteObjectStream))
+      }
+      fetch.data_finished = true
+      fetch.data_stream = None
+      self.inbound_fetch_streams.remove(stream)
+      self.inbound_fetch_request_ids.remove(inbound.request_id)
+      self.inbound_stream_kinds.remove(stream)
+      return Ok(complete_inbound_fetch_if_ready(fetch))
+    }
+    None => ()
   }
   match self.ignored_object_streams.get(stream) {
     Some(ignored) => {
@@ -360,6 +469,22 @@ fn ClientSession::stream_reset(
     self.inbound_stream_kinds.get(stream) is Some(Control) {
     return Err(Handshake(self.handshake.control_closed()))
   }
+  match self.inbound_fetch_streams.get(stream) {
+    Some(inbound) => {
+      let fetch = self.fetches.get(inbound.request_id).unwrap()
+      self.inbound_fetch_streams.remove(stream)
+      self.inbound_fetch_request_ids.remove(inbound.request_id)
+      self.inbound_stream_kinds.remove(stream)
+      fetch.data_stream = None
+      if !fetch.terminal_notified {
+        fetch.state = FetchTerminal
+        fetch.terminal_notified = true
+        return Ok([Notify(FetchReset(inbound.request_id, stream, error_code))])
+      }
+      return Ok([])
+    }
+    None => ()
+  }
   match self.ignored_object_streams.get(stream) {
     Some(ignored) => {
       self.ignored_object_streams.remove(stream)
@@ -410,7 +535,8 @@ fn ClientSession::stream_reset(
         return Ok(self.end_namespace_request(stream, PeerReset(error_code)))
       }
       if self.inbound_subscriptions.get(stream) is Some(_) ||
-        self.request_streams.get(stream) is Some(_) {
+        self.request_streams.get(stream) is Some(_) ||
+        self.fetch_streams.get(stream) is Some(_) {
         return Ok(self.end_request_stream(stream, PeerReset(error_code)))
       }
       self.inbound_buffers.remove(stream)
@@ -456,15 +582,38 @@ fn ClientSession::send_complete(
       }
     }
     None =>
-      if self.namespace_request_streams.get(stream) is Some(request_id) &&
-        self.namespace_requests.get(request_id).unwrap().lifetime.cancelled {
-        Ok([])
-      } else {
-        match self.request_streams.get(stream) {
-          Some(request_id) if self.requests.get(request_id).unwrap().lifetime.cancelled =>
-            Ok([])
-          _ => Ok([Notify(SendFinished(stream, canceled))])
+      match self.outgoing_fetch_streams.get(stream) {
+        Some(outgoing) if canceled => {
+          self.outgoing_fetch_streams.remove(stream)
+          let fetch = self.fetches.get(outgoing.request_id).unwrap()
+          fetch.state = FetchTerminal
+          fetch.terminal_notified = true
+          Ok([Notify(SendFinished(stream, true))])
         }
+        Some(outgoing) => {
+          if outgoing.pending_send_count > 0UL {
+            outgoing.pending_send_count = outgoing.pending_send_count - 1UL
+          }
+          if outgoing.finishing && outgoing.pending_send_count == 0UL {
+            self.outgoing_fetch_streams.remove(stream)
+            let fetch = self.fetches.get(outgoing.request_id).unwrap()
+            fetch.state = FetchTerminal
+            Ok([Notify(SendFinished(stream, false))])
+          } else {
+            Ok([Notify(SendFinished(stream, false))])
+          }
+        }
+        None =>
+          if self.namespace_request_streams.get(stream) is Some(request_id) &&
+            self.namespace_requests.get(request_id).unwrap().lifetime.cancelled {
+            Ok([])
+          } else {
+            match self.request_streams.get(stream) {
+              Some(request_id) if self.requests.get(request_id).unwrap().lifetime.cancelled =>
+                Ok([])
+              _ => Ok([Notify(SendFinished(stream, canceled))])
+            }
+          }
       }
   }
 }

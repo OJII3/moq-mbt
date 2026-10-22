@@ -49,6 +49,76 @@ fn ClientSession::receive_peer_request(
       @protocol.Complete(message, consumed) => {
         remaining = remaining[consumed:].to_owned()
         match (self.inbound_subscriptions.get(stream), message) {
+          (None, @protocol.Fetch(request)) => {
+            if (request.request_id & 1UL) != 1UL {
+              return Err(InvalidRequestId)
+            }
+            if self.peer_request_ids.get(request.request_id) is Some(_) {
+              return Err(DuplicateRequestId)
+            }
+            self.peer_request_ids[request.request_id] = stream
+            self.note_peer_request_id(request.request_id)
+            let (track, start, end) = match request.fetch_type {
+              @protocol.StandaloneFetch(track, start, end) =>
+                (track, start, end)
+              _ => {
+                let error : @protocol.RequestErrorMessage = {
+                  code: 0x03UL,
+                  retry_interval: 0UL,
+                  reason: b"",
+                  redirect: b"",
+                }
+                let error_bytes = match @protocol.encode_request_error(error) {
+                  Ok(value) => value
+                  Err(codec_error) => return Err(Encoding(codec_error))
+                }
+                actions.push(Send(stream, error_bytes, true))
+                continue
+              }
+            }
+            if !valid_fetch_group_order(request.parameters) {
+              return Err(UnexpectedMessage)
+            }
+            if self.control_goaway_sent {
+              let error : @protocol.RequestErrorMessage = {
+                code: request_error_going_away,
+                retry_interval: 0UL,
+                reason: b"",
+                redirect: b"",
+              }
+              let error_bytes = match @protocol.encode_request_error(error) {
+                Ok(value) => value
+                Err(codec_error) => return Err(Encoding(codec_error))
+              }
+              actions.push(Send(stream, error_bytes, true))
+              actions.push(
+                Notify(FetchRejected(request.request_id, stream, error)),
+              )
+            } else {
+              self.fetch_streams[stream] = request.request_id
+              self.fetches[request.request_id] = new_client_fetch(
+                request.request_id,
+                track,
+                start,
+                end,
+                false,
+                Some(stream),
+                request.parameters,
+              )
+              actions.push(
+                Notify(
+                  FetchRequested(
+                    request.request_id,
+                    stream,
+                    track,
+                    start,
+                    end,
+                    request.parameters,
+                  ),
+                ),
+              )
+            }
+          }
           (None, @protocol.SubscribeNamespace(request)) => {
             if self.namespace_subscription_streams.get(stream) is Some(_) ||
               self.namespace_request_streams.get(stream) is Some(_) {
