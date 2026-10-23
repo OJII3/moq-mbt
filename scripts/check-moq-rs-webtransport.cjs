@@ -167,6 +167,33 @@ async function main() {
       `Playwright WebTransport connected; negotiated ${result.protocol}; ` +
       `received MoQ SETUP (${result.options} options)`,
     );
+
+    const wrongFingerprint = Buffer.from(fingerprint);
+    wrongFingerprint[0] ^= 0xff;
+    const rejected = await page.evaluate(async ({ url, fingerprint }) => {
+      try {
+        const transport = new WebTransport(url, {
+          protocols: ["moqt-18"],
+          serverCertificateHashes: [{
+            algorithm: "sha-256",
+            value: new Uint8Array(fingerprint),
+          }],
+        });
+        await Promise.race([
+          transport.ready,
+          new Promise((_, reject) => setTimeout(
+            () => reject(new Error("timed out waiting for WebTransport.ready")),
+            10000,
+          )),
+        ]);
+        await transport.close();
+        return false;
+      } catch {
+        return true;
+      }
+    }, { url, fingerprint: [...wrongFingerprint] });
+    if (!rejected) throw new Error("incorrect certificate hash unexpectedly connected");
+    console.log("WebTransport rejected an incorrect certificate hash");
   } finally {
     if (browser) await browser.close();
     await new Promise((resolve) => originServer.close(resolve));

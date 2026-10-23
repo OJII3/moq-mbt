@@ -50,7 +50,7 @@ request stream の ID 索引は session の存続中 tombstone として保持�
 
 Draft 18 では `MAX_REQUEST_ID` / `REQUESTS_BLOCKED` と独立したキャンセルメッセージが削除されている。購読更新には `REQUEST_UPDATE`、キャンセルには開いているストリーム方向への `STOP_SENDING` / reset を使う。仕様の [§3.3.2](https://www.ietf.org/archive/id/draft-ietf-moq-transport-18.html#section-3.3.2)、[§10.9](https://www.ietf.org/archive/id/draft-ietf-moq-transport-18.html#section-10.9)、[Appendix A.2](https://www.ietf.org/archive/id/draft-ietf-moq-transport-18.html#appendix-A.2) を参照する。
 
-`scripts/check-interop.sh` は固定 moq5 relay に対して複数 Group/Object と Properties を保持した Standalone FETCH、Namespace の発見・撤回、更新の FORWARD 切替、stream shutdown が完了する購読解除、独立した track の継続、Object Datagram と Subgroup の混在を確認する。FETCH は Object の範囲・順序・payload・Properties と data stream FIN を検証する。Datagram は QUIC 上で順序や配送を保証しないため、通常 payload のサンプル受信以外は全件・順序を成功条件にしない。固定 moq5 は Namespace 購読取消後に subscriber session を close するため、終了後の独立 track 継続は Sans-I/O で確認し、relay の実績とは区別する。relay CLI で再現できない空/範囲外 FETCH、拒否、取消、後着 data、更新失敗、GOAWAY は session の Sans-I/O テストで確認する。
+`scripts/check-interop.sh` は moq-rs relay に対する Draft 18 SETUP と複数 Group/Object の publish/subscribe、Native QUIC の証明書検証を確認する。`scripts/check-moq-rs-dual.sh` は同じ moq-rs endpoint に raw QUIC と WebTransport のクライアントを同時接続し、両方の SETUP を確認する。
 
 ## 追加する構成
 
