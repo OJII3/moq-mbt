@@ -39,7 +39,15 @@ test "Standalone FETCH accepts data before its response and finishes after FIN" 
     Ok([]),
   )
   assert_eq(
-    client.receive(@session.StreamData(30, data)),
+    client.receive(@session.StreamData(30, data[:1].to_owned())),
+    Ok([]),
+  )
+  assert_eq(
+    client.receive(@session.StreamData(30, data[1:2].to_owned())),
+    Ok([]),
+  )
+  assert_eq(
+    client.receive(@session.StreamData(30, data[2:].to_owned())),
     Ok([@session.Notify(@session.FetchObjectReceived(request_id, object))]),
   )
   assert_eq(client.receive(@session.StreamFinished(30)), Ok([]))

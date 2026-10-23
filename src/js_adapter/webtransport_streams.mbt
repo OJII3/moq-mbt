@@ -21,6 +21,7 @@ priv struct WebTransportStreamState {
   mut writer : @streams.WritableStreamDefaultWriter?
   read_cancelled : Ref[Bool]
   write_aborted : Ref[Bool]
+  write_closed : Ref[Bool]
 }
 
 ///|
@@ -87,7 +88,7 @@ fn WebTransportStreamManager::enqueue_stream_event(
     }
     return
   }
-  if self.connection_ended.val {
+  if self.connection_ended.val || self.locally_closed.val {
     return
   }
   if self.event_waiters.length() > 0 {
@@ -240,7 +241,7 @@ fn WebTransportStreamManager::register_stream(
 ) -> Int64 {
   let has_reader = direction is Bidirectional || !locally_opened
   let has_writer = direction is Bidirectional || locally_opened
-  if self.connection_ended.val {
+  if self.connection_ended.val || self.locally_closed.val {
     ffi_webtransport_discard_stream(
       stream,
       has_reader,
@@ -259,7 +260,7 @@ fn WebTransportStreamManager::register_stream(
       has_writer,
       direction is Unidirectional,
     )
-    return id
+    return 0L
   }
   let reader = if has_reader {
     let readable : @streams.ReadableStream = if direction is Unidirectional {
@@ -287,6 +288,7 @@ fn WebTransportStreamManager::register_stream(
     writer,
     read_cancelled: Ref(false),
     write_aborted: Ref(false),
+    write_closed: Ref(false),
   }
   self.streams[id] = state
   self.enqueue_stream_event(StreamStarted(id, direction))
@@ -300,6 +302,7 @@ fn WebTransportStreamManager::register_stream(
             self.enqueue_stream_event(
               SendStopped(id, webtransport_failure(@js.any(error))),
             )
+            writer.release_lock()
             self.release_writer(id)
           }
           @js.Promise::resolve(())
@@ -489,7 +492,19 @@ fn WebTransportStreamManager::open_stream(
       )
     } else {
       let stream : @js.Any = settled["value"]
-      @js.Promise::resolve(Ok(self.register_stream(stream, direction, true)))
+      let id = self.register_stream(stream, direction, true)
+      if id == 0L {
+        @js.Promise::resolve(
+          Err(WebTransportFailure::{
+            name: "QuotaExceededError",
+            message: "active stream limit reached",
+            source: Some("session"),
+            stream_error_code: None,
+          }),
+        )
+      } else {
+        @js.Promise::resolve(Ok(id))
+      }
     }
   })
 }
@@ -549,6 +564,19 @@ fn WebTransportStreamManager::write_stream(
         }),
       )
   }
+  if state.write_closed.val {
+    return @js.Promise::resolve(
+      Err(WebTransportFailure::{
+        name: "InvalidStateError",
+        message: "stream send side is already closed",
+        source: Some("session"),
+        stream_error_code: None,
+      }),
+    )
+  }
+  if fin {
+    state.write_closed.val = true
+  }
   self.pending_send_count.val += 1
   self.pending_send_bytes.val += bytes.length()
   @js.from_async(async fn() {
@@ -563,7 +591,12 @@ fn WebTransportStreamManager::write_stream(
       }
       Ok(())
     } catch {
-      error => Err(webtransport_failure(@js.any(error)))
+      error => {
+        state.write_aborted.val = true
+        writer.release_lock()
+        self.release_writer(stream)
+        Err(webtransport_failure(@js.any(error)))
+      }
     }
   }).then(fn(result) {
     self.pending_send_count.val -= 1
@@ -629,12 +662,17 @@ fn WebTransportStreamManager::abort_stream_write(
           @js.from_async(async fn() {
             try {
               state.write_aborted.val = true
+              state.write_closed.val = true
               ffi_webtransport_writer_abort(writer.as_any(), error_code).wait()
               writer.release_lock()
               self.release_writer(stream)
               Ok(())
             } catch {
-              error => Err(webtransport_failure(@js.any(error)))
+              error => {
+                writer.release_lock()
+                self.release_writer(stream)
+                Err(webtransport_failure(@js.any(error)))
+              }
             }
           })
         None =>
@@ -682,14 +720,14 @@ extern "js" fn ffi_webtransport_writer_abort(
   writer : @js.Any,
   error_code : Int64,
 ) -> @js.Promise[Unit] =
-  #| (writer, errorCode) => writer.abort(Number(errorCode))
+  #| (writer, errorCode) => writer.abort(new WebTransportError({ streamErrorCode: Number(errorCode) }))
 
 ///|
 extern "js" fn ffi_webtransport_reader_cancel(
   reader : @js.Any,
   error_code : Int64,
 ) -> @js.Promise[Unit] =
-  #| (reader, errorCode) => reader.cancel(Number(errorCode))
+  #| (reader, errorCode) => reader.cancel(new WebTransportError({ streamErrorCode: Number(errorCode) }))
 
 ///|
 extern "js" fn ffi_webtransport_copy_view(

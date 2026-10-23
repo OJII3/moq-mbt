@@ -28,7 +28,10 @@ fn ClientSession::receive_stream_data(
             }
             0x05UL =>
               match @protocol.decode_fetch_header(combined) {
-                @protocol.Incomplete => Err(UnexpectedMessage)
+                @protocol.Incomplete => {
+                  self.inbound_unclassified_buffers[stream] = combined
+                  Ok([])
+                }
                 @protocol.Invalid(_) => Err(UnexpectedMessage)
                 @protocol.Complete(header, consumed) => {
                   self.inbound_stream_kinds[stream] = FetchData

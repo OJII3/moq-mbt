@@ -115,6 +115,31 @@ async test "WebTransport connection, negotiation, timeout, and close lifecycle" 
   assert_true(connection.write_stream(stream, b"reply").wait() is Ok(_))
   assert_eq(ffi_fake_created_write_count(), 1)
   assert_eq(ffi_fake_created_write_bytes(), "reply")
+  ffi_fake_delay_stream_writes()
+  let delayed_write = connection.write_stream(stream, b"blocked")
+  let delayed_write_done = delayed_write.then(fn(_) {
+    @js.Promise::resolve(true)
+  })
+  let write_timeout = @js.from_async(async fn() {
+    @js.sleep(5)
+    false
+  })
+  assert_true(!@js.Promise::race([delayed_write_done, write_timeout]).wait())
+  let excess_writes : Array[
+    @js.Promise[Result[Unit, @js_adapter.WebTransportFailure]],
+  ] = []
+  for _ in 0..<255 {
+    excess_writes.push(connection.write_stream(stream, b"queued"))
+  }
+  match connection.write_stream(stream, b"overflow").wait() {
+    Err(error) => assert_eq(error.name, "QuotaExceededError")
+    Ok(_) => fail("the pending send queue exceeded its limit")
+  }
+  ffi_fake_resolve_pending_stream_writes()
+  assert_true(delayed_write.wait() is Ok(_))
+  for pending in excess_writes {
+    assert_true(pending.wait() is Ok(_))
+  }
   assert_true(connection.write_stream(stream, b"", fin=true).wait() is Ok(_))
   ffi_fake_finish_created_readable()
   match connection.next_stream_event().wait() {
@@ -162,9 +187,11 @@ async test "WebTransport connection, negotiation, timeout, and close lifecycle" 
   assert_true(
     connection.cancel_stream_read(cancelled_stream, 23L).wait() is Ok(_),
   )
+  assert_eq(ffi_fake_cancel_error_code(), 23)
   assert_true(
     connection.abort_stream_write(cancelled_stream, 24L).wait() is Ok(_),
   )
+  assert_eq(ffi_fake_abort_error_code(), 24)
   let next_event = connection
     .next_stream_event()
     .then(fn(_) { @js.Promise::resolve(false) })
@@ -173,8 +200,45 @@ async test "WebTransport connection, negotiation, timeout, and close lifecycle" 
     true
   })
   assert_true(@js.Promise::race([next_event, timeout]).wait())
+  let fin_stream = match connection.open_bidirectional().wait() {
+    Ok(stream) => stream
+    Err(error) => fail(error.message)
+  }
+  match connection.next_stream_event().wait() {
+    StreamStarted(id, Bidirectional) => assert_eq(id, fin_stream)
+    _ => fail("FIN test stream was not announced")
+  }
+  ffi_fake_delay_stream_writes()
+  let finishing_write = connection.write_stream(fin_stream, b"last", fin=true)
+  match connection.write_stream(fin_stream, b"after FIN").wait() {
+    Err(error) => assert_eq(error.name, "InvalidStateError")
+    Ok(_) => fail("a write was accepted after FIN was queued")
+  }
+  ffi_fake_resolve_pending_stream_writes()
+  assert_true(finishing_write.wait() is Ok(_))
+  assert_true(connection.cancel_stream_read(fin_stream, 25L).wait() is Ok(_))
   ignore(connection.close(0L, "done"))
   ignore(connection.closed().wait())
+
+  ffi_install_fake_webtransport("moqt-18", false, false)
+  let capped_connection = match
+    @js_adapter.webtransport_connect("moqt://example.test/active-limit") {
+    Ok(connection) => connection
+    Err(message) => fail(message)
+  }
+  for _ in 0..<16 {
+    assert_true(capped_connection.open_bidirectional().wait() is Ok(_))
+    match capped_connection.next_stream_event().wait() {
+      StreamStarted(_, Bidirectional) => ()
+      _ => fail("active stream was not announced")
+    }
+  }
+  match capped_connection.open_bidirectional().wait() {
+    Err(error) => assert_eq(error.name, "QuotaExceededError")
+    Ok(_) => fail("the active stream limit was reported as success")
+  }
+  ignore(capped_connection.close(0L, "done"))
+  ignore(capped_connection.closed().wait())
 
   ffi_install_fake_webtransport("moqt-18", false, false)
   let pending_connection = match
@@ -213,6 +277,10 @@ extern "js" fn ffi_install_fake_webtransport(
   #| (protocol, pendingReady, rejectReady) => {
   #|   globalThis.__moqWtLast = null;
   #|   globalThis.__moqWtDelayOpen = false;
+  #|   globalThis.__moqWtDelayWrites = false;
+  #|   globalThis.WebTransportError = class extends Error {
+  #|     constructor(options) { super(); this.streamErrorCode = options.streamErrorCode; }
+  #|   };
   #|   globalThis.WebTransport = class {
   #|     constructor(url, options) {
   #|       this.url = url;
@@ -222,6 +290,7 @@ extern "js" fn ffi_install_fake_webtransport(
   #|       this.closeCalls = 0;
   #|       this.resolveReady = undefined;
   #|       this.resolveClosed = undefined;
+  #|       this.pendingWriteResolvers = [];
   #|       globalThis.__moqWtPendingOpenResolvers = [];
   #|       this.incomingUnidirectionalStreams = new ReadableStream({
   #|         start: controller => { this.incomingUni = controller; },
@@ -234,9 +303,16 @@ extern "js" fn ffi_install_fake_webtransport(
   #|       );
   #|       this.createBidirectionalStream = () => new Promise(resolve => {
   #|         let readableController;
-  #|         const readable = new ReadableStream({ start: c => { readableController = c; } });
+  #|         const readable = new ReadableStream({
+  #|           start: c => { readableController = c; },
+  #|           cancel: reason => { this.lastCancel = reason; },
+  #|         });
   #|         const writes = [];
-  #|         const writable = new WritableStream({ write: chunk => { writes.push(chunk); } });
+  #|         const writable = new WritableStream({ write: chunk => new Promise(resolve => {
+  #|           writes.push(chunk);
+  #|           if (globalThis.__moqWtDelayWrites) this.pendingWriteResolvers.push(resolve);
+  #|           else resolve();
+  #|         }), abort: reason => { this.lastAbort = reason; } });
   #|         const stream = { readable, writable };
   #|         this.created = { readableController, writes };
   #|         if (globalThis.__moqWtDelayOpen) globalThis.__moqWtPendingOpenResolvers.push(() => resolve(stream));
@@ -253,6 +329,18 @@ extern "js" fn ffi_install_fake_webtransport(
   #|       this.resolveClosed(info);
   #|     }
   #|   };
+  #| }
+
+///|
+extern "js" fn ffi_fake_delay_stream_writes() -> Unit =
+  #| () => { globalThis.__moqWtDelayWrites = true; }
+
+///|
+extern "js" fn ffi_fake_resolve_pending_stream_writes() -> Unit =
+  #| () => {
+  #|   globalThis.__moqWtLast.pendingWriteResolvers.forEach(resolve => resolve());
+  #|   globalThis.__moqWtLast.pendingWriteResolvers = [];
+  #|   globalThis.__moqWtDelayWrites = false;
   #| }
 
 ///|
@@ -320,6 +408,14 @@ extern "js" fn ffi_fake_created_write_count() -> Int32 =
 ///|
 extern "js" fn ffi_fake_created_write_bytes() -> String =
   #| () => new TextDecoder().decode(globalThis.__moqWtLast.created.writes[0])
+
+///|
+extern "js" fn ffi_fake_cancel_error_code() -> Int32 =
+  #| () => globalThis.__moqWtLast.lastCancel.streamErrorCode
+
+///|
+extern "js" fn ffi_fake_abort_error_code() -> Int32 =
+  #| () => globalThis.__moqWtLast.lastAbort.streamErrorCode
 
 ///|
 extern "js" fn ffi_fake_delay_stream_opens() -> Unit =
