@@ -36,6 +36,9 @@ jobs:
           curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash -s latest
           echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
 
+      - name: Update MoonBit package registry
+        run: moon update
+
       - name: Check MoonBit packages
         run: moon check --target native --deny-warn
 
