@@ -48,8 +48,6 @@
             pkgs.nodejs
             pkgs.playwright-driver
             playwrightBrowsers
-            self'.packages.moq5-relay
-            self'.packages.wtquic
             self'.packages.moq-rs-relay
             pkgs.openssl
           ];
