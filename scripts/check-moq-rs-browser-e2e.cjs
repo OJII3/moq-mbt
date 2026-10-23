@@ -16,9 +16,9 @@ async function runNative(role) {
   const args = [
     role, "127.0.0.1", nativePort, "/interop", "interop", "multi-object", "2", "2", "--insecure",
   ];
-  if (role === "publish") args.push("--hold-open");
+  if (role === "publish") args.push("--hold-open", "--wait-for-start");
   const child = spawn("_build/native/release/build/cmd/track_probe/track_probe.exe", args, {
-    stdio: ["ignore", "pipe", "pipe"],
+    stdio: ["pipe", "pipe", "pipe"],
   });
   let output = "";
   let resolveReady;
@@ -57,6 +57,7 @@ async function runNative(role) {
     done,
     ready,
     success,
+    start: () => child.stdin.end("\n"),
     stop: () => {
       stopping = true;
       if (child.exitCode === null) child.kill("SIGTERM");
@@ -113,6 +114,20 @@ async function main() {
         new Promise((_, reject) => setTimeout(() => reject(new Error("timed out waiting for Native PUBLISH acceptance")), 20000)),
       ]);
       await page.evaluate(() => globalThis.__moqE2EStart());
+      try {
+        await page.waitForFunction(
+          () => globalThis.__moqE2EResult?.status === "subscribed" ||
+            globalThis.__moqE2EResult?.status?.startsWith("failed:"),
+          undefined,
+          { timeout: 20000 },
+        );
+      } catch (error) {
+        const current = await page.evaluate(() => globalThis.__moqE2EResult?.status);
+        throw new Error(`timed out waiting for browser SUBSCRIBE to be established (status: ${current}): ${error.message}`);
+      }
+      status = await page.evaluate(() => globalThis.__moqE2EResult?.status);
+      if (status !== "subscribed") throw new Error(`Browser subscribe failed before Native publisher start: ${status}`);
+      native.start();
     } else {
       native = await runNative("subscribe");
       await Promise.race([
