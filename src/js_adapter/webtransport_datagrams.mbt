@@ -24,7 +24,7 @@ pub(all) enum WebTransportDatagramEvent {
 struct WebTransportDatagramManager {
   mut reader : @streams.ReadableStreamDefaultReader?
   mut writer : @streams.WritableStreamDefaultWriter?
-  max_length : Int32
+  datagrams : @js.Any
   queue : Array[Bytes]
   waiters : Array[(WebTransportDatagramEvent) -> Unit]
   pending_send_count : Ref[Int32]
@@ -54,11 +54,6 @@ fn WebTransportDatagramManager::new(
   let enabled = !@js.is_nullish(datagrams) &&
     !@js.is_nullish(datagrams["readable"]) &&
     !@js.is_nullish(datagrams["writable"])
-  let max_length : Int32 = if enabled {
-    datagrams["maxDatagramSize"].cast()
-  } else {
-    0
-  }
   let reader = if enabled {
     let readable : @streams.ReadableStream = datagrams["readable"].cast()
     Some(readable.get_reader())
@@ -74,7 +69,7 @@ fn WebTransportDatagramManager::new(
   {
     reader,
     writer,
-    max_length,
+    datagrams,
     queue: [],
     waiters: [],
     pending_send_count: Ref(0),
@@ -91,7 +86,11 @@ fn WebTransportDatagramManager::capability(
 ) -> WebTransportDatagramCapability {
   {
     enabled: self.writer is Some(_) && !self.ended.val,
-    max_length: self.max_length,
+    max_length: if self.writer is Some(_) {
+      self.datagrams["maxDatagramSize"].cast()
+    } else {
+      0
+    },
   }
 }
 
@@ -195,9 +194,10 @@ fn WebTransportDatagramManager::send_datagram(
   if self.ended.val {
     return @js.Promise::resolve(Err(DatagramConnectionClosed))
   }
-  if bytes.length() > self.max_length {
+  let max_length : Int32 = self.datagrams["maxDatagramSize"].cast()
+  if bytes.length() > max_length {
     return @js.Promise::resolve(
-      Err(DatagramTooLarge(bytes.length(), self.max_length)),
+      Err(DatagramTooLarge(bytes.length(), max_length)),
     )
   }
   if self.pending_send_count.val >= max_pending_datagram_sends ||
@@ -213,9 +213,14 @@ fn WebTransportDatagramManager::send_datagram(
       if self.ended.val {
         Err(DatagramConnectionClosed)
       } else {
-        let data = bytes_to_uint8array(bytes)
-        writer.write(data.as_any())
-        Ok(())
+        let current_max_length : Int32 = self.datagrams["maxDatagramSize"].cast()
+        if bytes.length() > current_max_length {
+          Err(DatagramTooLarge(bytes.length(), current_max_length))
+        } else {
+          let data = bytes_to_uint8array(bytes)
+          writer.write(data.as_any())
+          Ok(())
+        }
       }
     } catch {
       error => Err(DatagramWriteFailed(webtransport_failure(@js.any(error))))
@@ -254,7 +259,7 @@ fn WebTransportDatagramManager::connection_closed(
     Some(writer) =>
       ignore(
         @js.from_async(async fn() {
-          writer.abort() catch {
+          ffi_webtransport_abort_datagram_writer(writer.as_any()).wait() catch {
             _ => ()
           }
           writer.release_lock()
@@ -264,6 +269,12 @@ fn WebTransportDatagramManager::connection_closed(
     None => ()
   }
 }
+
+///|
+extern "js" fn ffi_webtransport_abort_datagram_writer(
+  writer : @js.Any,
+) -> @js.Promise[Unit] =
+  #| writer => writer.abort(new Error("datagram connection closed"))
 
 ///|
 fn WebTransportDatagramManager::notify_closed(
