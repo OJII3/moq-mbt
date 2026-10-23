@@ -32,6 +32,10 @@ Object Datagrams:
 - `cmd/track_probe`: publisher, subscriber, lifecycle, Namespace, Standalone FETCH, and Joining FETCH probes for Draft 18 relays.
 
 The JavaScript WebTransport adapter is not implemented yet.
+The JavaScript package boundary is prepared in
+[`ojii3/moq-mbt/js_adapter`](docs/js-adapter.md); it is built only for the `js`
+target and uses `mizchi/js` for JavaScript interop without adding those
+dependencies to `protocol` or `session`.
 
 ## Development
 

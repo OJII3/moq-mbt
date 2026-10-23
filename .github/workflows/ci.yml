@@ -36,11 +36,22 @@ jobs:
           curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash -s latest
           echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
 
+      - name: Update MoonBit package registry
+        run: moon update
+
       - name: Check MoonBit packages
         run: moon check --target native --deny-warn
 
+      - name: Check JavaScript adapter
+        run: moon build --target js src/js_adapter
+
       - name: Run MoonBit tests
         run: moon test
+
+      - name: Run protocol and session tests on JavaScript and WebAssembly
+        run: |
+          moon test --target js src/protocol src/session
+          moon test --target wasm-gc src/protocol src/session
 
       - name: Check formatting
         run: moon fmt --check
