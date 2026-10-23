@@ -121,7 +121,13 @@ pub fn FetchDataDecoder::decode_next(
   }
   if self.previous_group_id is None &&
     !is_range_end &&
-    (subgroup_mode == 1UL || subgroup_mode == 2UL || (flags & 0x10UL) == 0UL) {
+    (
+      (
+        (flags & 0x40UL) == 0UL &&
+        (subgroup_mode == 1UL || subgroup_mode == 2UL)
+      ) ||
+      (flags & 0x10UL) == 0UL
+    ) {
     return Invalid(InvalidFetchObject)
   }
   let mut next = after_flags

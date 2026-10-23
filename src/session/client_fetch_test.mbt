@@ -400,20 +400,24 @@ test "pending Joining FETCH resolves against the accepted subscription snapshot"
   ignore(
     publisher.receive(@session.InboundStreamStarted(52, @session.Bidirectional)),
   )
-  let end_overflow = @protocol.encode_fetch({
+  let max_object_joining_fetch = @protocol.encode_fetch({
     request_id: 13UL,
     fetch_type: @protocol.RelativeJoiningFetch(11UL, 0UL),
     parameters: [],
   }).unwrap()
   assert_eq(
-    publisher.receive(@session.StreamData(52, end_overflow)),
+    publisher.receive(@session.StreamData(52, max_object_joining_fetch)),
     Ok([
-      @session.Send(
-        52,
-        @protocol.encode_request_error(invalid_range).unwrap(),
-        true,
+      @session.Notify(
+        @session.FetchRequested(
+          13UL,
+          52,
+          track,
+          { group: 12UL, object: 0UL, },
+          { group: 12UL, object: 0x4000000000000000UL, },
+          [],
+        ),
       ),
-      @session.Notify(@session.FetchRejected(13UL, 52, invalid_range)),
     ]),
   )
 }

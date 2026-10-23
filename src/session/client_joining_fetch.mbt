@@ -169,7 +169,7 @@ fn ClientSession::send_joining_fetch(
     request_id,
     subscription.track,
     { group: 0UL, object: 0UL, },
-    { group: 0x3fffffffffffffffUL, object: 0UL, },
+    { group: 0xffffffffffffffffUL, object: 0UL, },
     true,
     None,
     parameters,
@@ -339,14 +339,17 @@ fn ClientSession::resolve_joining_fetch(
   } else {
     joining_start
   }
-  if start_group > joining_location.group ||
-    joining_location.object == 0x3fffffffffffffffUL {
+  if start_group > joining_location.group {
     return fail(request_error_invalid_range)
   }
   let start : @protocol.FetchLocation = { group: start_group, object: 0UL, }
   let end : @protocol.FetchLocation = {
     group: joining_location.group,
-    object: joining_location.object + 1UL,
+    object: if joining_location.object == 0xffffffffffffffffUL {
+      0UL
+    } else {
+      joining_location.object + 1UL
+    },
   }
   fetch.start = start
   fetch.end = end
