@@ -34,6 +34,7 @@ pub struct WebTransportConnection {
   ready : @js.Promise[Result[String, WebTransportFailure]]
   closed : @js.Promise[WebTransportClose]
   locally_closed : Ref[Bool]
+  stream_manager : WebTransportStreamManager
 }
 
 ///|
@@ -101,29 +102,48 @@ pub fn webtransport_connect_with_certificate_hashes(
     let closed : @js.Promise[WebTransportClose] = closed_settled.then(fn(
       settled,
     ) {
-      if !settled["ok"].cast() {
-        @js.Promise::resolve(Failed(webtransport_failure(settled["error"])))
+      let outcome = if !settled["ok"].cast() {
+        Failed(webtransport_failure(settled["error"]))
       } else {
         let info = settled["value"]
         let close_info = WebTransportCloseInfo::{
           close_code: ffi_webtransport_close_code(info),
           reason: info["reason"].cast(),
         }
-        let outcome = if locally_closed_box.val {
+        if locally_closed_box.val {
           LocalClose
         } else {
           PeerClose(close_info)
         }
-        @js.Promise::resolve(outcome)
       }
+      match connection_box.val {
+        Some(connection) => connection.stream_manager.connection_closed(outcome)
+        None => ()
+      }
+      @js.Promise::resolve(outcome)
     })
     let connection = WebTransportConnection::{
       raw,
       ready,
       closed,
       locally_closed: locally_closed_box,
+      stream_manager: WebTransportStreamManager::{
+        raw,
+        locally_closed: locally_closed_box,
+        streams: {},
+        events: [],
+        event_waiters: [],
+        next_stream_ref: Ref(1L),
+        pending_stream_opens: Ref(0),
+        pending_send_count: Ref(0),
+        pending_send_bytes: Ref(0),
+        pending_event_bytes: Ref(0),
+        connection_ended: Ref(false),
+        final_close: Ref(None),
+      },
     }
     connection_box.val = Some(connection)
+    connection.stream_manager.start_accepting_streams()
     @js.undefined()
   }) catch {
     @js.JsError(message) => return Err(message)
@@ -132,6 +152,66 @@ pub fn webtransport_connect_with_certificate_hashes(
     Some(connection) => Ok(connection)
     None => Err("WebTransport constructor returned no connection")
   }
+}
+
+///|
+/// Wait for the next stream lifecycle or data event. Data chunks preserve the
+/// exact Uint8Array view range and are copied into owned MoonBit Bytes.
+pub fn WebTransportConnection::next_stream_event(
+  self : WebTransportConnection,
+) -> @js.Promise[WebTransportStreamEvent] {
+  self.stream_manager.next_stream_event()
+}
+
+///|
+/// Open a local unidirectional stream and return its opaque session reference.
+/// The corresponding StreamStarted event is queued before any data event.
+pub fn WebTransportConnection::open_unidirectional(
+  self : WebTransportConnection,
+) -> @js.Promise[Result[Int64, WebTransportFailure]] {
+  self.stream_manager.open_unidirectional()
+}
+
+///|
+/// Open a local bidirectional stream and return its opaque session reference.
+pub fn WebTransportConnection::open_bidirectional(
+  self : WebTransportConnection,
+) -> @js.Promise[Result[Int64, WebTransportFailure]] {
+  self.stream_manager.open_bidirectional()
+}
+
+///|
+/// Write bytes in call order, respecting writer.ready. `fin=true` closes the
+/// send side after the write. Completion means the browser accepted the write;
+/// it does not report a QUIC acknowledgement.
+pub fn WebTransportConnection::write_stream(
+  self : WebTransportConnection,
+  stream : Int64,
+  bytes : Bytes,
+  fin~ : Bool = false,
+) -> @js.Promise[Result[Unit, WebTransportFailure]] {
+  self.stream_manager.write_stream(stream, bytes, fin~)
+}
+
+///|
+/// Cancel the receive side. This maps to reader.cancel and reports a stream
+/// reset only when the browser rejects the operation.
+pub fn WebTransportConnection::cancel_stream_read(
+  self : WebTransportConnection,
+  stream : Int64,
+  error_code : Int64,
+) -> @js.Promise[Result[Unit, WebTransportFailure]] {
+  self.stream_manager.cancel_stream_read(stream, error_code)
+}
+
+///|
+/// Abort the send side with a WebTransport stream error code.
+pub fn WebTransportConnection::abort_stream_write(
+  self : WebTransportConnection,
+  stream : Int64,
+  error_code : Int64,
+) -> @js.Promise[Result[Unit, WebTransportFailure]] {
+  self.stream_manager.abort_stream_write(stream, error_code)
 }
 
 ///|
