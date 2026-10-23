@@ -183,10 +183,15 @@ fn run_subscriber(
   let (client, session) = setup_client(host, port, path, insecure)
   defer client.close()
   let driver = SessionActionDriver::new()
-  let (request_id, actions) = session.subscribe_track(track).unwrap()
+  let (request_id, actions) = session
+    .subscribe_track_with_parameters(track, [
+      { kind: 4UL, value: @protocol.VarInt(10000UL), },
+    ])
+    .unwrap()
   let (notices, opened) = drive_session_actions(
     client, session, actions, driver,
   )
+  eprintln("SUBSCRIBE request sent")
   let state : SubscriberProbeState = {
     request_id,
     group_count: group_count.to_uint64(),

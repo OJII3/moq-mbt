@@ -5,7 +5,12 @@ cd "$(dirname "$0")/.."
 task_tmp=$(mktemp -d)
 relay_pid=
 publisher_pid=
+subscriber_pid=
 cleanup() {
+  if [[ -n "$subscriber_pid" ]]; then
+    kill "$subscriber_pid" 2>/dev/null || true
+    wait "$subscriber_pid" 2>/dev/null || true
+  fi
   if [[ -n "$publisher_pid" ]]; then
     kill "$publisher_pid" 2>/dev/null || true
     wait "$publisher_pid" 2>/dev/null || true
@@ -59,15 +64,31 @@ fi
 cat "$task_tmp/probe.log"
 
 moon run --release --target native src/cmd/track_probe -- \
+  subscribe 127.0.0.1 4443 /moq interop multi-object 3 2 --insecure \
+  >"$task_tmp/subscriber.log" 2>&1 &
+subscriber_pid=$!
+for ((attempt = 0; attempt < 100; attempt++)); do
+  if grep -Fq 'SUBSCRIBE request sent' "$task_tmp/subscriber.log"; then
+    break
+  fi
+  if ! kill -0 "$subscriber_pid" 2>/dev/null || ((attempt == 99)); then
+    cat "$task_tmp/subscriber.log" "$relay_log" >&2
+    echo "subscriber did not send SUBSCRIBE" >&2
+    exit 1
+  fi
+  sleep 0.1
+done
+
+moon run --release --target native src/cmd/track_probe -- \
   publish 127.0.0.1 4443 /moq interop multi-object 3 2 --insecure \
   >"$task_tmp/publisher.log" 2>&1 &
 publisher_pid=$!
-if ! moon run --release --target native src/cmd/track_probe -- \
-  subscribe 127.0.0.1 4443 /moq interop multi-object 3 2 --insecure \
-  >"$task_tmp/subscriber.log" 2>&1; then
+if ! wait "$subscriber_pid"; then
+  subscriber_pid=
   cat "$task_tmp/publisher.log" "$task_tmp/subscriber.log" "$relay_log" >&2
   exit 1
 fi
+subscriber_pid=
 
 if ! wait "$publisher_pid"; then
   publisher_pid=
