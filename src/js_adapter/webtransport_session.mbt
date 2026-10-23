@@ -17,6 +17,7 @@ pub struct WebTransportSessionDriver {
   ]
   mut active : Bool
   mut clock_timer : Int32?
+  mut datagram_read_ended : Bool
 }
 
 ///|
@@ -37,6 +38,7 @@ pub fn WebTransportSessionDriver::new(
     opened_stream_waiters: [],
     active: false,
     clock_timer: None,
+    datagram_read_ended: false,
   }
 }
 
@@ -90,11 +92,13 @@ pub fn WebTransportSessionDriver::start(
     .then(fn(result) {
       if self.active {
         match result {
-          Ok(_) =>
+          Ok(_) => {
+            self.refresh_datagram_capability()
             match self.session.start() {
               Ok(actions) => self.process_actions(actions)
               Err(_) => self.finish()
             }
+          }
           Err(_) => self.receive_event(@session.TransportFailed(-1L))
         }
       }
@@ -354,6 +358,7 @@ fn WebTransportSessionDriver::read_stream_events(
     self.connection
     .next_stream_event()
     .then(fn(event) {
+      let mut connection_closed = false
       match event {
         LocalStreamOpened(_, _) => ()
         StreamStarted(stream, direction) =>
@@ -388,9 +393,13 @@ fn WebTransportSessionDriver::read_stream_events(
           }
         StreamQueueOverflow(_) =>
           self.receive_event(@session.TransportFailed(-2L))
-        ConnectionClosed(_) => self.finish()
+        // The connection.closed() promise carries the close cause into the
+        // session state machine. Stop this reader while it is being handled.
+        ConnectionClosed(_) => connection_closed = true
       }
-      self.read_stream_events()
+      if !connection_closed {
+        self.read_stream_events()
+      }
       @js.Promise::resolve(())
     }),
   )
@@ -415,6 +424,7 @@ fn WebTransportSessionDriver::read_datagrams(
           self.receive_event(@session.TransportFailed(-3L))
         DatagramsClosed => {
           continue_reading = false
+          self.datagram_read_ended = true
           self.receive_event(@session.DatagramSendCapabilityChanged(false, 0))
         }
       }
@@ -424,6 +434,21 @@ fn WebTransportSessionDriver::read_datagrams(
       @js.Promise::resolve(())
     }),
   )
+}
+
+///|
+fn WebTransportSessionDriver::refresh_datagram_capability(
+  self : WebTransportSessionDriver,
+) -> Unit {
+  if !self.datagram_read_ended {
+    let capability = self.connection.datagram_capability()
+    self.receive_event(
+      @session.DatagramSendCapabilityChanged(
+        capability.enabled,
+        capability.max_length,
+      ),
+    )
+  }
 }
 
 ///|
@@ -465,6 +490,7 @@ fn WebTransportSessionDriver::schedule_clock(
         fn() {
           self.clock_timer = None
           if self.active {
+            self.refresh_datagram_capability()
             let now = ffi_webtransport_monotonic_now().to_uint64()
             self.receive_event(@session.Clock(now))
             self.schedule_clock()

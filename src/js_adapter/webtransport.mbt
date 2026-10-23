@@ -84,15 +84,18 @@ pub fn webtransport_connect_with_certificate_hashes(
         } else {
           let selected : String = raw["protocol"].cast()
           if selected != moqt_draft18_protocol {
-            @js.Promise::resolve(
-              Err(WebTransportFailure::{
-                name: "ProtocolError",
-                message: "server selected unsupported WebTransport protocol: " +
-                selected,
-                source: None,
-                stream_error_code: None,
-              }),
-            )
+            let error = WebTransportFailure::{
+              name: "ProtocolError",
+              message: "server selected unsupported WebTransport protocol: " +
+              selected,
+              source: None,
+              stream_error_code: None,
+            }
+            match connection_box.val {
+              Some(connection) => ignore(connection.close(0L, ""))
+              None => ()
+            }
+            @js.Promise::resolve(Err(error))
           } else {
             @js.Promise::resolve(Ok(selected))
           }

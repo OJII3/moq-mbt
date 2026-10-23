@@ -1,5 +1,5 @@
 ///|
-async test "WebTransport connection, negotiation, timeout, and close lifecycle" {
+async test "WebTransport connection and session lifecycle" {
   ffi_install_fake_webtransport("moqt-18", false, false)
   let connection = match
     @js_adapter.webtransport_connect("moqt://example.test/live?q=1") {
@@ -29,6 +29,12 @@ async test "WebTransport connection, negotiation, timeout, and close lifecycle" 
     Err(error) => assert_eq(error.name, "ProtocolError")
     Ok(_) => fail("a different subprotocol was accepted")
   }
+  assert_true(mismatch.was_closed_locally())
+  assert_eq(ffi_fake_close_calls(), 1)
+  assert_true(mismatch.close(0L, "again") is Ok(_))
+  assert_eq(ffi_fake_close_calls(), 1)
+  let mismatch_closed = mismatch.closed().wait()
+  assert_true(mismatch_closed is LocalClose)
 
   ffi_install_fake_webtransport("moqt-18", false, true)
   let failed = match
@@ -69,9 +75,13 @@ async test "WebTransport connection, negotiation, timeout, and close lifecycle" 
     is Err(_),
   )
   ffi_install_fake_webtransport("moqt-18", false, false)
-  assert_true(
-    @js_adapter.webtransport_connect("https://example.test/path") is Err(_),
-  )
+  let https_connection = match
+    @js_adapter.webtransport_connect("https://example.test/path") {
+    Ok(connection) => connection
+    Err(message) => fail(message)
+  }
+  assert_true(https_connection.close(0L, "done") is Ok(_))
+  assert_true(https_connection.closed().wait() is LocalClose)
   let validation = match
     @js_adapter.webtransport_connect("moqt://example.test/path") {
     Ok(connection) => connection
@@ -192,9 +202,8 @@ async test "WebTransport connection, negotiation, timeout, and close lifecycle" 
     connection.abort_stream_write(cancelled_stream, 24L).wait() is Ok(_),
   )
   assert_eq(ffi_fake_abort_error_code(), 24)
-  let next_event = connection
-    .next_stream_event()
-    .then(fn(_) { @js.Promise::resolve(false) })
+  let pending_event = connection.next_stream_event()
+  let next_event = pending_event.then(fn(_) { @js.Promise::resolve(false) })
   let timeout = @js.from_async(async fn() {
     @js.sleep(5)
     true
@@ -204,7 +213,7 @@ async test "WebTransport connection, negotiation, timeout, and close lifecycle" 
     Ok(stream) => stream
     Err(error) => fail(error.message)
   }
-  match connection.next_stream_event().wait() {
+  match pending_event.wait() {
     LocalStreamOpened(id, Bidirectional) => assert_eq(id, fin_stream)
     _ => fail("FIN test stream was not announced")
   }
@@ -284,6 +293,29 @@ async test "WebTransport connection, negotiation, timeout, and close lifecycle" 
     }
     _ => fail("oversized datagram was accepted")
   }
+  ffi_fake_set_max_datagram_size(12)
+  assert_eq(connection.datagram_capability().max_length, 12)
+  assert_true(connection.send_datagram(b"12345678").wait() is Ok(_))
+  ffi_fake_set_max_datagram_size(6)
+  assert_eq(connection.datagram_capability().max_length, 6)
+  match connection.send_datagram(b"1234567").wait() {
+    Err(DatagramTooLarge(actual, maximum)) => {
+      assert_eq(actual, 7)
+      assert_eq(maximum, 6)
+    }
+    _ => fail("datagram above the reduced maximum was accepted")
+  }
+  ffi_fake_set_max_datagram_size(7)
+  let pending_size_check = connection.send_datagram(b"1234567")
+  ffi_fake_set_max_datagram_size(6)
+  match pending_size_check.wait() {
+    Err(DatagramTooLarge(actual, maximum)) => {
+      assert_eq(actual, 7)
+      assert_eq(maximum, 6)
+    }
+    _ => fail("datagram accepted using the stale maximum after ready")
+  }
+  ffi_fake_set_max_datagram_size(7)
   let view = ffi_fake_offset_view("one")
   ffi_fake_push_datagram(view)
   let first = match connection.next_datagram().wait() {
@@ -352,7 +384,7 @@ async test "WebTransport connection, negotiation, timeout, and close lifecycle" 
   for _ in 0..<64 {
     pending_sends.push(blocked.send_datagram(b"queued"))
   }
-  match blocked.send_datagram(b"overflow").wait() {
+  match blocked.send_datagram(b"full").wait() {
     Err(DatagramQueueFull) => ()
     _ => fail("datagram send queue exceeded its limit")
   }
@@ -362,10 +394,12 @@ async test "WebTransport connection, negotiation, timeout, and close lifecycle" 
   for pending in pending_sends {
     ignore(pending.wait())
   }
+  webtransport_session_driver_routes_setup()
+  webtransport_session_driver_reports_close()
 }
 
 ///|
-async test "WebTransport session driver keeps local streams separate and routes SETUP" {
+async fn webtransport_session_driver_routes_setup() -> Unit {
   ffi_install_fake_webtransport("moqt-18", false, false)
   let connection = match
     @js_adapter.webtransport_connect("moqt://example.test/session") {
@@ -395,6 +429,76 @@ async test "WebTransport session driver keeps local streams separate and routes 
 }
 
 ///|
+async fn webtransport_session_driver_reports_close() -> Unit {
+  ffi_install_fake_webtransport("moqt-18", false, false)
+  let connection = match
+    @js_adapter.webtransport_connect("moqt://example.test/session-close") {
+    Ok(connection) => connection
+    Err(message) => fail(message)
+  }
+  let session = match
+    @session.ClientSession::new(@session.Draft18, { options: [], }) {
+    Ok(session) => session
+    Err(_) => fail("session creation failed")
+  }
+  let driver = @js_adapter.WebTransportSessionDriver::new(connection, session)
+  assert_true(driver.start() is Ok(_))
+  @js.sleep(5)
+
+  ffi_fake_peer_close(37, "peer done")
+  ignore(connection.closed().wait())
+  let mut peer_ended = false
+  while !peer_ended {
+    match driver.next_notice().wait() {
+      Some(@session.SessionEnded(@session.Peer(37UL))) => peer_ended = true
+      Some(@session.SendFinished(_, _)) => ()
+      Some(_) => fail("peer close did not produce the expected session end")
+      None => fail("session ended without a SessionEnded notice")
+    }
+  }
+  assert_true(session.start() is Err(@session.SessionClosed))
+  match driver.next_notice().wait() {
+    None => ()
+    Some(_) => fail("session driver emitted more than one terminal notice")
+  }
+
+  ffi_install_fake_webtransport("moqt-18", false, false)
+  let failed_connection = match
+    @js_adapter.webtransport_connect("moqt://example.test/session-failure") {
+    Ok(connection) => connection
+    Err(message) => fail(message)
+  }
+  let failed_session = match
+    @session.ClientSession::new(@session.Draft18, { options: [], }) {
+    Ok(session) => session
+    Err(_) => fail("session creation failed")
+  }
+  let failed_driver = @js_adapter.WebTransportSessionDriver::new(
+    failed_connection, failed_session,
+  )
+  assert_true(failed_driver.start() is Ok(_))
+  @js.sleep(5)
+  ffi_fake_reject_closed("transport failed")
+  ignore(failed_connection.closed().wait())
+  let mut failure_ended = false
+  while !failure_ended {
+    match failed_driver.next_notice().wait() {
+      Some(@session.SessionEnded(@session.Transport(-1L))) =>
+        failure_ended = true
+      Some(@session.SendFinished(_, _)) => ()
+      Some(_) =>
+        fail("transport failure did not produce the expected session end")
+      None => fail("transport failure ended without a SessionEnded notice")
+    }
+  }
+  assert_true(failed_session.start() is Err(@session.SessionClosed))
+  match failed_driver.next_notice().wait() {
+    None => ()
+    Some(_) => fail("session driver emitted more than one terminal notice")
+  }
+}
+
+///|
 extern "js" fn ffi_install_fake_webtransport(
   protocol : String,
   pending_ready : Bool,
@@ -419,6 +523,7 @@ extern "js" fn ffi_install_fake_webtransport(
   #|       this.closeCalls = 0;
   #|       this.resolveReady = undefined;
   #|       this.resolveClosed = undefined;
+  #|       this.rejectClosed = undefined;
   #|       this.pendingWriteResolvers = [];
   #|       this.pendingDatagramWriteResolvers = [];
   #|       globalThis.__moqWtPendingOpenResolvers = [];
@@ -467,7 +572,7 @@ extern "js" fn ffi_install_fake_webtransport(
   #|       this.ready = pendingReady
   #|         ? new Promise(resolve => { this.resolveReady = resolve; })
   #|         : rejectReady ? Promise.reject(new Error("ready failed")) : Promise.resolve();
-  #|       this.closed = new Promise(resolve => { this.resolveClosed = resolve; });
+  #|       this.closed = new Promise((resolve, reject) => { this.resolveClosed = resolve; this.rejectClosed = reject; });
   #|       globalThis.__moqWtLast = this;
   #|     }
   #|     close(info) {
@@ -496,6 +601,10 @@ extern "js" fn ffi_fake_push_datagram(data : @arraybuffer.Uint8Array) -> Unit =
 ///|
 extern "js" fn ffi_fake_datagram_write() -> String =
   #| () => new TextDecoder().decode(globalThis.__moqWtLast.lastDatagram)
+
+///|
+extern "js" fn ffi_fake_set_max_datagram_size(size : Int32) -> Unit =
+  #| size => { globalThis.__moqWtLast.datagrams.maxDatagramSize = size; }
 
 ///|
 extern "js" fn ffi_fake_reject_datagram_writes() -> Unit =
@@ -540,6 +649,10 @@ extern "js" fn ffi_fake_close_calls() -> Int32 =
 ///|
 extern "js" fn ffi_fake_peer_close(code : Int32, reason : String) -> Unit =
   #| (code, reason) => globalThis.__moqWtLast.resolveClosed({ closeCode: code, reason })
+
+///|
+extern "js" fn ffi_fake_reject_closed(reason : String) -> Unit =
+  #| reason => globalThis.__moqWtLast.rejectClosed(new Error(reason))
 
 ///|
 extern "js" fn ffi_fake_resolve_ready() -> Unit =
