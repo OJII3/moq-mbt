@@ -47,7 +47,8 @@ moq5-relay serve --config "$task_tmp/moq5-relay.json" \
   >"$task_tmp/relay.log" 2>&1 &
 relay_pid=$!
 for ((attempt = 0; attempt < 100; attempt++)); do
-  if grep -q 'MOQ5 Relay: listening on' "$task_tmp/relay.log"; then
+  if grep -Fq "MOQ5 Relay: listening on 127.0.0.1:$native_port" "$task_tmp/relay.log" \
+    && grep -Fq "MOQ5 Relay: WebTransport on 127.0.0.1:$webtransport_port/moq" "$task_tmp/relay.log"; then
     cat "$task_tmp/relay.log"
     wait "$relay_pid"
     exit $?

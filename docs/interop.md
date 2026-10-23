@@ -56,7 +56,7 @@ nix develop -c moon run --release --target native src/cmd/track_probe -- \
   subscribe 127.0.0.1 4443 /moq interop multi-object 2 2 --insecure
 ~~~
 
-疎通スクリプトは一時ディレクトリに証明書と設定を生成し、moq5 を Native listener `127.0.0.1:4443` と WebTransport listener `127.0.0.1:4444` の両方で versions: [18]、認証 allow_all で起動する。WebTransport は profile `current`、path `/moq`、Origin allowlist `https://localhost:8000` を使う。自己署名証明書が既定の Native 証明書検証で拒否されることを確認した後、Native loopback probe に限って `--insecure` を使う。終了時に publisher、relay、一時ファイルを削除する。Datagram の送信状態は MsQuic の状態イベントとして公開し、acknowledged は QUIC 層の確認を表す。アプリケーションの処理・配送確認として扱わない。
+疎通スクリプトは一時ディレクトリに証明書と設定を生成し、moq5 を Native listener `127.0.0.1:4443` と WebTransport listener `127.0.0.1:4444` の両方で versions: [18]、認証 allow_all で起動する。WebTransport は profile `current`、path `/moq`、Origin allowlist `http://localhost:8000` を使う。自己署名証明書が既定の Native 証明書検証で拒否されることを確認した後、Native loopback probe に限って `--insecure` を使う。終了時に publisher、relay、一時ファイルを削除する。Datagram の送信状態は MsQuic の状態イベントとして公開し、acknowledged は QUIC 層の確認を表す。アプリケーションの処理・配送確認として扱わない。
 
 ### Browser WebTransport 検証
 
