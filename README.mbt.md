@@ -46,18 +46,11 @@ Run the local Draft 18 interoperability check with:
 nix develop -c bash scripts/check-interop.sh
 ```
 
-The check starts pinned moq5 and moq-rs relays on `127.0.0.1:4443`. It verifies
-SETUP, multi-Object/Group delivery, `PUBLISH_DONE`, moq5 standalone FETCH of
-retained Objects, Namespace discovery and withdrawal, subscription updates,
-unsubscription with an independent track continuing, Joining FETCH availability,
-and Object Datagram fields. Refusal and relay-originated
-GOAWAY cases use deterministic Sans-I/O session tests because the relay CLI
-cannot trigger them. The pinned moq5 revision closes the Namespace subscriber
-session after Namespace subscription cancellation, so independent track
-continuation is verified in Sans-I/O rather than claimed as relay behavior.
-The pinned relay rejects the current Joining FETCH probe with `INVALID_RANGE`;
-joining range and no-overlap behavior remain covered by Sans-I/O tests.
-See [interop notes](docs/interop.md) for details and connecting to another relay.
+The check starts the pinned moq-rs relay on `127.0.0.1:4443`. It verifies
+certificate rejection, Draft 18 SETUP, and multi-Object/Group publish and
+subscribe. The moq5 relay remains available in the devShell for separate
+Native and WebTransport checks. See [interop notes](docs/interop.md) for
+details and connecting to another relay.
 
 ## References
 
