@@ -62,6 +62,8 @@ nix develop -c moon run --release --target native src/cmd/track_probe -- \
 
 `check-interop.sh` は Native listener と既存の MoQ 相互接続を検査する。ブラウザ確認用に `nix develop -c scripts/serve-moq5-dual.sh` を実行すると、両 listener を起動し WebTransport 接続先、許可 Origin、一時証明書の SHA-256 hash を表示する。開発用ページを既定 Origin `http://localhost:8000` で配信し、relay に `https://127.0.0.1:4444/moq` で接続する。生成証明書には ECDSA P-256 鍵、1 日の有効期間、`DNS:localhost` と `IP:127.0.0.1` の SAN があり、WebTransport の `serverCertificateHashes` 用 hash はスクリプトが表示する。証明書検証と Origin allowlist は有効のままにする。
 
+ブラウザの WebTransport handshake を moq-rs で確認する場合は `nix develop -c scripts/serve-moq-rs.sh` を実行する。表示される URL と証明書 hash を使い、`WebTransport` の `protocols` に `moqt-18` を指定する。
+
 自己署名証明書を使った試験では、ブラウザの WebTransport `serverCertificateHashes` に表示された SHA-256 hash を `Uint8Array` として渡す。これはローカル試験用の明示的な証明書 pin であり、通常の信頼設定や Origin 検証を無効にしない。
 
 ブラウザページでは表示された hash を次のように `Uint8Array` にし、接続を開始する。
@@ -69,6 +71,7 @@ nix develop -c moon run --release --target native src/cmd/track_probe -- \
 ~~~js
 const hash = Uint8Array.from(atob("BASE64_HASH_FROM_SCRIPT"), c => c.charCodeAt(0))
 const transport = new WebTransport("https://127.0.0.1:4444/moq", {
+  protocols: ["moqt-18"],
   serverCertificateHashes: [{ algorithm: "sha-256", value: hash }],
 })
 await transport.ready
