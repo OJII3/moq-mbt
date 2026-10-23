@@ -29,6 +29,13 @@ cat >"$task_tmp/moq5-relay.json" <<EOF
     "host": "127.0.0.1", "port": 4443, "versions": [18], "lanes": 1,
     "cert": "$task_tmp/cert.pem", "key": "$task_tmp/key.pem"
   },
+  "webtransport": {
+    "host": "127.0.0.1", "port": 4444, "versions": [18], "lanes": 1,
+    "path": "/moq", "profile": "current",
+    "origin_policy": "allowlist",
+    "allowed_origins": ["https://localhost:8000"],
+    "cert": "$task_tmp/cert.pem", "key": "$task_tmp/key.pem"
+  },
   "auth": { "mode": "allow_all" }
 }
 EOF
