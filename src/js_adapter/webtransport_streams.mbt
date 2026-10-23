@@ -140,7 +140,6 @@ fn WebTransportStreamManager::stop_stream(
               reader.cancel() catch {
                 _ => ()
               }
-              reader.release_lock()
             }),
           )
         None => ()
@@ -211,7 +210,6 @@ fn WebTransportStreamManager::shutdown_streams(
             reader.cancel() catch {
               _ => ()
             }
-            reader.release_lock()
           }),
         )
       None => ()
@@ -332,8 +330,9 @@ fn WebTransportStreamManager::start_reading(
             ended = true
             reader.release_lock()
             match self.streams.get(stream) {
-              Some(state) if state.read_cancelled.val => ()
-              _ => self.enqueue_stream_event(StreamFinished(stream))
+              Some(state) if !state.read_cancelled.val =>
+                self.enqueue_stream_event(StreamFinished(stream))
+              _ => ()
             }
             self.release_reader(stream)
           } else {
@@ -349,9 +348,13 @@ fn WebTransportStreamManager::start_reading(
           error => {
             ended = true
             reader.release_lock()
-            self.enqueue_stream_event(
-              StreamReset(stream, webtransport_failure(@js.any(error))),
-            )
+            match self.streams.get(stream) {
+              Some(state) if !state.read_cancelled.val =>
+                self.enqueue_stream_event(
+                  StreamReset(stream, webtransport_failure(@js.any(error))),
+                )
+              _ => ()
+            }
             self.release_reader(stream)
           }
         }
@@ -585,8 +588,6 @@ fn WebTransportStreamManager::cancel_stream_read(
             try {
               state.read_cancelled.val = true
               ffi_webtransport_reader_cancel(reader.as_any(), error_code).wait()
-              reader.release_lock()
-              self.release_reader(stream)
               Ok(())
             } catch {
               error => Err(webtransport_failure(@js.any(error)))
