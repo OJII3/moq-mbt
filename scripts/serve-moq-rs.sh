@@ -45,5 +45,5 @@ for ((attempt = 0; attempt < 100; attempt++)); do
   sleep 0.1
 done
 
-node scripts/check-moq-rs-webtransport.cjs "https://127.0.0.1:$port/interop" "$fingerprint"
+"${PYTHON:-python3}" scripts/check-moq-rs-webtransport.py "https://127.0.0.1:$port/interop" "$fingerprint"
 wait "$relay_pid"

@@ -2,7 +2,7 @@
 
 ## CI で確認する範囲
 
-CI は Native moq-rs interop、ブラウザ WebTransport と raw QUIC の moq-rs
+CI は Native moq-rs interop、Playwright で制御するブラウザ WebTransport と raw QUIC の moq-rs
 SETUP、JavaScript / WebAssembly の check と test を実行する。Browser E2E probe は
 Native publisher → Browser subscriber と Browser publisher → Native subscriber の
 両方向で Objects、Properties、Group 終端、`PUBLISH_DONE` を確認する。
@@ -19,14 +19,16 @@ moq-rs は1つの QUIC endpoint で raw QUIC と WebTransport を受け付ける
 ## ローカルで再現する
 
 ~~~sh
-nix develop -c moon test
-nix develop -c moon check --target js --deny-warn src/js_adapter
-nix develop -c moon check --target wasm-gc --deny-warn src/protocol src/session
-nix develop -c moon test --target wasm-gc src/protocol src/session
-nix develop -c moon test --target js src/protocol src/session src/js_adapter
-nix develop -c bash scripts/check-interop.sh
-nix develop -c npm ci
-nix develop -c bash scripts/check-moq-rs-dual.sh
+moon test
+moon check --target js --deny-warn src/js_adapter
+moon check --target wasm-gc --deny-warn src/protocol src/session
+moon test --target wasm-gc src/protocol src/session
+moon test --target js src/protocol src/session src/js_adapter
+bash scripts/check-interop.sh
+python3 -m venv .venv
+.venv/bin/python -m pip install playwright
+.venv/bin/python -m playwright install --with-deps chromium
+PYTHON=.venv/bin/python bash scripts/check-moq-rs-dual.sh
 ~~~
 
 Native interop と dual transport のスクリプトはいずれも `moq-rs` を 127.0.0.1:4443 で起動する。実行中の relay がある場合は終了してから実行する。Native QUIC の証明書検証失敗を確認したあと、自己署名証明書の検証を loopback probe に限って無効にする。
@@ -34,12 +36,12 @@ Native interop と dual transport のスクリプトはいずれも `moq-rs` を
 手動確認では2つの terminal を使う。まず publisher を起動し、次に別の terminal から subscriber を起動する。両方に同じ relay、path、namespace、track を指定する。
 
 ~~~sh
-nix develop -c moon run --release --target native src/cmd/track_probe -- \
+moon run --release --target native src/cmd/track_probe -- \
   publish 127.0.0.1 4443 /moq interop multi-object 2 2 --insecure
 ~~~
 
 ~~~sh
-nix develop -c moon run --release --target native src/cmd/track_probe -- \
+moon run --release --target native src/cmd/track_probe -- \
   subscribe 127.0.0.1 4443 /moq interop multi-object 2 2 --insecure
 ~~~
 
@@ -47,9 +49,9 @@ nix develop -c moon run --release --target native src/cmd/track_probe -- \
 
 ### Browser WebTransport 検証
 
-`nix develop -c bash scripts/check-moq-rs-dual.sh` は同じ moq-rs relay process に raw QUIC と WebTransport の接続を同時に開き、両方で Draft 18 SETUP を確認する。さらに一時 ECDSA P-256 証明書の正しい SHA-256 pin で接続し、誤った pin の拒否と Node smoke、Native/Browser 双方向 publish/subscribe を確認する。Native probe は loopback の一時自己署名証明書に限り `--insecure` を使う。
+`PYTHON=.venv/bin/python bash scripts/check-moq-rs-dual.sh` は同じ moq-rs relay process に raw QUIC と WebTransport の接続を同時に開き、両方で Draft 18 SETUP を確認する。さらに一時 ECDSA P-256 証明書の正しい SHA-256 pin で接続し、誤った pin の拒否と Native/Browser 双方向 publish/subscribe を確認する。Native probe は loopback の一時自己署名証明書に限り `--insecure` を使う。
 
-ブラウザだけを手動確認する場合は `nix develop -c scripts/serve-moq-rs.sh` を実行する。表示される URL と証明書 hash を使い、`WebTransport` の `protocols` に `moqt-18` を指定する。
+ブラウザだけを手動確認する場合は `scripts/serve-moq-rs.sh` を実行する。表示される URL と証明書 hash を使い、`WebTransport` の `protocols` に `moqt-18` を指定する。
 
 自己署名証明書を使った試験では、ブラウザの WebTransport `serverCertificateHashes` に表示された SHA-256 hash を `Uint8Array` として渡す。これはローカル試験用の明示的な証明書 pin であり、通常の信頼設定や Origin 検証を無効にしない。
 
@@ -77,13 +79,13 @@ publisher は PUBLISH_OK 後に 1 秒待ってから有限 batch を送る。こ
 ## 接続先と参照実装
 
 ~~~sh
-nix develop -c moon run --release --target native src/cmd/setup_probe -- \
+moon run --release --target native src/cmd/setup_probe -- \
   relay.example.com 443 /moq
 ~~~
 
 引数はホスト、ポート、MoQ URI の path と query。クライアントは ALPN moqt-18 だけを提示し、QUIC DATAGRAM の交渉を確認してから SETUP を送る。Native QUIC 用の PATH、AUTHORITY、MOQT_IMPLEMENTATION を含める。接続から相手の SETUP 受信までの期限は 10 秒。相手の SETUP 受信と自分の SETUP の ACK を待ってから接続を終了する。証明書検証は既定で有効。
 
-Relay は [cloudflare/moq-rs の固定コミット](https://github.com/cloudflare/moq-rs/tree/8779758892d921bcfccbb6e4d9319c149db28c91) を `nix/moq-rs-relay.nix` でビルドする。Native QUIC と WebTransport は同じ endpoint の ALPN で選択される。Nixpkgs の `moq` は別用途の Go モック生成ツールなので使用しない。
+Relay は [cloudflare/moq-rs の固定コミット](https://github.com/cloudflare/moq-rs/tree/8779758892d921bcfccbb6e4d9319c149db28c91) を Cargo でビルドする。Native QUIC と WebTransport は同じ endpoint の ALPN で選択される。
 
 ## API とリソースの範囲
 

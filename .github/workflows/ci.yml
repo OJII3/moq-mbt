@@ -63,23 +63,26 @@ jobs:
       - name: Check formatting
         run: moon fmt --check
 
-  interop:
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v7.0.1
+      - name: Install moq-rs relay
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake libssl-dev perl pkg-config
+          cargo install --git https://github.com/cloudflare/moq-rs \
+            --rev 8779758892d921bcfccbb6e4d9319c149db28c91 \
+            --locked --package moq-relay-ietf --bin moq-relay-ietf
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
-      - uses: cachix/install-nix-action@31.11.3
-        with:
-          github_access_token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Update MoonBit package registry
-        run: nix develop -c moon update
+      - name: Install Playwright and Chromium
+        run: |
+          sudo apt-get install -y python3-venv
+          python3 -m venv "$RUNNER_TEMP/playwright"
+          "$RUNNER_TEMP/playwright/bin/python" -m pip install --upgrade pip playwright
+          "$RUNNER_TEMP/playwright/bin/python" -m playwright install --with-deps chromium
 
       - name: Run Native moq-rs interoperability
-        run: nix develop -c bash scripts/check-interop.sh
-
-      - name: Install Node WebTransport smoke dependencies
-        run: nix develop -c npm ci
+        run: bash scripts/check-interop.sh
 
       - name: Run browser WebTransport interoperability
-        run: nix develop -c bash scripts/check-moq-rs-dual.sh
+        env:
+          PYTHON: ${{ runner.temp }}/playwright/bin/python
+        run: bash scripts/check-moq-rs-dual.sh
