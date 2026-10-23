@@ -26,7 +26,7 @@ openssl req -x509 -new -key "$task_tmp/key.pem" -sha256 -days 1 \
 printf 'WebTransport certificate SHA-256 (base64): '
 openssl x509 -in "$task_tmp/cert.pem" -outform DER \
   | openssl dgst -sha256 -binary | openssl base64 -A
-printf '\nWebTransport URL: https://localhost:%s/moq\nAllowed Origin: %s\n' \
+printf '\nWebTransport URL: https://127.0.0.1:%s/moq\nAllowed Origin: %s\n' \
   "$webtransport_port" "$origin"
 
 cat >"$task_tmp/moq5-relay.json" <<EOF
