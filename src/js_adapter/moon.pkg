@@ -2,6 +2,11 @@ import {
   "mizchi/js_core" @js,
   "mizchi/js_web/streams",
   "mizchi/js_builtin/arraybuffer",
+  "moonbitlang/core/encoding/utf8",
 }
+
+import {
+  "moonbitlang/async",
+} for "test"
 
 supported_targets = "js"
