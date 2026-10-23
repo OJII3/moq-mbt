@@ -165,6 +165,16 @@ async test "WebTransport connection, negotiation, timeout, and close lifecycle" 
   assert_true(
     connection.abort_stream_write(cancelled_stream, 24L).wait() is Ok(_),
   )
+  let next_event = connection
+    .next_stream_event()
+    .then(fn(_) { @js.Promise::resolve(false) })
+  let timeout = @js.from_async(async fn() {
+    @js.sleep(5)
+    true
+  })
+  assert_true(@js.Promise::race([next_event, timeout]).wait())
+  ignore(connection.close(0L, "done"))
+  ignore(connection.closed().wait())
 
   ffi_install_fake_webtransport("moqt-18", false, false)
   let pending_connection = match
