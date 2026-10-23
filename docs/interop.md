@@ -4,7 +4,7 @@ Native QUIC と WebTransport の両方で Draft 18 の SETUP を確認する。N
 
 Datagram probe は stream Object と同じ track 上で Object Datagram を送受信し、Alias、payload、通常 Object の Group 終端、`EndOfGroup`、`EndOfTrack` status を検証する。通常 payload のサンプルを少なくとも1つ受信したことを確認する。Datagram の追加マーカーは受信したものを検証するが、全件受信や順序は成功条件にしない。Datagram は Subgroup stream と混在させ、`PUBLISH_DONE` の stream 数には加えない。
 
-moq-rs は1つの QUIC endpoint で raw QUIC と WebTransport を受け付ける。現在の CLI に Origin allowlist がないため、ブラウザ WebTransport の Origin 拒否は保証しない。証明書 pin の不一致は dual transport probe で確認する。
+moq-rs は1つの QUIC endpoint で raw QUIC と WebTransport を受け付ける。Origin allowlist は CLI に未対応のため、別 issue [#104](https://github.com/OJII3/moq-mbt/issues/104) で扱う。証明書 pin の不一致は dual transport probe で確認する。
 
 仕様は [Draft 18](https://www.ietf.org/archive/id/draft-ietf-moq-transport-18.txt) に固定する。vi64 は QUIC の 62-bit varint と異なり、1〜9 bytes で UInt64 全域を表現する。SETUP の type 0x2f00 は制御ストリームの type も兼ねるので、別のストリームヘッダーを付けない。制御ストリームは SETUP の後も開いたままにする。
 
@@ -78,7 +78,7 @@ const transport = new WebTransport("https://127.0.0.1:4443/interop", {
 await transport.ready
 ~~~
 
-moq-rs の現在の CLI には WebTransport Origin allowlist がないため、異なる Origin からの拒否は検証できず、この構成では保証しない。証明書 pin の拒否は自動確認する。接続成功はリスナー起動や TLS 成立だけでは判断せず、WebTransport `ready` の後に MoQ Draft 18 SETUP を受信することまで確認する。
+moq-rs の現在の CLI には WebTransport Origin allowlist がない。Origin 拒否は [#104](https://github.com/OJII3/moq-mbt/issues/104) の対象とする。証明書 pin の拒否は自動確認する。接続成功はリスナー起動や TLS 成立だけでは判断せず、WebTransport `ready` の後に MoQ Draft 18 SETUP を受信することまで確認する。
 
 CLI の末尾には Group 数と各 Group の Object 数を指定する。probe は `group-<group id>-object-<object id>` 形式の payload を生成し、subscriber 側で各 Group の Object ID 順と payload を照合する。SETUP はどちらのピアからも先に送れるため、probe は相手 SETUP の受信と、自分の SETUP の QUIC ACK の両方を待つ。続く PUBLISH_OK と SUBSCRIBE_OK も確認し、control request が relay を通ることを検証する。publisher は全 Subgroup stream の ACK 後に PUBLISH_DONE を送り、subscriber は Object 数、Group 終了、PUBLISH_DONE の stream 数がそろった時点で成功する。
 
