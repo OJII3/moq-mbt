@@ -77,6 +77,9 @@ jobs:
           name: moq-mbt
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
 
+      - name: Set up Nix development environment
+        run: nix develop -c true
+
       - name: Update MoonBit package registry
         run: nix develop -c moon update
 
