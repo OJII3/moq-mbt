@@ -46,6 +46,8 @@ jobs:
         run: |
           moon check --target js --deny-warn src/js_adapter
           moon build --target js src/js_adapter
+          moon check --target js --deny-warn src/cmd/web_interop_probe
+          moon build --target js src/cmd/web_interop_probe
 
       - name: Check portable packages on WebAssembly
         run: moon check --target wasm-gc --deny-warn src/protocol src/session

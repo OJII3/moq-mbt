@@ -21,6 +21,9 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 port=${MOQ_RS_PORT:-4443}
+browser_e2e_bundle=_build/js/release/build/cmd/web_interop_probe/web_interop_probe.js
+moon build --release --target js src/cmd/web_interop_probe
+moon build --release --target native src/cmd/track_probe
 openssl ecparam -name prime256v1 -genkey -noout -out "$task_tmp/key.pem" \
   >"$task_tmp/cert.log" 2>&1
 openssl req -x509 -new -key "$task_tmp/key.pem" -sha256 -days 1 \
@@ -80,3 +83,14 @@ if ((status != 0)); then
   cat "$relay_log" >&2
   exit "$status"
 fi
+
+if [[ -n ${MOQ_RS_E2E_MODES:-} ]]; then
+  read -r -a e2e_modes <<<"$MOQ_RS_E2E_MODES"
+else
+  e2e_modes=(subscribe publish)
+fi
+for mode in "${e2e_modes[@]}"; do
+  node scripts/check-moq-rs-browser-e2e.cjs \
+    "$mode" "https://127.0.0.1:$port/interop" "$fingerprint" "$port" \
+    "$browser_e2e_bundle"
+done

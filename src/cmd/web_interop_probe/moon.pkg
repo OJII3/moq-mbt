@@ -1,0 +1,12 @@
+supported_targets = "js"
+
+import {
+  "mizchi/js_core" @js,
+  "mizchi/js_builtin/arraybuffer",
+  "moonbitlang/core/encoding/utf8",
+  "ojii3/moq-mbt/protocol",
+  "ojii3/moq-mbt/session",
+  "ojii3/moq-mbt/js_adapter",
+}
+
+pkgtype(kind: "executable")

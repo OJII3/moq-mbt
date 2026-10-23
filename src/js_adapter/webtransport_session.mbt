@@ -11,6 +11,10 @@ pub struct WebTransportSessionDriver {
   mut pending_datagrams : Int32
   notices : Array[@session.ClientSessionNotice]
   notice_waiters : Array[(@session.ClientSessionNotice?) -> Unit]
+  opened_streams : Array[(@session.ClientStreamPurpose, Int64)]
+  opened_stream_waiters : Array[
+    ((@session.ClientStreamPurpose, Int64)?) -> Unit,
+  ]
   mut active : Bool
   mut clock_timer : Int32?
 }
@@ -29,6 +33,8 @@ pub fn WebTransportSessionDriver::new(
     pending_datagrams: 0,
     notices: [],
     notice_waiters: [],
+    opened_streams: [],
+    opened_stream_waiters: [],
     active: false,
     clock_timer: None,
   }
@@ -133,6 +139,40 @@ pub fn WebTransportSessionDriver::next_notice(
 }
 
 ///|
+/// Receive the next stream opened for a session action. This lets application
+/// code retain the transport reference needed by later session operations.
+pub fn WebTransportSessionDriver::next_opened_stream(
+  self : WebTransportSessionDriver,
+) -> @js.Promise[(@session.ClientStreamPurpose, Int64)?] {
+  if self.opened_streams.length() > 0 {
+    let stream = self.opened_streams[0]
+    ignore(self.opened_streams.remove(0))
+    return @js.Promise::resolve(Some(stream))
+  }
+  if !self.active {
+    return @js.Promise::resolve(None)
+  }
+  @js.Promise::new(fn(resolve, _reject) {
+    self.opened_stream_waiters.push(resolve)
+  })
+}
+
+///|
+fn WebTransportSessionDriver::notify_opened_stream(
+  self : WebTransportSessionDriver,
+  purpose : @session.ClientStreamPurpose,
+  stream : Int64,
+) -> Unit {
+  if self.opened_stream_waiters.length() > 0 {
+    let waiter = self.opened_stream_waiters[0]
+    ignore(self.opened_stream_waiters.remove(0))
+    waiter(Some((purpose, stream)))
+  } else {
+    self.opened_streams.push((purpose, stream))
+  }
+}
+
+///|
 fn WebTransportSessionDriver::receive_event(
   self : WebTransportSessionDriver,
   event : @session.ClientSessionEvent,
@@ -192,8 +232,10 @@ fn WebTransportSessionDriver::pump_actions(
             opening.then(fn(result) {
               self.pending_opens -= 1
               match result {
-                Ok(stream) =>
+                Ok(stream) => {
+                  self.notify_opened_stream(purpose, stream)
                   self.receive_event(@session.StreamOpened(purpose, stream))
+                }
                 Err(_) => self.receive_event(@session.TransportFailed(-1L))
               }
               self.pump_actions()
@@ -449,6 +491,11 @@ fn WebTransportSessionDriver::finish(self : WebTransportSessionDriver) -> Unit {
   while self.notice_waiters.length() > 0 {
     let waiter = self.notice_waiters[0]
     ignore(self.notice_waiters.remove(0))
+    waiter(None)
+  }
+  while self.opened_stream_waiters.length() > 0 {
+    let waiter = self.opened_stream_waiters[0]
+    ignore(self.opened_stream_waiters.remove(0))
     waiter(None)
   }
 }
