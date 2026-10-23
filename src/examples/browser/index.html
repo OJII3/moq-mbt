@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>moq-mbt browser sample</title>
+    <style>
+      body { font: 16px/1.5 system-ui, sans-serif; margin: 2rem auto; max-width: 42rem; padding: 0 1rem; }
+      label { display: grid; gap: .25rem; margin: 1rem 0; }
+      input, select, button { font: inherit; padding: .45rem; }
+      pre { background: #f3f4f6; min-height: 3rem; padding: .75rem; white-space: pre-wrap; }
+      .buttons { display: flex; gap: .5rem; }
+    </style>
+  </head>
+  <body>
+    <h1>moq-mbt browser sample</h1>
+    <p>Open this page in two tabs. Use the same URL, namespace, and track; choose publish in one tab and subscribe in the other.</p>
+    <form id="connection-form">
+      <label>HTTPS WebTransport URL
+        <input id="url" type="url" value="https://127.0.0.1:4443/interop" required>
+      </label>
+      <label>SHA-256 certificate hash (base64, optional)
+        <input id="certificate-hash" autocomplete="off">
+      </label>
+      <label>Mode
+        <select id="mode"><option value="subscribe">Subscribe</option><option value="publish">Publish</option></select>
+      </label>
+      <label>Namespace
+        <input id="namespace" value="interop" required>
+      </label>
+      <label>Track
+        <input id="track" value="multi-object" required>
+      </label>
+      <button type="submit">Connect</button>
+    </form>
+    <div class="buttons">
+      <button id="start" type="button" disabled>Start transfer</button>
+      <button id="finish" type="button" disabled>Close publisher</button>
+    </div>
+    <h2>Status</h2>
+    <pre id="status">Not connected</pre>
+    <p>The sample sends two Groups with two Objects each, including Properties and normal stream completion.</p>
+    <script>
+      const form = document.querySelector("#connection-form");
+      const status = document.querySelector("#status");
+      const startButton = document.querySelector("#start");
+      const finishButton = document.querySelector("#finish");
+      let startTransfer;
+      let finishPublisher;
+
+      form.addEventListener("submit", event => {
+        event.preventDefault();
+        form.querySelector("button[type=submit]").disabled = true;
+        const certificateHash = document.querySelector("#certificate-hash").value.trim();
+        globalThis.__moqE2EConfig = {
+          uri: document.querySelector("#url").value,
+          certificateHash: certificateHash ? [...Uint8Array.from(atob(certificateHash), c => c.charCodeAt(0))] : [],
+          mode: document.querySelector("#mode").value,
+          namespace: document.querySelector("#namespace").value,
+          track: document.querySelector("#track").value,
+        };
+        globalThis.__moqE2EResult = { status: "loading" };
+        globalThis.__moqE2EStartPromise = new Promise(resolve => { startTransfer = resolve; });
+        globalThis.__moqE2EFinishPromise = new Promise(resolve => { finishPublisher = resolve; });
+        const bundle = document.createElement("script");
+        bundle.src = "/_build/js/release/build/cmd/web_interop_probe/web_interop_probe.js";
+        bundle.onerror = () => { status.textContent = "Could not load the sample bundle. Build it with the command in examples/browser/README.md."; };
+        document.body.append(bundle);
+      });
+
+      startButton.addEventListener("click", () => {
+        startButton.disabled = true;
+        startTransfer?.();
+      });
+      finishButton.addEventListener("click", () => {
+        finishButton.disabled = true;
+        finishPublisher?.();
+      });
+      const statusTimer = setInterval(() => {
+        const current = globalThis.__moqE2EResult?.status ?? "Not connected";
+        status.textContent = current;
+        startButton.disabled = !(current === "ready" || current === "published" || current === "subscribed");
+        finishButton.disabled = current !== "publishing-done";
+        if (current === "passed" || current.startsWith("failed:")) clearInterval(statusTimer);
+      }, 200);
+    </script>
+  </body>
+</html>

@@ -1,15 +1,16 @@
 # WebTransport adapter
 
-`webtransport_connect` accepts a `moqt://` URI, preserves its authority, path,
-and query, and opens the corresponding `https://` URL. It offers the WebTransport
+`webtransport_connect` accepts an `https://` URL or a `moqt://` URI. For `moqt:`
+it preserves the authority, path, and query while opening the corresponding
+`https://` URL. It offers the WebTransport
 subprotocol `moqt-18`, as required by MOQT Draft 18. Once `ready` fulfills, the
 server-selected `protocol` must equal `moqt-18`; an empty or different selection
 returns `Err(WebTransportFailure)`. The relay must advertise and select this protocol through
 WebTransport's `WT-Available-Protocols` negotiation.
 
 WebTransport is available only in secure contexts. If the API is missing, the
-module still imports; `webtransport_connect` returns the constructor error. The
-binding also requires the `protocols` constructor option and the `protocol`
+module still imports; `webtransport_connect` returns a clear constructor error.
+The binding also requires the `protocols` constructor option and the `protocol`
 property. As of 2026-10-23, those negotiation features are supported by Chrome
 143+, Edge 143+, Firefox 155+, and Safari 26.4+. Browser support changes over
 time; check the browser's WebTransport support before connecting.
@@ -85,3 +86,15 @@ events back into the session without pausing the stream and datagram readers.
 means the browser accepted each write and, for FIN, completed `writer.close()`;
 it is not a QUIC ACK or peer delivery confirmation. Native backends may provide
 a stronger completion signal, but the common session API does not require one.
+
+## Browser client facade
+
+`browser_connect(url, setup)` creates a connection and a Draft 18 session
+driver. Call `start()`, use `session()` to make MoQ requests, pass each
+operation's returned actions to `dispatch()`, and await `next_notice()` for
+results. Call `close(code, reason)` when the application is done; `closed()`
+reports whether the local peer, remote peer, or transport failure ended the
+connection. The facade does not access `window` or `document` during import.
+
+See [`examples/browser`](../examples/browser) for a runnable publish /
+subscribe page.

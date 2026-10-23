@@ -39,9 +39,9 @@ pub struct WebTransportConnection {
 }
 
 ///|
-/// Create a WebTransport session from an MOQT URI, preserving its path and
-/// query while replacing `moqt:` with `https:`. The browser's default
-/// certificate validation remains enabled.
+/// Create a WebTransport session from an HTTPS URL or an MOQT URI. For an
+/// MOQT URI, its path and query are preserved while replacing `moqt:` with
+/// `https:`. The browser's default certificate validation remains enabled.
 pub fn webtransport_connect(
   moqt_uri : String,
 ) -> Result[WebTransportConnection, String] {
@@ -352,8 +352,8 @@ pub fn WebTransportConnection::was_closed_locally(
 extern "js" fn ffi_webtransport_url(moqt_uri : String) -> String =
   #| (moqtUri) => {
   #|   const url = new URL(moqtUri);
-  #|   if (url.protocol !== "moqt:" || !url.hostname || url.hash || url.username || url.password) {
-  #|     throw new TypeError("expected a moqt:// URL without credentials or fragment");
+  #|   if (!["moqt:", "https:"].includes(url.protocol) || !url.hostname || url.hash || url.username || url.password) {
+  #|     throw new TypeError("expected an https:// or moqt:// URL without credentials or fragment");
   #|   }
   #|   return url.href.replace(/^moqt:/, "https:");
   #| }

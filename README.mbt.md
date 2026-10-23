@@ -10,7 +10,7 @@ MoQ (Media over QUIC Transport) implementation in [MoonBit](https://www.moonbitl
 
 - **Multi-Target Support**:
   - **Native**: Powered by [`libmsquic`](https://github.com/microsoft/msquic) for high-performance native QUIC networking.
-  - **JavaScript / Web**: Designed to run in web browsers and JavaScript environments leveraging WebTransport.
+  - **Browser**: JavaScript target using the browser's WebTransport API.
 - **Specification Compliance**:
   - Targeting **draft-ietf-moq-transport-18** (Draft 18).
   - Aiming for interoperability with external MoQ relay servers and client implementations.
@@ -37,8 +37,10 @@ without adding those dependencies to `protocol` or `session`.
 
 ## Development
 
-The Nix devShell includes MoonBit, Node.js, Chromium, MsQuic, OpenSSL, and the
-pinned moq-rs relay. Run the local Draft 18 interoperability checks with:
+The Nix devShell includes MoonBit, Node.js tooling, Chromium, MsQuic, OpenSSL,
+and the pinned moq-rs relay. Node.js is used by development scripts; the
+JavaScript runtime target is the browser. Run the local Draft 18
+interoperability checks with:
 
 ```sh
 nix develop -c bash scripts/check-interop.sh
@@ -47,9 +49,9 @@ nix develop -c bash scripts/check-moq-rs-dual.sh
 
 The check starts the pinned moq-rs relay on `127.0.0.1:4443`. It verifies
 certificate rejection, Draft 18 SETUP, and multi-Object/Group publish and
-subscribe. The dual check connects raw QUIC, a browser WebTransport client, and a
-Node WebTransport client to the same relay, exchanges Draft 18 SETUP, and verifies
-rejection of an incorrect certificate pin. See [interop notes](docs/interop.md)
+subscribe. The dual check connects raw QUIC and a browser WebTransport client to
+the same relay, exchanges Draft 18 SETUP, and verifies rejection of an incorrect
+certificate pin. See [interop notes](docs/interop.md)
 for the tested scenarios and limits.
 
 ## References
