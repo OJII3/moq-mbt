@@ -27,3 +27,26 @@ deadline. Calling `close` while connecting cancels the connection. The returned
 `closed` promise resolves once with `LocalClose`, `PeerClose`, or `Failed`.
 `close` is idempotent, accepts only unsigned 32-bit codes, and rejects reasons
 whose UTF-8 encoding exceeds the WebTransport API's 1024-byte limit.
+
+## Streams
+
+`open_unidirectional()` and `open_bidirectional()` resolve to opaque `Int64`
+references. Peer streams use the same reference space. Consume
+`next_stream_event()` for `StreamStarted`, `Data`, `StreamFinished`,
+`StreamReset`, `SendStopped`, `StreamQueueOverflow`, and `ConnectionClosed`.
+`StreamStarted` is queued before that stream's first data or finish event.
+Each incoming stream has its own reader loop, so a stalled stream does not
+block other streams.
+
+Call `write_stream(reference, bytes, fin=...)` to send in call order. It waits
+for `writer.ready` before each write and closes the send side after a final
+write. A successful result means the browser accepted the write; WebTransport
+does not expose QUIC acknowledgement for this operation. Call
+`cancel_stream_read(reference, error_code)` to stop the receive side or
+`abort_stream_write(reference, error_code)` to reset the send side.
+
+The adapter bounds active streams and pending stream opens (16 each), queued
+writes (256 and 1 MiB), and queued stream events (256 and 1 MiB of data).
+Exceeding an event queue limit stops the affected stream and emits
+`StreamQueueOverflow`. Event data is copied from the exact Uint8Array view
+range into MoonBit-owned bytes.
