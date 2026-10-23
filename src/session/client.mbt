@@ -27,6 +27,10 @@ pub(all) enum ClientSessionEnd {
 } derive(Debug, Eq)
 
 ///|
+/// `SendComplete` means the backend's send operation has completed. The
+/// completion point is backend-specific: Web Streams can report local write
+/// and FIN completion, while a QUIC backend may report a stronger signal.
+/// The common session contract does not promise peer receipt or QUIC ACK.
 /// `Clock` values are monotonic milliseconds supplied by the adapter.
 pub(all) enum ClientSessionEvent {
   InboundStreamStarted(Int64, ClientStreamDirection)

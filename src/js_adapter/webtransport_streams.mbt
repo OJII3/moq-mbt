@@ -7,6 +7,7 @@ pub(all) enum WebTransportStreamDirection {
 ///|
 pub(all) enum WebTransportStreamEvent {
   StreamStarted(Int64, WebTransportStreamDirection)
+  LocalStreamOpened(Int64, WebTransportStreamDirection)
   Data(Int64, Bytes)
   StreamFinished(Int64)
   StreamReset(Int64, WebTransportFailure)
@@ -105,6 +106,7 @@ fn WebTransportStreamManager::enqueue_stream_event(
       _ if self.events.length() >= max_stream_events - 1 => {
         let stream = match event {
           StreamStarted(stream, _)
+          | LocalStreamOpened(stream, _)
           | Data(stream, _)
           | StreamFinished(stream)
           | StreamReset(stream, _)
@@ -252,7 +254,13 @@ fn WebTransportStreamManager::register_stream(
   }
   if self.streams.length() >= max_active_webtransport_streams {
     let id = self.allocate_stream_ref()
-    self.enqueue_stream_event(StreamStarted(id, direction))
+    self.enqueue_stream_event(
+      if locally_opened {
+        LocalStreamOpened(id, direction)
+      } else {
+        StreamStarted(id, direction)
+      },
+    )
     self.enqueue_stream_event(StreamQueueOverflow(id))
     ffi_webtransport_discard_stream(
       stream,
@@ -291,7 +299,13 @@ fn WebTransportStreamManager::register_stream(
     write_closed: Ref(false),
   }
   self.streams[id] = state
-  self.enqueue_stream_event(StreamStarted(id, direction))
+  self.enqueue_stream_event(
+    if locally_opened {
+      LocalStreamOpened(id, direction)
+    } else {
+      StreamStarted(id, direction)
+    },
+  )
   match writer {
     Some(writer) =>
       ignore(
