@@ -16,6 +16,10 @@ priv struct PublisherProbeState {
 }
 
 ///|
+/// Block until the browser E2E harness releases the publisher over stdin.
+extern "C" fn ffi_wait_for_start() -> Int32 = "getchar"
+
+///|
 fn start_probe_group(
   client : @transport.Client,
   session : @session.ClientSession,
@@ -191,6 +195,7 @@ fn run_publisher(
   datagrams : Bool,
   insecure : Bool,
   hold_open : Bool,
+  wait_for_start : Bool,
 ) -> Unit raise {
   let track : @protocol.TrackName = {
     namespace_fields: [@utf8.encode(namespace_field)],
@@ -228,6 +233,7 @@ fn run_publisher(
     publish_done_sent: false,
   }
   handle_publisher_notices(client, session, notices, driver, state)
+  let mut waiting_for_start = false
   let deadline = @env.now() + 60000
   while @env.now() < deadline {
     match client.next_event(100) {
@@ -400,6 +406,11 @@ fn run_publisher(
         )
         handle_publisher_notices(client, session, notices, driver, state)
       }
+    }
+    if state.publish_accepted && wait_for_start && !waiting_for_start {
+      waiting_for_start = true
+      eprintln("PUBLISH accepted; waiting for E2E subscriber")
+      ignore(ffi_wait_for_start())
     }
     if state.publish_accepted &&
       state.datagrams &&
