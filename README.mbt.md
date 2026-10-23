@@ -37,8 +37,8 @@ without adding those dependencies to `protocol` or `session`.
 
 ## Development
 
-The Nix devShell includes MoonBit, Node.js, Chromium, MsQuic, OpenSSL, and pinned
-moq5 and moq-rs relays. Run the local Draft 18 interoperability checks with:
+The Nix devShell includes MoonBit, Node.js, Chromium, MsQuic, OpenSSL, and the
+pinned moq-rs relay. Run the local Draft 18 interoperability checks with:
 
 ```sh
 nix develop -c bash scripts/check-interop.sh
@@ -47,10 +47,10 @@ nix develop -c bash scripts/check-moq-rs-dual.sh
 
 The check starts the pinned moq-rs relay on `127.0.0.1:4443`. It verifies
 certificate rejection, Draft 18 SETUP, and multi-Object/Group publish and
-subscribe. The dual check connects raw QUIC and a browser WebTransport client to
-the same relay, exchanges Draft 18 SETUP, and verifies rejection of an incorrect
-certificate pin. These checks do not cover browser publish/subscribe through
-moq5. See [interop notes](docs/interop.md) for the tested scenarios and limits.
+subscribe. The dual check connects raw QUIC, a browser WebTransport client, and a
+Node WebTransport client to the same relay, exchanges Draft 18 SETUP, and verifies
+rejection of an incorrect certificate pin. See [interop notes](docs/interop.md)
+for the tested scenarios and limits.
 
 ## References
 

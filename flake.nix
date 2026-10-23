@@ -33,10 +33,6 @@
           overlays = [ inputs.moonbit-overlay.overlays.default ];
         };
 
-        packages.wtquic = pkgs.callPackage ./nix/wtquic.nix { };
-        packages.moq5-relay = pkgs.callPackage ./nix/moq5-relay.nix {
-          wtquic = self'.packages.wtquic;
-        };
         packages.moq-rs-relay = pkgs.callPackage ./nix/moq-rs-relay.nix {
           src = inputs.moq-rs-src;
         };
@@ -48,7 +44,6 @@
             pkgs.nodejs
             pkgs.playwright-driver
             playwrightBrowsers
-            self'.packages.moq5-relay
             self'.packages.moq-rs-relay
             pkgs.openssl
           ];

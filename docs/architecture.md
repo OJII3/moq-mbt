@@ -62,4 +62,4 @@ src/
 └── transport/
 ```
 
-MsQuic アダプターと JavaScript WebTransport アダプターを用意している。アダプターはそれぞれ `transport` と `js_adapter` にあり、`session` の送受信アクションとトランスポートのイベントを変換する。ブラウザでの moq5 アプリレベル publish/subscribe は未検証であり、現在のブラウザ interop check は moq-rs への WebTransport 接続と Draft 18 SETUP を確認する。セッションのシナリオはネットワークなしで再現できる形を目指す。
+MsQuic アダプターと JavaScript WebTransport アダプターを用意している。アダプターはそれぞれ `transport` と `js_adapter` にあり、`session` の送受信アクションとトランスポートのイベントを変換する。現在のブラウザ interop check は moq-rs への WebTransport 接続と Draft 18 SETUP を確認する。Native と Web 間のアプリレベル publish/subscribe E2E は未検証である。セッションのシナリオはネットワークなしで再現できる形を目指す。

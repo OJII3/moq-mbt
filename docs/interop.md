@@ -5,10 +5,10 @@
 CI は Native moq-rs interop、ブラウザ WebTransport と raw QUIC の moq-rs
 SETUP、JavaScript / WebAssembly の check と test を実行する。ブラウザの
 WebTransport 接続では Draft 18 の SETUP 受信と証明書 pin の拒否を確認する。
-これは moq5 relay を使った Native publisher ↔ Web subscriber の双方向
-publish/subscribe E2E や Node の実接続 smoke を代替しない。Origin 対応と
-Origin 拒否検証は後続の [#104](https://github.com/OJII3/moq-mbt/issues/104)
-で扱うため、この interop check には含めない。
+これは Native と Web 間の双方向 app-level publish/subscribe E2E を含まない。
+moq5 は検証 relay として採用しない。Origin 対応と Origin 拒否検証は後続の
+[#104](https://github.com/OJII3/moq-mbt/issues/104) で扱うため、この
+interop check には含めない。
 
 Native QUIC と WebTransport の両方で Draft 18 の SETUP を確認する。Native QUIC の interop script は複数 Group/Object の publish/subscribe と `PUBLISH_DONE` を検証する。Protocol state の詳細な REQUEST_UPDATE、FETCH、Namespace、Datagram シナリオは個別 probe と Sans-I/O tests で確認する。
 
