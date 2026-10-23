@@ -266,6 +266,102 @@ async test "WebTransport connection, negotiation, timeout, and close lifecycle" 
     ConnectionClosed(LocalClose) => ()
     _ => fail("connection close event was not retained")
   }
+  ffi_install_fake_webtransport("moqt-18", false, false)
+  let connection = match
+    @js_adapter.webtransport_connect("moqt://example.test/datagrams") {
+    Ok(connection) => connection
+    Err(message) => fail(message)
+  }
+  let capability = connection.datagram_capability()
+  assert_true(capability.enabled)
+  assert_eq(capability.max_length, 7)
+  assert_true(connection.send_datagram(b"1234567").wait() is Ok(_))
+  assert_eq(ffi_fake_datagram_write(), "1234567")
+  match connection.send_datagram(b"12345678").wait() {
+    Err(DatagramTooLarge(actual, maximum)) => {
+      assert_eq(actual, 8)
+      assert_eq(maximum, 7)
+    }
+    _ => fail("oversized datagram was accepted")
+  }
+  let view = ffi_fake_offset_view("one")
+  ffi_fake_push_datagram(view)
+  let first = match connection.next_datagram().wait() {
+    DatagramReceived(bytes) => bytes
+    DatagramReceiveQueueFull => fail("datagram receive queue overflowed")
+    DatagramsClosed => fail("datagram reader closed unexpectedly")
+  }
+  ffi_fake_mutate_view(view)
+  assert_eq(first, b"one")
+  ffi_fake_push_datagram(@js_adapter.bytes_to_uint8array(b"two"))
+  match connection.next_datagram().wait() {
+    DatagramReceived(bytes) => assert_eq(bytes, b"two")
+    DatagramReceiveQueueFull => fail("datagram receive queue overflowed")
+    DatagramsClosed => fail("datagram reader closed unexpectedly")
+  }
+
+  ffi_fake_reject_datagram_writes()
+  match connection.send_datagram(b"reject").wait() {
+    Err(DatagramWriteFailed(error)) =>
+      assert_eq(error.message, "datagram write failed")
+    _ => fail("datagram write rejection was reported as success")
+  }
+  ffi_fake_allow_datagram_writes()
+
+  let waiting = connection.next_datagram()
+  ignore(connection.close(0L, "done"))
+  match connection.closed().wait() {
+    LocalClose => ()
+    PeerClose(_) => fail("local close was reported as peer close")
+    Failed(error) => fail("unexpected close failure: " + error.message)
+  }
+  assert_true(waiting.wait() is DatagramsClosed)
+  assert_true(!connection.datagram_capability().enabled)
+  match connection.send_datagram(b"late").wait() {
+    Err(DatagramConnectionClosed) => ()
+    _ => fail("send after connection close was not rejected")
+  }
+
+  ffi_install_fake_webtransport("moqt-18", false, false)
+  ffi_fake_disable_next_datagrams()
+  let unavailable = match
+    @js_adapter.webtransport_connect("moqt://example.test/no-datagrams") {
+    Ok(connection) => connection
+    Err(message) => fail(message)
+  }
+  assert_true(!unavailable.datagram_capability().enabled)
+  match unavailable.send_datagram(b"unavailable").wait() {
+    Err(DatagramUnavailable) => ()
+    _ => fail("unavailable datagram API was reported as available")
+  }
+  assert_true(unavailable.next_datagram().wait() is DatagramsClosed)
+  ignore(unavailable.close(0L, "done"))
+
+  ffi_install_fake_webtransport("moqt-18", false, false)
+  let blocked = match
+    @js_adapter.webtransport_connect(
+      "moqt://example.test/datagram-backpressure",
+    ) {
+    Ok(connection) => connection
+    Err(message) => fail(message)
+  }
+  ffi_fake_delay_datagram_writes()
+  let pending_sends : Array[
+    @js.Promise[Result[Unit, @js_adapter.WebTransportDatagramError]],
+  ] = []
+  for _ in 0..<64 {
+    pending_sends.push(blocked.send_datagram(b"queued"))
+  }
+  match blocked.send_datagram(b"overflow").wait() {
+    Err(DatagramQueueFull) => ()
+    _ => fail("datagram send queue exceeded its limit")
+  }
+  ignore(blocked.close(0L, "done"))
+  ffi_fake_resolve_pending_datagram_writes()
+  ignore(blocked.closed().wait())
+  for pending in pending_sends {
+    ignore(pending.wait())
+  }
 }
 
 ///|
@@ -278,6 +374,9 @@ extern "js" fn ffi_install_fake_webtransport(
   #|   globalThis.__moqWtLast = null;
   #|   globalThis.__moqWtDelayOpen = false;
   #|   globalThis.__moqWtDelayWrites = false;
+  #|   globalThis.__moqWtDatagramsEnabled = true;
+  #|   globalThis.__moqWtRejectDatagramWrites = false;
+  #|   globalThis.__moqWtDelayDatagramWrites = false;
   #|   globalThis.WebTransportError = class extends Error {
   #|     constructor(options) { super(); this.streamErrorCode = options.streamErrorCode; }
   #|   };
@@ -291,6 +390,7 @@ extern "js" fn ffi_install_fake_webtransport(
   #|       this.resolveReady = undefined;
   #|       this.resolveClosed = undefined;
   #|       this.pendingWriteResolvers = [];
+  #|       this.pendingDatagramWriteResolvers = [];
   #|       globalThis.__moqWtPendingOpenResolvers = [];
   #|       this.incomingUnidirectionalStreams = new ReadableStream({
   #|         start: controller => { this.incomingUni = controller; },
@@ -298,6 +398,22 @@ extern "js" fn ffi_install_fake_webtransport(
   #|       this.incomingBidirectionalStreams = new ReadableStream({
   #|         start: controller => { this.incomingBidi = controller; },
   #|       });
+  #|       if (globalThis.__moqWtDatagramsEnabled) {
+  #|         this.datagrams = {
+  #|           maxDatagramSize: 7,
+  #|           readable: new ReadableStream({
+  #|             start: controller => { this.datagramController = controller; },
+  #|           }),
+  #|           writable: new WritableStream({
+  #|             write: chunk => {
+  #|               if (globalThis.__moqWtRejectDatagramWrites) throw new Error("datagram write failed");
+  #|               this.lastDatagram = chunk;
+  #|               if (globalThis.__moqWtDelayDatagramWrites) return new Promise(resolve => this.pendingDatagramWriteResolvers.push(resolve));
+  #|             },
+  #|           }),
+  #|         };
+  #|       }
+  #|       globalThis.__moqWtDatagramsEnabled = true;
   #|       this.createUnidirectionalStream = () => Promise.resolve(
   #|         new WritableStream({ write: chunk => { this.uniWrites = chunk; } }),
   #|       );
@@ -330,6 +446,38 @@ extern "js" fn ffi_install_fake_webtransport(
   #|     }
   #|   };
   #| }
+
+///|
+extern "js" fn ffi_fake_delay_datagram_writes() -> Unit =
+  #| () => { globalThis.__moqWtDelayDatagramWrites = true; }
+
+///|
+extern "js" fn ffi_fake_resolve_pending_datagram_writes() -> Unit =
+  #| () => {
+  #|   globalThis.__moqWtLast.pendingDatagramWriteResolvers.forEach(resolve => resolve());
+  #|   globalThis.__moqWtLast.pendingDatagramWriteResolvers = [];
+  #|   globalThis.__moqWtDelayDatagramWrites = false;
+  #| }
+
+///|
+extern "js" fn ffi_fake_push_datagram(data : @arraybuffer.Uint8Array) -> Unit =
+  #| (data) => globalThis.__moqWtLast.datagramController.enqueue(data)
+
+///|
+extern "js" fn ffi_fake_datagram_write() -> String =
+  #| () => new TextDecoder().decode(globalThis.__moqWtLast.lastDatagram)
+
+///|
+extern "js" fn ffi_fake_reject_datagram_writes() -> Unit =
+  #| () => { globalThis.__moqWtRejectDatagramWrites = true; }
+
+///|
+extern "js" fn ffi_fake_allow_datagram_writes() -> Unit =
+  #| () => { globalThis.__moqWtRejectDatagramWrites = false; }
+
+///|
+extern "js" fn ffi_fake_disable_next_datagrams() -> Unit =
+  #| () => { globalThis.__moqWtDatagramsEnabled = false; }
 
 ///|
 extern "js" fn ffi_fake_delay_stream_writes() -> Unit =

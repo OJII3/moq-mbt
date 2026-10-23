@@ -50,3 +50,20 @@ writes (256 and 1 MiB), and queued stream events (256 and 1 MiB of data).
 Exceeding an event queue limit stops the affected stream and emits
 `StreamQueueOverflow`. Event data is copied from the exact Uint8Array view
 range into MoonBit-owned bytes.
+
+## Datagrams
+
+`datagram_capability()` reports whether the browser exposes WebTransport
+datagrams and its current maximum payload size. `send_datagram(bytes)` writes
+those bytes directly; the adapter adds no MoQ or HTTP Datagram framing. The
+send queue is limited to 64 datagrams and 1 MiB. A successful result means the
+local Web Streams write completed. Datagrams are best effort: this does not
+confirm QUIC acknowledgement, peer receipt, ordering, or application delivery.
+Unsupported datagrams, oversized payloads, a full send queue, connection close,
+and browser write rejection return distinct errors.
+
+`next_datagram()` yields one received payload per event, preserving datagram
+boundaries and copying the exact Uint8Array view range. The receive queue is
+limited to 256 datagrams and 1 MiB; reaching either limit emits
+`DatagramReceiveQueueFull` and stops the local datagram reader. Connection close
+releases the reader and writer and resolves waiting reads with `DatagramsClosed`.
