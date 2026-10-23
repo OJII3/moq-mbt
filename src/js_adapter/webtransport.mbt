@@ -35,6 +35,7 @@ pub struct WebTransportConnection {
   closed : @js.Promise[WebTransportClose]
   locally_closed : Ref[Bool]
   stream_manager : WebTransportStreamManager
+  datagram_manager : WebTransportDatagramManager
 }
 
 ///|
@@ -117,7 +118,10 @@ pub fn webtransport_connect_with_certificate_hashes(
         }
       }
       match connection_box.val {
-        Some(connection) => connection.stream_manager.connection_closed(outcome)
+        Some(connection) => {
+          connection.stream_manager.connection_closed(outcome)
+          connection.datagram_manager.connection_closed()
+        }
         None => ()
       }
       @js.Promise::resolve(outcome)
@@ -141,9 +145,11 @@ pub fn webtransport_connect_with_certificate_hashes(
         connection_ended: Ref(false),
         final_close: Ref(None),
       },
+      datagram_manager: WebTransportDatagramManager::new(raw),
     }
     connection_box.val = Some(connection)
     connection.stream_manager.start_accepting_streams()
+    connection.datagram_manager.start_reading()
     @js.undefined()
   }) catch {
     @js.JsError(message) => return Err(message)
@@ -161,6 +167,35 @@ pub fn WebTransportConnection::next_stream_event(
   self : WebTransportConnection,
 ) -> @js.Promise[WebTransportStreamEvent] {
   self.stream_manager.next_stream_event()
+}
+
+///|
+/// Report whether unreliable datagrams are available and the largest payload
+/// accepted by this WebTransport session.
+pub fn WebTransportConnection::datagram_capability(
+  self : WebTransportConnection,
+) -> WebTransportDatagramCapability {
+  self.datagram_manager.capability()
+}
+
+///|
+/// Wait for one incoming datagram. Each event preserves the browser's original
+/// datagram boundary; payload bytes are copied into MoonBit-owned storage.
+pub fn WebTransportConnection::next_datagram(
+  self : WebTransportConnection,
+) -> @js.Promise[WebTransportDatagramEvent] {
+  self.datagram_manager.next_datagram()
+}
+
+///|
+/// Send one datagram without adding MoQ or HTTP Datagram framing. Completion
+/// reports local Web Streams write completion, not QUIC acknowledgement or
+/// peer delivery.
+pub fn WebTransportConnection::send_datagram(
+  self : WebTransportConnection,
+  bytes : Bytes,
+) -> @js.Promise[Result[Unit, WebTransportDatagramError]] {
+  self.datagram_manager.send_datagram(bytes)
 }
 
 ///|
