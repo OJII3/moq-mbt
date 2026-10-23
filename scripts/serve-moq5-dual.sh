@@ -18,13 +18,15 @@ trap 'exit 143' TERM
 native_port=${MOQ5_NATIVE_PORT:-4443}
 webtransport_port=${MOQ5_WEBTRANSPORT_PORT:-4444}
 origin=${MOQ5_WEBTRANSPORT_ORIGIN:-http://localhost:8000}
-openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 1 \
+openssl ecparam -name prime256v1 -genkey -noout -out "$task_tmp/key.pem" \
+  >"$task_tmp/cert.log" 2>&1
+openssl req -x509 -new -key "$task_tmp/key.pem" -sha256 -days 1 \
   -subj /CN=localhost -addext 'subjectAltName=DNS:localhost,IP:127.0.0.1' \
-  -keyout "$task_tmp/key.pem" -out "$task_tmp/cert.pem" >"$task_tmp/cert.log" 2>&1
+  -out "$task_tmp/cert.pem" >>"$task_tmp/cert.log" 2>&1
 printf 'WebTransport certificate SHA-256 (base64): '
 openssl x509 -in "$task_tmp/cert.pem" -outform DER \
   | openssl dgst -sha256 -binary | openssl base64 -A
-printf '\nWebTransport URL: https://localhost:%s/moq\nAllowed Origin: %s\n' \
+printf '\nWebTransport URL: https://127.0.0.1:%s/moq\nAllowed Origin: %s\n' \
   "$webtransport_port" "$origin"
 
 cat >"$task_tmp/moq5-relay.json" <<EOF
@@ -47,7 +49,8 @@ moq5-relay serve --config "$task_tmp/moq5-relay.json" \
   >"$task_tmp/relay.log" 2>&1 &
 relay_pid=$!
 for ((attempt = 0; attempt < 100; attempt++)); do
-  if grep -q 'MOQ5 Relay: listening on' "$task_tmp/relay.log"; then
+  if grep -Fq "MOQ5 Relay: listening on 127.0.0.1:$native_port" "$task_tmp/relay.log" \
+    && grep -Fq "MOQ5 Relay: WebTransport on 127.0.0.1:$webtransport_port/moq" "$task_tmp/relay.log"; then
     cat "$task_tmp/relay.log"
     wait "$relay_pid"
     exit $?
