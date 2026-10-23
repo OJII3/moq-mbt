@@ -6,8 +6,9 @@ task_tmp=$(mktemp -d)
 relay_pid=
 raw_pid=
 webtransport_pid=
+node_pid=
 cleanup() {
-  for pid in "$webtransport_pid" "$raw_pid" "$relay_pid"; do
+  for pid in "$node_pid" "$webtransport_pid" "$raw_pid" "$relay_pid"; do
     if [[ -n "$pid" ]]; then
       kill "$pid" 2>/dev/null || true
       wait "$pid" 2>/dev/null || true
@@ -53,6 +54,10 @@ node scripts/check-moq-rs-webtransport.cjs \
   "https://127.0.0.1:$port/interop" "$fingerprint" \
   >"$task_tmp/webtransport.log" 2>&1 &
 webtransport_pid=$!
+npm run smoke:node-webtransport -- \
+  "https://127.0.0.1:$port/interop" "$fingerprint" \
+  >"$task_tmp/node.log" 2>&1 &
+node_pid=$!
 
 status=0
 if wait "$raw_pid"; then
@@ -65,7 +70,12 @@ if wait "$webtransport_pid"; then
 else
   status=$?
 fi
-cat "$task_tmp/raw.log" "$task_tmp/webtransport.log"
+if wait "$node_pid"; then
+  node_pid=
+else
+  status=$?
+fi
+cat "$task_tmp/raw.log" "$task_tmp/webtransport.log" "$task_tmp/node.log"
 if ((status != 0)); then
   cat "$relay_log" >&2
   exit "$status"

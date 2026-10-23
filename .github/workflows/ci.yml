@@ -43,15 +43,38 @@ jobs:
         run: moon check --target native --deny-warn
 
       - name: Check JavaScript adapter
-        run: moon build --target js src/js_adapter
+        run: |
+          moon check --target js --deny-warn src/js_adapter
+          moon build --target js src/js_adapter
+
+      - name: Check portable packages on WebAssembly
+        run: moon check --target wasm-gc --deny-warn src/protocol src/session
 
       - name: Run MoonBit tests
         run: moon test
 
       - name: Run protocol and session tests on JavaScript and WebAssembly
         run: |
-          moon test --target js src/protocol src/session
+          moon test --target js src/protocol src/session src/js_adapter
           moon test --target wasm-gc src/protocol src/session
 
       - name: Check formatting
         run: moon fmt --check
+
+  interop:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: cachix/install-nix-action@31.11.3
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run Native moq-rs interoperability
+        run: nix develop -c bash scripts/check-interop.sh
+
+      - name: Install Node WebTransport smoke dependencies
+        run: nix develop -c npm ci
+
+      - name: Run browser WebTransport interoperability
+        run: nix develop -c bash scripts/check-moq-rs-dual.sh

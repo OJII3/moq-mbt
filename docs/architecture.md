@@ -58,7 +58,8 @@ Draft 18 では `MAX_REQUEST_ID` / `REQUESTS_BLOCKED` と独立したキャン�
 src/
 ├── protocol/
 ├── session/
+├── js_adapter/
 └── transport/
 ```
 
-MsQuic と WebTransport のアダプター、アプリ向けの高水準 API、インメモリシミュレーターは、実装上の必要が出た段階で追加する。セッションのシナリオは、ネットワークなしで再現できる形を目指す。
+MsQuic アダプターと JavaScript WebTransport アダプターを用意している。アダプターはそれぞれ `transport` と `js_adapter` にあり、`session` の送受信アクションとトランスポートのイベントを変換する。ブラウザでの moq5 アプリレベル publish/subscribe は未検証であり、現在のブラウザ interop check は moq-rs への WebTransport 接続と Draft 18 SETUP を確認する。セッションのシナリオはネットワークなしで再現できる形を目指す。

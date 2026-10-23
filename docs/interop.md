@@ -1,5 +1,15 @@
 # Draft 18 相互接続
 
+## CI で確認する範囲
+
+CI は Native moq-rs interop、ブラウザ WebTransport と raw QUIC の moq-rs
+SETUP、JavaScript / WebAssembly の check と test を実行する。ブラウザの
+WebTransport 接続では Draft 18 の SETUP 受信と証明書 pin の拒否を確認する。
+これは moq5 relay を使った Native publisher ↔ Web subscriber の双方向
+publish/subscribe E2E や Node の実接続 smoke を代替しない。Origin 対応と
+Origin 拒否検証は後続の [#104](https://github.com/OJII3/moq-mbt/issues/104)
+で扱うため、この interop check には含めない。
+
 Native QUIC と WebTransport の両方で Draft 18 の SETUP を確認する。Native QUIC の interop script は複数 Group/Object の publish/subscribe と `PUBLISH_DONE` を検証する。Protocol state の詳細な REQUEST_UPDATE、FETCH、Namespace、Datagram シナリオは個別 probe と Sans-I/O tests で確認する。
 
 Datagram probe は stream Object と同じ track 上で Object Datagram を送受信し、Alias、payload、通常 Object の Group 終端、`EndOfGroup`、`EndOfTrack` status を検証する。通常 payload のサンプルを少なくとも1つ受信したことを確認する。Datagram の追加マーカーは受信したものを検証するが、全件受信や順序は成功条件にしない。Datagram は Subgroup stream と混在させ、`PUBLISH_DONE` の stream 数には加えない。
@@ -12,9 +22,12 @@ moq-rs は1つの QUIC endpoint で raw QUIC と WebTransport を受け付ける
 
 ~~~sh
 nix develop -c moon test
-nix develop -c moon test --target wasm
-nix develop -c moon test --target js
+nix develop -c moon check --target js --deny-warn src/js_adapter
+nix develop -c moon check --target wasm-gc --deny-warn src/protocol src/session
+nix develop -c moon test --target wasm-gc src/protocol src/session
+nix develop -c moon test --target js src/protocol src/session src/js_adapter
 nix develop -c bash scripts/check-interop.sh
+nix develop -c npm ci
 nix develop -c bash scripts/check-moq-rs-dual.sh
 ~~~
 

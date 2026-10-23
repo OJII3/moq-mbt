@@ -22,7 +22,7 @@
       perSystem = { pkgs, system, self', ... }:
       let
         playwrightBrowsers = pkgs.playwright-driver.browsers.override {
-          withChromium = false;
+          withChromium = true;
           withFirefox = false;
           withWebkit = false;
           withFfmpeg = false;
@@ -48,6 +48,7 @@
             pkgs.nodejs
             pkgs.playwright-driver
             playwrightBrowsers
+            self'.packages.moq5-relay
             self'.packages.moq-rs-relay
             pkgs.openssl
           ];
