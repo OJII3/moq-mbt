@@ -28,6 +28,7 @@ priv struct NamespaceProbeState {
   mut unavailable : Bool
   mut cancelling_subscription : Bool
   mut subscriber_session_ended : Bool
+  mut publisher_session_ended : Bool
   mut ended : Bool
 }
 
@@ -138,17 +139,17 @@ fn NamespaceProbeState::observe(
       @session.NamespaceAcceptanceRevoked(_, _) =>
         fail("Namespace publication acceptance revoked")
       @session.SessionEnded(end) =>
-        if self.cancelling_subscription && end == @session.Peer(3UL) {
-          if publisher {
-            println(
-              "moq5 closed the Namespace publisher session after cancellation",
-            )
-          } else {
-            self.subscriber_session_ended = true
-            println(
-              "moq5 closed the Namespace subscriber session after cancellation",
-            )
-          }
+        if publisher && self.cancelling_publication && self.withdrawn {
+          self.publisher_session_ended = true
+          println(
+            "moq-rs closed the Namespace publisher session after withdrawal ({end.to_repr()})",
+          )
+        } else if !publisher && self.cancelling_subscription {
+          self.subscriber_session_ended = true
+          self.ended = true
+          println(
+            "moq-rs closed the Namespace subscriber session after cancellation ({end.to_repr()})",
+          )
         } else {
           let peer_role = if publisher { "publisher" } else { "subscriber" }
           fail("Namespace probe \{peer_role} session ended: \{end.to_repr()}")
@@ -286,6 +287,7 @@ pub fn run_namespace(
     unavailable: false,
     cancelling_subscription: false,
     subscriber_session_ended: false,
+    publisher_session_ended: false,
     ended: false,
   }
   state.observe(publish_notices, true)
@@ -326,6 +328,9 @@ pub fn run_namespace(
   state.observe(notices, true)
   wait_namespace_stage(publisher, subscriber, state, Withdrawn)
   println("Namespace publication request stream shutdown completed")
+  if state.publisher_session_ended {
+    println("moq-rs closed the publisher session after Namespace withdrawal")
+  }
 
   state.cancelling_subscription = true
   let (notices, _) = drive_session_result(
@@ -344,17 +349,13 @@ pub fn run_namespace(
     )
   }
   if state.subscriber_session_ended {
-    println(
-      "moq5 closed the subscriber session, so independent track continuation is covered by Sans-I/O tests",
+    println("moq-rs closed the subscriber session after Namespace cancellation")
+    fail(
+      "Namespace cancellation closed the session before independent track continuation",
     )
-    println(
-      "Verified Namespace discovery, withdrawal, and subscription cancellation",
-    )
-    return
   }
-  // The pinned moq5 revision closes the Namespace publisher session after
-  // cancellation. Reconnect the independent track publisher to prove the
-  // still-active subscriber request continues independently.
+  // Reconnect the independent track publisher after Namespace withdrawal and
+  // verify that the separate track subscription remains active.
   let (continuation_client, continuation_session) = setup_client(
     host, port, path, insecure,
   )

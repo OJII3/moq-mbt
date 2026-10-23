@@ -22,7 +22,7 @@
       perSystem = { pkgs, system, self', ... }:
       let
         playwrightBrowsers = pkgs.playwright-driver.browsers.override {
-          withChromium = false;
+          withChromium = true;
           withFirefox = false;
           withWebkit = false;
           withFfmpeg = false;
@@ -33,10 +33,6 @@
           overlays = [ inputs.moonbit-overlay.overlays.default ];
         };
 
-        packages.wtquic = pkgs.callPackage ./nix/wtquic.nix { };
-        packages.moq5-relay = pkgs.callPackage ./nix/moq5-relay.nix {
-          wtquic = self'.packages.wtquic;
-        };
         packages.moq-rs-relay = pkgs.callPackage ./nix/moq-rs-relay.nix {
           src = inputs.moq-rs-src;
         };

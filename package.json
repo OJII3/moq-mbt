@@ -1,0 +1,14 @@
+{
+  "name": "moq-mbt-node-webtransport-smoke",
+  "private": true,
+  "scripts": {
+    "smoke:node-webtransport": "node scripts/node-webtransport-smoke.cjs"
+  },
+  "dependencies": {
+    "@fails-components/webtransport": "1.6.9",
+    "@fails-components/webtransport-transport-http3-quiche": "1.6.9"
+  },
+  "allowScripts": {
+    "@fails-components/webtransport-transport-http3-quiche@1.6.9": true
+  }
+}

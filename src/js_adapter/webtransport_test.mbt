@@ -379,7 +379,6 @@ async test "WebTransport session driver keeps local streams separate and routes 
   }
   let driver = @js_adapter.WebTransportSessionDriver::new(connection, session)
   assert_true(driver.start() is Ok(_))
-
   let peer_setup = match @protocol.encode_setup({ options: [], }) {
     Ok(bytes) => bytes
     Err(_) => fail("SETUP encoding failed")

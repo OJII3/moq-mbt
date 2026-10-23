@@ -1,8 +1,16 @@
 # Draft 18 相互接続
 
-Native QUIC と WebTransport の両方で Draft 18 の SETUP を確認する。Native QUIC の interop script は複数 Group/Object の publish/subscribe と `PUBLISH_DONE` を検証する。Protocol state の詳細な REQUEST_UPDATE、FETCH、Namespace、Datagram シナリオは個別 probe と Sans-I/O tests で確認する。
+## CI で確認する範囲
 
-Datagram probe は stream Object と同じ track 上で Object Datagram を送受信し、Alias、payload、通常 Object の Group 終端、`EndOfGroup`、`EndOfTrack` status を検証する。通常 payload のサンプルを少なくとも1つ受信したことを確認する。Datagram の追加マーカーは受信したものを検証するが、全件受信や順序は成功条件にしない。Datagram は Subgroup stream と混在させ、`PUBLISH_DONE` の stream 数には加えない。
+CI は Native moq-rs interop、ブラウザ WebTransport と raw QUIC の moq-rs
+SETUP、JavaScript / WebAssembly の check と test を実行する。Browser E2E probe は
+Native publisher → Browser subscriber と Browser publisher → Native subscriber の
+両方向で Objects、Properties、Group 終端、`PUBLISH_DONE` を確認する。
+moq5 は検証 relay として採用しない。Origin 対応と Origin 拒否検証は後続の
+[#104](https://github.com/OJII3/moq-mbt/issues/104) で扱うため、この
+interop check には含めない。
+
+Native QUIC の interop script は複数 Group/Object の publish/subscribe と `PUBLISH_DONE` を検証する。現在 pin している moq-rs は REQUEST_UPDATE、同一 track の Datagram と Subgroup stream の混在、Standalone FETCH を完了できず、Namespace withdrawal 後に session を閉じる。そのためこれらは relay interop 成功として扱わず、protocol state は Sans-I/O tests で確認する。
 
 moq-rs は1つの QUIC endpoint で raw QUIC と WebTransport を受け付ける。Origin allowlist は CLI に未対応のため、別 issue [#104](https://github.com/OJII3/moq-mbt/issues/104) で扱う。証明書 pin の不一致は dual transport probe で確認する。
 
@@ -12,38 +20,16 @@ moq-rs は1つの QUIC endpoint で raw QUIC と WebTransport を受け付ける
 
 ~~~sh
 nix develop -c moon test
-nix develop -c moon test --target wasm
-nix develop -c moon test --target js
+nix develop -c moon check --target js --deny-warn src/js_adapter
+nix develop -c moon check --target wasm-gc --deny-warn src/protocol src/session
+nix develop -c moon test --target wasm-gc src/protocol src/session
+nix develop -c moon test --target js src/protocol src/session src/js_adapter
 nix develop -c bash scripts/check-interop.sh
+nix develop -c npm ci
 nix develop -c bash scripts/check-moq-rs-dual.sh
 ~~~
 
 Native interop と dual transport のスクリプトはいずれも `moq-rs` を 127.0.0.1:4443 で起動する。実行中の relay がある場合は終了してから実行する。Native QUIC の証明書検証失敗を確認したあと、自己署名証明書の検証を loopback probe に限って無効にする。
-
-~~~text
-REQUEST_UPDATE FORWARD=0 accepted
-Received track B group 0 while track A was paused
-REQUEST_UPDATE FORWARD=1 accepted
-Received track A group 0 after forwarding resumed
-Track A subscription cancelled
-Received track B group 1 after track A cancellation
-Verified track B PUBLISH_DONE (2 object streams)
-Lifecycle and independent-track scenario passed
-~~~
-
-Standalone FETCH probe は retained log から START_GROUP〜END_GROUP（両端を含む）の全 Object を取得し、順序、payload、Properties、FETCH_OK end location、data stream FIN を検証する。事前に同じ relay へ `interop/multi-object` track の group 0〜2 を publish しておく。
-
-~~~sh
-nix develop -c moon run --release --target native src/cmd/track_probe -- \
-  fetch 127.0.0.1 4443 /moq interop multi-object 0 2 --insecure
-~~~
-
-Datagram smoke を個別に実行するには、moq-rs が 127.0.0.1:4443 で待ち受けている状態で次を実行する。
-
-~~~sh
-nix develop -c moon run --release --target native src/cmd/track_probe -- \
-  datagram-smoke 127.0.0.1 4443 /moq --insecure
-~~~
 
 手動確認では2つの terminal を使う。まず publisher を起動し、次に別の terminal から subscriber を起動する。両方に同じ relay、path、namespace、track を指定する。
 
@@ -61,7 +47,7 @@ nix develop -c moon run --release --target native src/cmd/track_probe -- \
 
 ### Browser WebTransport 検証
 
-`nix develop -c bash scripts/check-moq-rs-dual.sh` は同じ moq-rs relay process に raw QUIC と WebTransport の接続を同時に開き、両方で Draft 18 SETUP を確認する。moq-rs は1つの UDP endpoint で WebTransport と raw QUIC の ALPN を受け付ける。スクリプトは一時 ECDSA P-256 証明書を作り、WebTransport の正しい SHA-256 certificate hash で接続したあと、誤った hash が拒否されることも確認する。Native probe は loopback の一時自己署名証明書に限り `--insecure` を使う。
+`nix develop -c bash scripts/check-moq-rs-dual.sh` は同じ moq-rs relay process に raw QUIC と WebTransport の接続を同時に開き、両方で Draft 18 SETUP を確認する。さらに一時 ECDSA P-256 証明書の正しい SHA-256 pin で接続し、誤った pin の拒否と Node smoke、Native/Browser 双方向 publish/subscribe を確認する。Native probe は loopback の一時自己署名証明書に限り `--insecure` を使う。
 
 ブラウザだけを手動確認する場合は `nix develop -c scripts/serve-moq-rs.sh` を実行する。表示される URL と証明書 hash を使い、`WebTransport` の `protocols` に `moqt-18` を指定する。
 
@@ -86,7 +72,7 @@ CLI の末尾には Group 数と各 Group の Object 数を指定する。probe 
 
 publisher は PUBLISH_OK 後に 1 秒待ってから有限 batch を送る。この間に別プロセスの subscriber が relay に接続し、PUBLISH_DONE を含む完了通知を受け取れる。
 
-`lifecycle` probe は publisher と subscriber の接続を一つのプロセスで駆動し、各操作を SUBSCRIBE_OK、REQUEST_OK、Group 完了、PUBLISH_DONE などの通知に合わせて進める。track A の解除では request stream に STOP_SENDING / reset を送り、MsQuic の stream shutdown 完了を確認してから track B の次の Group を送る。更新失敗や relay 発 GOAWAY の再現には時間待ちを使わず、Sans-I/O の session tests を使う。
+`lifecycle`、Namespace、FETCH、Datagram probe は個別に実装されているが、現在 pin している moq-rs で成功する相互運用シナリオとしては扱わない。REQUEST_UPDATE は relay に未実装で、Namespace withdrawal 後は relay が session を終了し、FETCH は deadline までに終わらず、同一 track の Datagram と Subgroup stream 混在時は relay が `multiple stream modes` を返す。更新失敗や relay 発 GOAWAY の再現には時間待ちを使わず、Sans-I/O の session tests を使う。
 
 ## 接続先と参照実装
 

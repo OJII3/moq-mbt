@@ -50,7 +50,7 @@ request stream の ID 索引は session の存続中 tombstone として保持�
 
 Draft 18 では `MAX_REQUEST_ID` / `REQUESTS_BLOCKED` と独立したキャンセルメッセージが削除されている。購読更新には `REQUEST_UPDATE`、キャンセルには開いているストリーム方向への `STOP_SENDING` / reset を使う。仕様の [§3.3.2](https://www.ietf.org/archive/id/draft-ietf-moq-transport-18.html#section-3.3.2)、[§10.9](https://www.ietf.org/archive/id/draft-ietf-moq-transport-18.html#section-10.9)、[Appendix A.2](https://www.ietf.org/archive/id/draft-ietf-moq-transport-18.html#appendix-A.2) を参照する。
 
-`scripts/check-interop.sh` は moq-rs relay に対する Draft 18 SETUP と複数 Group/Object の publish/subscribe、Native QUIC の証明書検証を確認する。`scripts/check-moq-rs-dual.sh` は同じ moq-rs endpoint に raw QUIC と WebTransport のクライアントを同時接続し、両方の SETUP を確認する。
+`scripts/check-interop.sh` は moq-rs relay に対する Draft 18 SETUP と複数 Group/Object の publish/subscribe、Native QUIC の証明書検証を確認する。`scripts/check-moq-rs-dual.sh` は同じ moq-rs endpoint に raw QUIC と WebTransport のクライアントを同時接続し、両方の SETUP、証明書 pin、Node 接続、Native/Browser 双方向 publish/subscribe を確認する。
 
 ## 追加する構成
 
@@ -58,7 +58,8 @@ Draft 18 では `MAX_REQUEST_ID` / `REQUESTS_BLOCKED` と独立したキャン�
 src/
 ├── protocol/
 ├── session/
+├── js_adapter/
 └── transport/
 ```
 
-MsQuic と WebTransport のアダプター、アプリ向けの高水準 API、インメモリシミュレーターは、実装上の必要が出た段階で追加する。セッションのシナリオは、ネットワークなしで再現できる形を目指す。
+MsQuic アダプターと JavaScript WebTransport アダプターを用意している。アダプターはそれぞれ `transport` と `js_adapter` にあり、`session` の送受信アクションとトランスポートのイベントを変換する。Browser E2E probe は moq-rs を介した Native/Browser 双方向 publish/subscribe を検証する。moq-rs が未対応の relay scenarios は Sans-I/O tests で確認する。

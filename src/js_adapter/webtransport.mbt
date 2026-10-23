@@ -321,6 +321,7 @@ fn webtransport_failure(error : @js.Any) -> WebTransportFailure {
 ///|
 /// Close the session once. Close codes must fit the Web API's unsigned-long
 /// range and reason must fit its 1024-byte UTF-8 limit.
+#warnings("-result_error_return")
 pub fn WebTransportConnection::close(
   self : WebTransportConnection,
   close_code : Int64,

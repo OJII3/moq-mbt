@@ -190,6 +190,7 @@ fn run_publisher(
   objects_per_group : Int32,
   datagrams : Bool,
   insecure : Bool,
+  hold_open : Bool,
 ) -> Unit raise {
   let track : @protocol.TrackName = {
     namespace_fields: [@utf8.encode(namespace_field)],
@@ -286,6 +287,17 @@ fn run_publisher(
             state.datagram_send_final_count == state.datagram_send_count
           ) {
           println("PUBLISH_DONE send completed")
+          if hold_open {
+            println("Holding publisher connection open for peer verification")
+            let deadline = @env.now() + 120000UL
+            while @env.now() < deadline {
+              match client.next_event(100) {
+                Closed(_) | TransportClosed(_) => return
+                _ => ()
+              }
+            }
+            fail("timed out waiting for peer verification to close")
+          }
           return
         }
       }

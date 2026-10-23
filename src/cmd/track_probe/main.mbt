@@ -6,17 +6,29 @@ fn main {
   let args = @env.args()
   guard args.length() >= 2 else {
     eprintln(
-      "usage: track_probe publish HOST PORT PATH NAMESPACE TRACK GROUPS OBJECTS_PER_GROUP [--datagrams] [--insecure]\n       track_probe subscribe HOST PORT PATH NAMESPACE TRACK GROUPS OBJECTS_PER_GROUP [--datagrams] [--insecure]\n       track_probe lifecycle HOST PORT PATH [--insecure]\n       track_probe namespace HOST PORT PATH [--insecure]\n       track_probe datagram-smoke HOST PORT PATH [--insecure]\n       track_probe fetch HOST PORT PATH NAMESPACE TRACK START_GROUP END_GROUP [--insecure]\n       track_probe joining-fetch HOST PORT PATH [--insecure]",
+      "usage: track_probe publish HOST PORT PATH NAMESPACE TRACK GROUPS OBJECTS_PER_GROUP [--datagrams] [--insecure] [--hold-open]\n       track_probe subscribe HOST PORT PATH NAMESPACE TRACK GROUPS OBJECTS_PER_GROUP [--datagrams] [--insecure]\n       track_probe lifecycle HOST PORT PATH [--insecure]\n       track_probe namespace HOST PORT PATH [--insecure]\n       track_probe datagram-smoke HOST PORT PATH [--insecure]\n       track_probe fetch HOST PORT PATH NAMESPACE TRACK START_GROUP END_GROUP [--insecure]\n       track_probe joining-fetch HOST PORT PATH [--insecure]",
     )
     exit(2)
     return
   }
-  let insecure = args[args.length() - 1] == "--insecure"
-  let datagrams = args[args.length() - 1] == "--datagrams" ||
-    (insecure && args[args.length() - 2] == "--datagrams")
+  let mut insecure = false
+  let mut datagrams = false
+  let mut hold_open = false
+  for arg in args {
+    if arg == "--insecure" {
+      insecure = true
+    } else if arg == "--datagrams" {
+      datagrams = true
+    } else if arg == "--hold-open" {
+      hold_open = true
+    }
+  }
   let expected_args = match args[1] {
     "publish" =>
-      9 + (if insecure { 1 } else { 0 }) + (if datagrams { 1 } else { 0 })
+      9 +
+      (if insecure { 1 } else { 0 }) +
+      (if datagrams { 1 } else { 0 }) +
+      (if hold_open { 1 } else { 0 })
     "subscribe" =>
       9 + (if insecure { 1 } else { 0 }) + (if datagrams { 1 } else { 0 })
     "lifecycle" => if insecure { 6 } else { 5 }
@@ -28,7 +40,7 @@ fn main {
   }
   guard args.length() == expected_args else {
     eprintln(
-      "usage: track_probe publish HOST PORT PATH NAMESPACE TRACK GROUPS OBJECTS_PER_GROUP [--datagrams] [--insecure]\n       track_probe subscribe HOST PORT PATH NAMESPACE TRACK GROUPS OBJECTS_PER_GROUP [--datagrams] [--insecure]\n       track_probe lifecycle HOST PORT PATH [--insecure]\n       track_probe namespace HOST PORT PATH [--insecure]\n       track_probe datagram-smoke HOST PORT PATH [--insecure]\n       track_probe fetch HOST PORT PATH NAMESPACE TRACK START_GROUP END_GROUP [--insecure]\n       track_probe joining-fetch HOST PORT PATH [--insecure]",
+      "usage: track_probe publish HOST PORT PATH NAMESPACE TRACK GROUPS OBJECTS_PER_GROUP [--datagrams] [--insecure] [--hold-open]\n       track_probe subscribe HOST PORT PATH NAMESPACE TRACK GROUPS OBJECTS_PER_GROUP [--datagrams] [--insecure]\n       track_probe lifecycle HOST PORT PATH [--insecure]\n       track_probe namespace HOST PORT PATH [--insecure]\n       track_probe datagram-smoke HOST PORT PATH [--insecure]\n       track_probe fetch HOST PORT PATH NAMESPACE TRACK START_GROUP END_GROUP [--insecure]\n       track_probe joining-fetch HOST PORT PATH [--insecure]",
     )
     exit(2)
     return
@@ -72,6 +84,7 @@ fn main {
           objects_per_group,
           datagrams,
           insecure,
+          hold_open,
         )
       }
       "subscribe" => {

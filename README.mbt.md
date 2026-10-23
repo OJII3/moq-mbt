@@ -31,26 +31,26 @@ Object Datagrams:
 - `cmd/setup_probe`: a client that exchanges SETUP with an external relay.
 - `cmd/track_probe`: publisher, subscriber, lifecycle, Namespace, Standalone FETCH, and Joining FETCH probes for Draft 18 relays.
 
-The JavaScript WebTransport adapter is not implemented yet.
-The JavaScript package boundary is prepared in
-[`ojii3/moq-mbt/js_adapter`](docs/js-adapter.md); it is built only for the `js`
-target and uses `mizchi/js` for JavaScript interop without adding those
-dependencies to `protocol` or `session`.
+The JavaScript WebTransport adapter is available in `src/js_adapter`. It is
+built only for the `js` target and uses `mizchi/js` for JavaScript interop
+without adding those dependencies to `protocol` or `session`.
 
 ## Development
 
-The Nix devShell includes MoonBit, Node.js, MsQuic, OpenSSL and a pinned moq5 relay.
-Run the local Draft 18 interoperability check with:
+The Nix devShell includes MoonBit, Node.js, Chromium, MsQuic, OpenSSL, and the
+pinned moq-rs relay. Run the local Draft 18 interoperability checks with:
 
 ```sh
 nix develop -c bash scripts/check-interop.sh
+nix develop -c bash scripts/check-moq-rs-dual.sh
 ```
 
 The check starts the pinned moq-rs relay on `127.0.0.1:4443`. It verifies
 certificate rejection, Draft 18 SETUP, and multi-Object/Group publish and
-subscribe. The moq5 relay remains available in the devShell for separate
-Native and WebTransport checks. See [interop notes](docs/interop.md) for
-details and connecting to another relay.
+subscribe. The dual check connects raw QUIC, a browser WebTransport client, and a
+Node WebTransport client to the same relay, exchanges Draft 18 SETUP, and verifies
+rejection of an incorrect certificate pin. See [interop notes](docs/interop.md)
+for the tested scenarios and limits.
 
 ## References
 
