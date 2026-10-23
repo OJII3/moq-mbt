@@ -37,15 +37,15 @@ without adding those dependencies to `protocol` or `session`.
 
 ## Development
 
-The Nix devShell includes MoonBit, Python, MsQuic, OpenSSL, and the pinned
-moq-rs relay. Run the Native Draft 18 check with:
+The Nix devShell includes MoonBit, Python Playwright with Chromium, MsQuic,
+OpenSSL, and the pinned moq-rs relay. Run the interoperability checks with:
 
 ```sh
-bash scripts/check-interop.sh
+nix develop -c bash scripts/check-interop.sh
+nix develop -c bash scripts/check-moq-rs-dual.sh
 ```
 
-For browser WebTransport checks, install Playwright and its Chromium browser in a
-Python virtual environment:
+Outside the devShell, install Playwright and Chromium in a Python virtual environment:
 
 ```sh
 python3 -m venv .venv

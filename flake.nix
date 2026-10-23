@@ -19,7 +19,17 @@
         "aarch64-darwin"
       ];
 
-      perSystem = { pkgs, system, self', ... }: {
+      perSystem = { pkgs, system, self', ... }:
+      let
+        playwrightDriver = pkgs.python3Packages.playwright.driver;
+        playwrightBrowsers = playwrightDriver.browsers.override {
+          withChromium = true;
+          withFirefox = false;
+          withWebkit = false;
+          withFfmpeg = false;
+        };
+        python = pkgs.python3.withPackages (ps: [ ps.playwright ]);
+      in {
         _module.args.pkgs = import inputs.nixpkgs {
           inherit system;
           overlays = [ inputs.moonbit-overlay.overlays.default ];
@@ -33,10 +43,15 @@
           packages = [
             pkgs.libmsquic
             pkgs.moonbit-bin.latest
-            pkgs.python3
+            python
+            playwrightDriver
+            playwrightBrowsers
             self'.packages.moq-rs-relay
             pkgs.openssl
           ];
+          shellHook = ''
+            export PLAYWRIGHT_BROWSERS_PATH="${playwrightBrowsers}"
+          '';
         };
       };
     };

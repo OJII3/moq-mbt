@@ -19,12 +19,18 @@ moq-rs は1つの QUIC endpoint で raw QUIC と WebTransport を受け付ける
 ## ローカルで再現する
 
 ~~~sh
-moon test
-moon check --target js --deny-warn src/js_adapter
-moon check --target wasm-gc --deny-warn src/protocol src/session
-moon test --target wasm-gc src/protocol src/session
-moon test --target js src/protocol src/session src/js_adapter
-bash scripts/check-interop.sh
+nix develop -c moon test
+nix develop -c moon check --target js --deny-warn src/js_adapter
+nix develop -c moon check --target wasm-gc --deny-warn src/protocol src/session
+nix develop -c moon test --target wasm-gc src/protocol src/session
+nix develop -c moon test --target js src/protocol src/session src/js_adapter
+nix develop -c bash scripts/check-interop.sh
+nix develop -c bash scripts/check-moq-rs-dual.sh
+~~~
+
+Nix を使わない場合は、Playwright の Python 仮想環境を用意して browser check を実行する。
+
+~~~sh
 python3 -m venv .venv
 .venv/bin/python -m pip install playwright
 .venv/bin/python -m playwright install --with-deps chromium
