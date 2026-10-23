@@ -17,7 +17,7 @@ nix develop -c moon test --target js
 nix develop -c bash scripts/check-interop.sh
 ~~~
 
-疎通スクリプトは 127.0.0.1:4443 を使う。実行中のリレーがある場合は終了してから実行する。証明書検証に失敗する接続を確認したあと、SETUP、track 登録、Object 配送、moq5 の更新・解除シナリオを確認する。Datagram は best effort として扱い、Normal payload のサンプル受信を確認する一方、追加 Datagram の全件受信や順序は要求しない。
+疎通スクリプトは `moq-rs` を 127.0.0.1:4443 で起動する。実行中のリレーがある場合は終了してから実行する。証明書検証で失敗することを確認したあと、自己署名証明書の検証を loopback 試験に限って無効にし、Draft 18 SETUP と複数 Group/Object の publish/subscribe を確認する。moq5 の Native / WebTransport 検証は別途行う。
 
 ~~~text
 REQUEST_UPDATE FORWARD=0 accepted

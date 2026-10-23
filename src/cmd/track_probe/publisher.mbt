@@ -7,9 +7,7 @@ priv struct PublisherProbeState {
   object_stream_groups : Map[Int64, UInt64]
   finished_object_streams : Map[Int64, Bool]
   mut finished_stream_count : UInt64
-  mut publish_after : UInt64
   mut publish_accepted : Bool
-  mut publication_ready : Bool
   datagrams : Bool
   mut datagram_send_count : UInt64
   mut datagram_send_final_count : UInt64
@@ -144,9 +142,6 @@ fn handle_publisher_notices(
       @session.PublishAccepted(_) => {
         eprintln("PUBLISH request accepted")
         state.publish_accepted = true
-        // Let a separately launched probe subscriber establish its track
-        // subscription before this finite publication reaches PUBLISH_DONE.
-        state.publish_after = @env.now() + 1000UL
       }
       @session.PublishRejected(_, error) =>
         fail("PUBLISH rejected (\{error.code})")
@@ -225,9 +220,7 @@ fn run_publisher(
     object_stream_groups: {},
     finished_object_streams: {},
     finished_stream_count: 0UL,
-    publish_after: 0UL,
     publish_accepted: false,
-    publication_ready: false,
     datagram_send_count: 0UL,
     datagram_send_final_count: 0UL,
     next_group_index: 0,
@@ -397,11 +390,6 @@ fn run_publisher(
       }
     }
     if state.publish_accepted &&
-      !state.publication_ready &&
-      @env.now() >= state.publish_after {
-      state.publication_ready = true
-    }
-    if state.publication_ready &&
       state.datagrams &&
       state.datagram_send_count == 0UL {
       for datagram in probe_datagrams(state.group_count) {
@@ -416,7 +404,7 @@ fn run_publisher(
       }
       println("Sent four Object Datagrams (best effort)")
     }
-    if state.publication_ready &&
+    if state.publish_accepted &&
       state.next_group_index < state.group_count.to_int() &&
       client.has_stream_capacity() {
       let notices = start_probe_group(

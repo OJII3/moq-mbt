@@ -22,9 +22,9 @@ openssl req -x509 -new -key "$task_tmp/key.pem" -sha256 -days 1 \
   -subj /CN=localhost -addext 'subjectAltName=DNS:localhost,IP:127.0.0.1' \
   -out "$task_tmp/cert.pem" >>"$task_tmp/cert.log" 2>&1
 
-printf 'WebTransport certificate SHA-256 (base64): '
-openssl x509 -in "$task_tmp/cert.pem" -outform DER \
-  | openssl dgst -sha256 -binary | openssl base64 -A
+fingerprint=$(openssl x509 -in "$task_tmp/cert.pem" -outform DER \
+  | openssl dgst -sha256 -binary | openssl base64 -A)
+printf 'WebTransport certificate SHA-256 (base64): %s\n' "$fingerprint"
 printf '\nWebTransport URL: https://127.0.0.1:%s/interop\n' "$port"
 printf 'WebTransport protocol offer: moqt-18\n'
 
@@ -35,8 +35,7 @@ relay_pid=$!
 for ((attempt = 0; attempt < 100; attempt++)); do
   if grep -Fq "listening on 127.0.0.1:$port" "$task_tmp/relay.log"; then
     cat "$task_tmp/relay.log"
-    wait "$relay_pid"
-    exit $?
+    break
   fi
   if ! kill -0 "$relay_pid" 2>/dev/null || ((attempt == 99)); then
     cat "$task_tmp/relay.log" >&2
@@ -45,3 +44,6 @@ for ((attempt = 0; attempt < 100; attempt++)); do
   fi
   sleep 0.1
 done
+
+node scripts/check-moq-rs-webtransport.cjs "https://127.0.0.1:$port/interop" "$fingerprint"
+wait "$relay_pid"
