@@ -69,7 +69,7 @@ jobs:
           sudo apt-get install -y build-essential cmake libssl-dev perl pkg-config
           cargo install --git https://github.com/cloudflare/moq-rs \
             --rev 8779758892d921bcfccbb6e4d9319c149db28c91 \
-            --locked --package moq-relay-ietf --bin moq-relay-ietf
+            --locked moq-relay-ietf --bin moq-relay-ietf
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
       - name: Install Playwright and Chromium
