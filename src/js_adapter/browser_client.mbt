@@ -34,7 +34,7 @@ pub fn browser_connect_with_certificate_hashes(
     Ok(driver) => Ok({ connection, driver, })
     Err(error) => {
       ignore(connection.close(0L, "invalid client setup"))
-      Err(error.to_repr())
+      Err("\{error.to_repr()}")
     }
   }
 }
@@ -89,6 +89,7 @@ pub fn BrowserClient::closed(
 
 ///|
 /// Close the connection and release its WebTransport streams and readers.
+#warnings("-result_error_return")
 pub fn BrowserClient::close(
   self : BrowserClient,
   close_code : Int64,
