@@ -99,7 +99,7 @@ async test "WebTransport connection, negotiation, timeout, and close lifecycle" 
     Err(error) => fail(error.message)
   }
   match connection.next_stream_event().wait() {
-    StreamStarted(id, Bidirectional) => assert_eq(id, stream)
+    LocalStreamOpened(id, Bidirectional) => assert_eq(id, stream)
     _ => fail("local stream start was not announced first")
   }
   let view = ffi_fake_offset_view("payload")
@@ -169,7 +169,7 @@ async test "WebTransport connection, negotiation, timeout, and close lifecycle" 
     Err(error) => fail(error.message)
   }
   match connection.next_stream_event().wait() {
-    StreamStarted(id, Unidirectional) => assert_eq(id, uni_stream)
+    LocalStreamOpened(id, Unidirectional) => assert_eq(id, uni_stream)
     _ => fail("local unidirectional stream start was not reported")
   }
   assert_true(
@@ -181,7 +181,7 @@ async test "WebTransport connection, negotiation, timeout, and close lifecycle" 
     Err(error) => fail(error.message)
   }
   match connection.next_stream_event().wait() {
-    StreamStarted(id, Bidirectional) => assert_eq(id, cancelled_stream)
+    LocalStreamOpened(id, Bidirectional) => assert_eq(id, cancelled_stream)
     _ => fail("cancellable stream start was not reported")
   }
   assert_true(
@@ -205,7 +205,7 @@ async test "WebTransport connection, negotiation, timeout, and close lifecycle" 
     Err(error) => fail(error.message)
   }
   match connection.next_stream_event().wait() {
-    StreamStarted(id, Bidirectional) => assert_eq(id, fin_stream)
+    LocalStreamOpened(id, Bidirectional) => assert_eq(id, fin_stream)
     _ => fail("FIN test stream was not announced")
   }
   ffi_fake_delay_stream_writes()
@@ -229,7 +229,7 @@ async test "WebTransport connection, negotiation, timeout, and close lifecycle" 
   for _ in 0..<16 {
     assert_true(capped_connection.open_bidirectional().wait() is Ok(_))
     match capped_connection.next_stream_event().wait() {
-      StreamStarted(_, Bidirectional) => ()
+      LocalStreamOpened(_, Bidirectional) => ()
       _ => fail("active stream was not announced")
     }
   }
@@ -362,6 +362,37 @@ async test "WebTransport connection, negotiation, timeout, and close lifecycle" 
   for pending in pending_sends {
     ignore(pending.wait())
   }
+}
+
+///|
+async test "WebTransport session driver keeps local streams separate and routes SETUP" {
+  ffi_install_fake_webtransport("moqt-18", false, false)
+  let connection = match
+    @js_adapter.webtransport_connect("moqt://example.test/session") {
+    Ok(connection) => connection
+    Err(message) => fail(message)
+  }
+  let session = match
+    @session.ClientSession::new(@session.Draft18, { options: [], }) {
+    Ok(session) => session
+    Err(_) => fail("session creation failed")
+  }
+  let driver = @js_adapter.WebTransportSessionDriver::new(connection, session)
+  assert_true(driver.start() is Ok(_))
+
+  let peer_setup = match @protocol.encode_setup({ options: [], }) {
+    Ok(bytes) => bytes
+    Err(_) => fail("SETUP encoding failed")
+  }
+  ffi_fake_push_peer_unidirectional(@js_adapter.bytes_to_uint8array(peer_setup))
+  match driver.next_notice().wait() {
+    Some(@session.HandshakeComplete(setup)) =>
+      assert_eq(setup.options.length(), 0)
+    Some(_) => fail("session driver emitted an unexpected notice")
+    None => fail("session driver stopped before SETUP completed")
+  }
+  ignore(connection.close(0L, "done"))
+  ignore(connection.closed().wait())
 }
 
 ///|

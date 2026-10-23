@@ -32,9 +32,11 @@ whose UTF-8 encoding exceeds the WebTransport API's 1024-byte limit.
 
 `open_unidirectional()` and `open_bidirectional()` resolve to opaque `Int64`
 references. Peer streams use the same reference space. Consume
-`next_stream_event()` for `StreamStarted`, `Data`, `StreamFinished`,
+`next_stream_event()` for `StreamStarted`, `LocalStreamOpened`, `Data`, `StreamFinished`,
 `StreamReset`, `SendStopped`, `StreamQueueOverflow`, and `ConnectionClosed`.
 `StreamStarted` is queued before that stream's first data or finish event.
+`StreamStarted` identifies a peer-opened stream; `LocalStreamOpened` reports a
+stream already returned by a local open call.
 Each incoming stream has its own reader loop, so a stalled stream does not
 block other streams.
 
@@ -67,3 +69,19 @@ boundaries and copying the exact Uint8Array view range. The receive queue is
 limited to 256 datagrams and 1 MiB; reaching either limit emits
 `DatagramReceiveQueueFull` and stops the local datagram reader. Connection close
 releases the reader and writer and resolves waiting reads with `DatagramsClosed`.
+
+## Client session driver
+
+`WebTransportSessionDriver::from_setup(connection, setup)` creates a Draft 18
+`ClientSession` and removes Native-only PATH and AUTHORITY parameters from its
+SETUP options; the WebTransport URL supplies those values. Call `start()` after
+connection creation, then use `dispatch(actions)` for actions returned by
+operations on `driver.session()`, and `next_notice()` to receive session
+notices. The driver starts the session after WebTransport negotiation succeeds and continues to
+poll its monotonic clock while active. I/O promises feed completion or failure
+events back into the session without pausing the stream and datagram readers.
+
+`SendComplete` represents the backend's completion point. In this adapter it
+means the browser accepted each write and, for FIN, completed `writer.close()`;
+it is not a QUIC ACK or peer delivery confirmation. Native backends may provide
+a stronger completion signal, but the common session API does not require one.
