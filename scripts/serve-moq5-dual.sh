@@ -18,9 +18,11 @@ trap 'exit 143' TERM
 native_port=${MOQ5_NATIVE_PORT:-4443}
 webtransport_port=${MOQ5_WEBTRANSPORT_PORT:-4444}
 origin=${MOQ5_WEBTRANSPORT_ORIGIN:-http://localhost:8000}
-openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 1 \
+openssl ecparam -name prime256v1 -genkey -noout -out "$task_tmp/key.pem" \
+  >"$task_tmp/cert.log" 2>&1
+openssl req -x509 -new -key "$task_tmp/key.pem" -sha256 -days 1 \
   -subj /CN=localhost -addext 'subjectAltName=DNS:localhost,IP:127.0.0.1' \
-  -keyout "$task_tmp/key.pem" -out "$task_tmp/cert.pem" >"$task_tmp/cert.log" 2>&1
+  -out "$task_tmp/cert.pem" >>"$task_tmp/cert.log" 2>&1
 printf 'WebTransport certificate SHA-256 (base64): '
 openssl x509 -in "$task_tmp/cert.pem" -outform DER \
   | openssl dgst -sha256 -binary | openssl base64 -A
