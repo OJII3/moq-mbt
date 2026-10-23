@@ -25,7 +25,10 @@
           overlays = [ inputs.moonbit-overlay.overlays.default ];
         };
 
-        packages.moq5-relay = pkgs.callPackage ./nix/moq5-relay.nix { };
+        packages.wtquic = pkgs.callPackage ./nix/wtquic.nix { };
+        packages.moq5-relay = pkgs.callPackage ./nix/moq5-relay.nix {
+          wtquic = self'.packages.wtquic;
+        };
         packages.moq-rs-relay = pkgs.callPackage ./nix/moq-rs-relay.nix {
           src = inputs.moq-rs-src;
         };
@@ -36,6 +39,7 @@
             pkgs.moonbit-bin.latest
             pkgs.nodejs
             self'.packages.moq5-relay
+            self'.packages.wtquic
             self'.packages.moq-rs-relay
             pkgs.openssl
           ];

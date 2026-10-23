@@ -1,4 +1,4 @@
-{ lib, stdenv, fetchFromGitHub, cmake, libmsquic }:
+{ lib, stdenv, fetchFromGitHub, cmake, libmsquic, wtquic }:
 
 stdenv.mkDerivation {
   pname = "moq5-relay";
@@ -12,15 +12,18 @@ stdenv.mkDerivation {
   };
 
   nativeBuildInputs = [ cmake ];
-  buildInputs = [ libmsquic ];
+  buildInputs = [ libmsquic wtquic ];
 
   cmakeFlags = [
     "-DCMAKE_INSTALL_LIBDIR=lib"
     "-DCMAKE_INSTALL_INCLUDEDIR=include"
     "-Dmsquic_DIR=${libmsquic}/share/msquic"
+    "-Dwtquic_DIR=${wtquic}/lib/cmake/wtquic"
     "-DMOQ_BUILD_RELAY=ON"
     "-DMOQ_BUILD_ADAPTER_MSQUIC=ON"
     "-DMOQ_BUILD_MSQUIC_MANAGED=ON"
+    "-DMOQ_BUILD_ADAPTER_WTQUIC=ON"
+    "-DMOQ_BUILD_WTQUIC_MSQUIC_MANAGED=ON"
     "-DMOQ_BUILD_TESTS=OFF"
     "-DMOQ_BUILD_EXAMPLES=OFF"
     "-DMOQ_BUILD_LOC=OFF"

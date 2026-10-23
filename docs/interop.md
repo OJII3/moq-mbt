@@ -56,7 +56,25 @@ nix develop -c moon run --release --target native src/cmd/track_probe -- \
   subscribe 127.0.0.1 4443 /moq interop multi-object 2 2 --insecure
 ~~~
 
-疎通スクリプトは一時ディレクトリに証明書と設定を生成し、moq5 を versions: [18]、認証 allow_all で起動する。自己署名証明書が既定の証明書検証で拒否されることを確認した後、ループバック接続に限って --insecure を使う。終了時に publisher、relay、一時ファイルを削除する。Datagram の送信状態は MsQuic の状態イベントとして公開し、acknowledged は QUIC 層の確認を表す。アプリケーションの処理・配送確認として扱わない。
+疎通スクリプトは一時ディレクトリに証明書と設定を生成し、moq5 を Native listener `127.0.0.1:4443` と WebTransport listener `127.0.0.1:4444` の両方で versions: [18]、認証 allow_all で起動する。WebTransport は profile `current`、path `/moq`、Origin allowlist `https://localhost:8000` を使う。自己署名証明書が既定の Native 証明書検証で拒否されることを確認した後、Native loopback probe に限って `--insecure` を使う。終了時に publisher、relay、一時ファイルを削除する。Datagram の送信状態は MsQuic の状態イベントとして公開し、acknowledged は QUIC 層の確認を表す。アプリケーションの処理・配送確認として扱わない。
+
+### Browser WebTransport 検証
+
+`check-interop.sh` は Native listener と既存の MoQ 相互接続を検査する。ブラウザ確認用に `nix develop -c scripts/serve-moq5-dual.sh` を実行すると、両 listener を起動し WebTransport 接続先、許可 Origin、一時証明書の SHA-256 hash を表示する。開発用ページを既定 Origin `http://localhost:8000` で配信し、relay に `https://localhost:4444/moq` で接続する。localhost は secure context として扱われる。生成証明書には `DNS:localhost` と `IP:127.0.0.1` の SAN があり、WebTransport の `serverCertificateHashes` 用 hash はスクリプトが表示する。証明書検証と Origin allowlist は有効のままにする。
+
+自己署名証明書を使った試験では、ブラウザの WebTransport `serverCertificateHashes` に表示された SHA-256 hash を `Uint8Array` として渡す。これはローカル試験用の明示的な証明書 pin であり、通常の信頼設定や Origin 検証を無効にしない。
+
+ブラウザページでは表示された hash を次のように `Uint8Array` にし、接続を開始する。
+
+~~~js
+const hash = Uint8Array.from(atob("BASE64_HASH_FROM_SCRIPT"), c => c.charCodeAt(0))
+const transport = new WebTransport("https://localhost:4444/moq", {
+  serverCertificateHashes: [{ algorithm: "sha-256", value: hash }],
+})
+await transport.ready
+~~~
+
+拒否条件は次のように確認する。`MOQ5_WEBTRANSPORT_ORIGIN=http://localhost:8001` のように allowlist と異なる Origin でページを配信して HTTP 403 になること、SAN が一致しないか未信頼の証明書を hash なしで使って TLS/WebTransport readiness に到達しないことを確認する。成功接続ではまず `WebTransport.ready` を待ち、その後 MoQ Draft 18 SETUP と Object 送受信を確認する。単にリスナーが起動したことや TLS が成立したことを MoQ 接続成功とは扱わない。
 
 CLI の末尾には Group 数と各 Group の Object 数を指定する。probe は `group-<group id>-object-<object id>` 形式の payload を生成し、subscriber 側で各 Group の Object ID 順と payload を照合する。SETUP はどちらのピアからも先に送れるため、probe は相手 SETUP の受信と、自分の SETUP の QUIC ACK の両方を待つ。続く PUBLISH_OK と SUBSCRIBE_OK も確認し、control request が relay を通ることを検証する。publisher は全 Subgroup stream の ACK 後に PUBLISH_DONE を送り、subscriber は Object 数、Group 終了、PUBLISH_DONE の stream 数がそろった時点で成功する。
 
@@ -75,7 +93,7 @@ nix develop -c moon run --release --target native src/cmd/setup_probe -- \
 
 引数はホスト、ポート、MoQ URI の path と query。クライアントは ALPN moqt-18 だけを提示し、QUIC DATAGRAM の交渉を確認してから SETUP を送る。Native QUIC 用の PATH、AUTHORITY、MOQT_IMPLEMENTATION を含める。接続から相手の SETUP 受信までの期限は 10 秒。相手の SETUP 受信と自分の SETUP の ACK を待ってから接続を終了する。証明書検証は既定で有効。
 
-リレーは [openmoq/moq5 の固定コミット](https://github.com/openmoq/moq5/tree/56dd3421ee95a4227c07c2091718d522fc8a5b25) を nix/moq5-relay.nix でビルドし、既存の libmsquic を使う。Nixpkgs の moq は Go のモック生成ツールなので使用しない。moq5 の実行方法と設定は[同コミットの relay README](https://github.com/openmoq/moq5/blob/56dd3421ee95a4227c07c2091718d522fc8a5b25/tools/moq5-relay/README.md)を参照する。
+リレーは [openmoq/moq5 の固定コミット](https://github.com/openmoq/moq5/tree/56dd3421ee95a4227c07c2091718d522fc8a5b25) を `nix/moq5-relay.nix` でビルドする。`nix/wtquic.nix` は moq5 固定コミットの `setup_wtquic_deps.sh` が指定する WTQuic revision を pin し、既存の libmsquic と同じ MsQuic provider でビルドする。`nix develop` には両方の relay backend が含まれる。Nixpkgs の moq は Go のモック生成ツールなので使用しない。moq5 の実行方法と設定は[同コミットの relay README](https://github.com/openmoq/moq5/blob/56dd3421ee95a4227c07c2091718d522fc8a5b25/tools/moq5-relay/README.md)を参照する。
 
 ## API とリソースの範囲
 
