@@ -345,7 +345,7 @@ pub fn ClientSession::accept_namespace_subscription(
       append_unique_namespace(known, publication.track_namespace)
     }
   }
-  for ns in application_namespaces {
+  for ns in self.application_namespaces {
     if namespace_has_prefix(ns, inbound.prefix) {
       append_unique_namespace(known, ns)
     }

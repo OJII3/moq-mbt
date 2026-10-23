@@ -159,7 +159,6 @@ pub fn ClientSession::accept_fetch(
   fetch.state = FetchAccepted
   fetch.end_location = Some(effective_end)
   fetch.end_of_track = response.end_of_track == 1
-  fetch.parameters = response.parameters
   let stream = fetch.stream.unwrap()
   Ok(
     self.finish_actions([
@@ -398,7 +397,8 @@ fn ClientSession::start_inbound_fetch_data(
     self.inbound_stream_kinds[stream] = Discarded
     return Ok([])
   }
-  if self.inbound_fetch_request_ids.get(request_id) is Some(_) ||
+  if fetch.data_finished ||
+    self.inbound_fetch_request_ids.get(request_id) is Some(_) ||
     fetch.data_stream is Some(_) {
     return Err(DuplicateRequestId)
   }
@@ -806,7 +806,7 @@ fn ClientSession::fetch_group_order(
   for parameter in parameters {
     if parameter.kind == 0x22 {
       match parameter.value {
-        @protocol.VarInt(2UL) => return @protocol.Descending
+        @protocol.Byte(2) => return @protocol.Descending
         _ => return @protocol.Ascending
       }
     }
@@ -821,7 +821,7 @@ fn valid_fetch_group_order(
   for parameter in parameters {
     if parameter.kind == 0x22 {
       match parameter.value {
-        @protocol.VarInt(1UL) | @protocol.VarInt(2UL) => ()
+        @protocol.Byte(1) | @protocol.Byte(2) => ()
         _ => return false
       }
     }
