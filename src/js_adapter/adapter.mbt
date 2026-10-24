@@ -1,7 +1,4 @@
 ///|
-pub type JsPromise[T] = @js.Promise[T]
-
-///|
 pub type JsReadableStream = @streams.ReadableStream
 
 ///|
