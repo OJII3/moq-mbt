@@ -1,7 +1,4 @@
 ///|
-pub type JsReadableStream = @streams.ReadableStream
-
-///|
 /// Convert protocol bytes to a JavaScript Uint8Array view.
 /// The returned view aliases the immutable MoonBit Bytes storage.
 pub fn bytes_to_uint8array(bytes : Bytes) -> @arraybuffer.Uint8Array {
