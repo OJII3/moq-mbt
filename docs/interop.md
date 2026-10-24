@@ -1,27 +1,16 @@
 # Draft 18 相互接続
 
-## CI で確認する範囲
+## 固定 relay と CI の範囲
 
-CI は Native moq-rs interop、ブラウザ WebTransport と raw QUIC の moq-rs
-SETUP、JavaScript / WebAssembly の check と test を実行する。Browser E2E probe は
-Native publisher → Browser subscriber と Browser publisher → Native subscriber の
-両方向で複数 Group / Object、ID、payload、Properties、Object stream の FIN、
-`PUBLISH_DONE.stream_count` を確認する。moq5 は検証 relay として採用しない。
+Nix devShell は moqx source commit `f3df41db408a2edbd580a01b97d0e56505ae080e` と、対応する OCI image digest `sha256:8f0c393c2c4fed0e260c876ab7fcb93a68f97000e3e693d2850ebf0a627eb096` を固定する。CI とローカルの `scripts/check-interop.sh` / `scripts/check-moqx-dual.sh` は同じ image を使う。Docker コンテナは終了時に削除する。
 
-検証ブラウザーは Nix flake lock が固定する Playwright Chromium と
-Playwright WebTransport 実装の組合せである。現在の lock では Playwright 1.64.1、
-Chrome for Testing 156.0.8078.4、`moqt-18`、Draft 18 を使う。workflow は実行時にも
-Playwright と Chrome のバージョンをログへ出す。一時 ECDSA P-256 証明書の正しい
-SHA-256 pin で接続し、誤った pin が拒否されることをブラウザーで確認する。
+以前の interop は Nix でビルドした moq-rs relay を使っていた。現在の開発環境、CI、手動起動スクリプトから moq-rs 依存を外し、過去の制約はこのファイルのシナリオ別結果に置き換えた。変更前の実装履歴は Git に残している。
 
-Origin allowlist と不許可 Origin の拒否は #92 の対象外で、
-[#104](https://github.com/OJII3/moq-mbt/issues/104) で扱う。固定した moq-rs revision
-には allowlist がない。WebTransport server handshake の拒否応答自体は
-fake-transport test で確認する。
+CI の実 relay checks は Native QUIC の複数 Group/Object publish/subscribe、Browser WebTransport と raw QUIC の Draft 18 SETUP、証明書 pin の拒否、Native/Browser 双方向 publish/subscribe、Native `REQUEST_UPDATE` と独立 track の継続、Datagram / Subgroup 混在配送を確認する。
 
-Native QUIC の interop script は複数 Group/Object の publish/subscribe と `PUBLISH_DONE` を検証する。現在 pin している moq-rs は REQUEST_UPDATE、同一 track の Datagram と Subgroup stream の混在、Standalone FETCH を完了できず、Namespace withdrawal 後に session を閉じる。そのためこれらは relay interop 成功として扱わず、protocol state は Sans-I/O tests で確認する。
+追加シナリオは環境変数で個別に実行できる。moqx のこの revision では standalone FETCH (`MOQX_RUN_FETCH=1`)、joining FETCH (`MOQX_RUN_JOINING_FETCH=1`)、Namespace withdrawal (`MOQX_RUN_NAMESPACE=1`) が完了せず、relay interop として成功した扱いにしていない。これらの probe は残しており、Sans-I/O tests で protocol state を検証する。
 
-moq-rs は1つの QUIC endpoint で raw QUIC と WebTransport を受け付ける。Origin allowlist は CLI に未対応のため、別 issue [#104](https://github.com/OJII3/moq-mbt/issues/104) で扱う。証明書 pin の不一致は dual transport probe で確認する。
+Playwright Chromium と WebTransport 実装も Nix flake で固定する。workflow は実行時にバージョンをログへ出す。一時 ECDSA P-256 証明書の正しい SHA-256 pin で接続し、誤った pin の拒否を確認する。Origin allowlist はこの relay 設定で有効にしていない。Origin 拒否は [#104](https://github.com/OJII3/moq-mbt/issues/104) で扱う。
 
 仕様は [Draft 18](https://www.ietf.org/archive/id/draft-ietf-moq-transport-18.txt) に固定する。vi64 は QUIC の 62-bit varint と異なり、1〜9 bytes で UInt64 全域を表現する。SETUP の type 0x2f00 は制御ストリームの type も兼ねるので、別のストリームヘッダーを付けない。制御ストリームは SETUP の後も開いたままにする。
 
@@ -35,32 +24,32 @@ nix develop -c moon test --target wasm-gc src/protocol src/session
 nix develop -c moon test --target js src/protocol src/session src/js_adapter
 nix develop -c bash scripts/check-interop.sh
 nix develop -c npm ci
-nix develop -c bash scripts/check-moq-rs-dual.sh
+nix develop -c bash scripts/check-moqx-dual.sh
 ~~~
 
-Native interop と dual transport のスクリプトはいずれも `moq-rs` を 127.0.0.1:4443 で起動する。実行中の relay がある場合は終了してから実行する。Native QUIC の証明書検証失敗を確認したあと、自己署名証明書の検証を loopback probe に限って無効にする。
+Native interop と dual transport のスクリプトはいずれも `moqx` を 127.0.0.1:4443 で起動する。実行中の relay がある場合は終了してから実行する。Native QUIC の証明書検証失敗を確認したあと、自己署名証明書の検証を loopback probe に限って無効にする。
 
 手動確認では2つの terminal を使う。まず publisher を起動し、次に別の terminal から subscriber を起動する。両方に同じ relay、path、namespace、track を指定する。
 
 ~~~sh
 nix develop -c moon run --release --target native src/cmd/track_probe -- \
-  publish 127.0.0.1 4443 /moq interop multi-object 2 2 --insecure
+  publish 127.0.0.1 4443 /interop interop multi-object 2 2 --insecure
 ~~~
 
 ~~~sh
 nix develop -c moon run --release --target native src/cmd/track_probe -- \
-  subscribe 127.0.0.1 4443 /moq interop multi-object 2 2 --insecure
+  subscribe 127.0.0.1 4443 /interop interop multi-object 2 2 --insecure
 ~~~
 
-`check-interop.sh` は一時証明書を生成し、moq-rs relay を `127.0.0.1:4443` で起動して Native QUIC の Draft 18 interop を確認する。自己署名証明書が既定の Native 証明書検証で拒否されることを確認した後、loopback probe に限って `--insecure` を使う。終了時に publisher、relay、一時ファイルを削除する。
+`check-interop.sh` は一時証明書を生成し、moqx relay を `127.0.0.1:4443` で起動して Native QUIC の Draft 18 interop を確認する。自己署名証明書が既定の Native 証明書検証で拒否されることを確認した後、loopback probe に限って `--insecure` を使う。終了時に publisher、relay、一時ファイルを削除する。
 
 ### Browser WebTransport 検証
 
-`nix develop -c bash scripts/check-moq-rs-dual.sh` は同じ moq-rs relay process に raw QUIC と WebTransport の接続を同時に開き、両方で Draft 18 SETUP を確認する。さらに一時 ECDSA P-256 証明書の正しい SHA-256 pin で接続し、誤った pin の拒否と Native/Browser 双方向 publish/subscribe を確認する。各接続と E2E に期限を設定し、失敗時は relay / peer log を出力して子プロセスを終了する。Native probe は loopback の一時自己署名証明書に限り `--insecure` を使う。
+`nix develop -c bash scripts/check-moqx-dual.sh` は同じ moqx relay process に raw QUIC と WebTransport の接続を同時に開き、両方で Draft 18 SETUP を確認する。さらに一時 ECDSA P-256 証明書の正しい SHA-256 pin で接続し、誤った pin の拒否と Native/Browser 双方向 publish/subscribe を確認する。各接続と E2E に期限を設定し、失敗時は relay / peer log を出力して子プロセスを終了する。Native probe は loopback の一時自己署名証明書に限り `--insecure` を使う。
 
-Browser WebTransport の connect timeout、遅延した open/write、方向ごとの FIN、送信失敗、close 後に保留 I/O が解放されることは `src/js_adapter/webtransport_test.mbt` の fake-transport tests で決定的に確認する。Datagram の peer-side decode / session routing は `src/session/client_update_test.mbt` で決定的に確認する。これは transport 上の配送確認ではない。固定 moq-rs relay では Native peer に Normal Object Datagram が届かず、実 relay での Datagram delivery は未検証として記録する。Datagram と Subgroup stream の同一 track 混在も relay が拒否するため、成功した interop と扱わない。
+Browser WebTransport の connect timeout、遅延した open/write、方向ごとの FIN、送信失敗、close 後に保留 I/O が解放されることは `src/js_adapter/webtransport_test.mbt` の fake-transport tests で決定的に確認する。`check-moqx-dual.sh` は Datagram の単独 probe と、Datagram / Subgroup の混在配送を別々に確認する。Sans-I/O tests は peer-side decode と session routing も確認する。
 
-ブラウザだけを手動確認する場合は `nix develop -c scripts/serve-moq-rs.sh` を実行する。表示される URL と証明書 hash を使い、`WebTransport` の `protocols` に `moqt-18` を指定する。
+ブラウザだけを手動確認する場合は `nix develop -c scripts/serve-moqx.sh` を実行する。表示される URL と証明書 hash を使い、`WebTransport` の `protocols` に `moqt-18` を指定する。
 
 自己署名証明書を使った試験では、ブラウザの WebTransport `serverCertificateHashes` に表示された SHA-256 hash を `Uint8Array` として渡す。これはローカル試験用の明示的な証明書 pin であり、通常の信頼設定や Origin 検証を無効にしない。
 
@@ -75,7 +64,7 @@ const transport = new WebTransport("https://127.0.0.1:4443/interop", {
 await transport.ready
 ~~~
 
-moq-rs の現在の CLI には WebTransport Origin allowlist がない。Origin 拒否は [#104](https://github.com/OJII3/moq-mbt/issues/104) の対象とする。証明書 pin の拒否は自動確認する。接続成功はリスナー起動や TLS 成立だけでは判断せず、WebTransport `ready` の後に MoQ Draft 18 SETUP を受信することまで確認する。
+moqx の現在の設定には WebTransport Origin allowlist がない。Origin 拒否は [#104](https://github.com/OJII3/moq-mbt/issues/104) の対象とする。証明書 pin の拒否は自動確認する。接続成功はリスナー起動や TLS 成立だけでは判断せず、WebTransport `ready` の後に MoQ Draft 18 SETUP を受信することまで確認する。
 
 CLI の末尾には Group 数と各 Group の Object 数を指定する。probe は `group-<group id>-object-<object id>` 形式の payload を生成し、subscriber 側で各 Group の Object ID 順と payload を照合する。SETUP はどちらのピアからも先に送れるため、probe は相手 SETUP の受信と、自分の SETUP の QUIC ACK の両方を待つ。続く PUBLISH_OK と SUBSCRIBE_OK も確認し、control request が relay を通ることを検証する。publisher は全 Subgroup stream の ACK 後に PUBLISH_DONE を送り、subscriber は各 Object stream の FIN、Object 数、Group 終了、PUBLISH_DONE の stream 数がそろった時点で成功する。
 
@@ -83,7 +72,7 @@ CLI の末尾には Group 数と各 Group の Object 数を指定する。probe 
 
 publisher は PUBLISH_OK 後に 1 秒待ってから有限 batch を送る。この間に別プロセスの subscriber が relay に接続し、PUBLISH_DONE を含む完了通知を受け取れる。
 
-`lifecycle`、Namespace、FETCH、Datagram probe は個別に実装されているが、現在 pin している moq-rs で成功する相互運用シナリオとしては扱わない。REQUEST_UPDATE は relay に未実装で、Namespace withdrawal 後は relay が session を終了し、FETCH は deadline までに終わらず、同一 track の Datagram と Subgroup stream 混在時は relay が `multiple stream modes` を返す。更新失敗や relay 発 GOAWAY の再現には時間待ちを使わず、Sans-I/O の session tests を使う。
+`lifecycle`、Namespace、FETCH、Datagram probe は個別に実装されている。moqx で未完了となる standalone / joining FETCH と Namespace withdrawal は、上記環境変数で再現できる。transport を介さない session state の検証には Sans-I/O tests を使う。
 
 ## 接続先と参照実装
 
@@ -94,7 +83,7 @@ nix develop -c moon run --release --target native src/cmd/setup_probe -- \
 
 引数はホスト、ポート、MoQ URI の path と query。クライアントは ALPN moqt-18 だけを提示し、QUIC DATAGRAM の交渉を確認してから SETUP を送る。Native QUIC 用の PATH、AUTHORITY、MOQT_IMPLEMENTATION を含める。接続から相手の SETUP 受信までの期限は 10 秒。相手の SETUP 受信と自分の SETUP の ACK を待ってから接続を終了する。証明書検証は既定で有効。
 
-Relay は [cloudflare/moq-rs の固定コミット](https://github.com/cloudflare/moq-rs/tree/8779758892d921bcfccbb6e4d9319c149db28c91) を `nix/moq-rs-relay.nix` でビルドする。Native QUIC と WebTransport は同じ endpoint の ALPN で選択される。Nixpkgs の `moq` は別用途の Go モック生成ツールなので使用しない。
+Relay は [openmoq/moqx](https://github.com/openmoq/moqx) の commit `f3df41db408a2edbd580a01b97d0e56505ae080e` に対応する OCI image digest を Nix devShell で固定する。Native QUIC と WebTransport は同じ endpoint の ALPN で選択される。Nixpkgs の `moq` は別用途の Go モック生成ツールなので使用しない。
 
 ## API とリソースの範囲
 

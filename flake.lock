@@ -39,20 +39,20 @@
         "type": "github"
       }
     },
-    "moq-rs-src": {
+    "moqx-src": {
       "flake": false,
       "locked": {
-        "lastModified": 1792099498,
-        "narHash": "sha256-Tj7rPCUFBfP2ycC9gZA4xL8a8LGvv1c+5GRtYGAFUaU=",
-        "owner": "cloudflare",
-        "repo": "moq-rs",
-        "rev": "8779758892d921bcfccbb6e4d9319c149db28c91",
+        "lastModified": 1792715144,
+        "narHash": "sha256-O3DbMdboacEY+QUMxN6C4b6fUcBxhIAGYx9ZuM81HpQ=",
+        "owner": "openmoq",
+        "repo": "moqx",
+        "rev": "f3df41db408a2edbd580a01b97d0e56505ae080e",
         "type": "github"
       },
       "original": {
-        "owner": "cloudflare",
-        "repo": "moq-rs",
-        "rev": "8779758892d921bcfccbb6e4d9319c149db28c91",
+        "owner": "openmoq",
+        "repo": "moqx",
+        "rev": "f3df41db408a2edbd580a01b97d0e56505ae080e",
         "type": "github"
       }
     },
@@ -91,7 +91,7 @@
       "inputs": {
         "flake-parts": "flake-parts",
         "moonbit-overlay": "moonbit-overlay",
-        "moq-rs-src": "moq-rs-src",
+        "moqx-src": "moqx-src",
         "nixpkgs": "nixpkgs"
       }
     },

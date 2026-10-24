@@ -122,13 +122,6 @@ async fn run_subscriber(
                 return
               }
             }
-            match client.session().finish_subscription_updates(id) {
-              Ok(actions) => client.dispatch(actions)
-              Err(error) => {
-                ffi_set_status("failed: \{error.to_repr()}")
-                return
-              }
-            }
             ffi_set_status("subscribing")
           }
           Err(error) => {
@@ -161,7 +154,9 @@ async fn run_subscriber(
         if done.stream_count != 2UL ||
           received_objects != 4 ||
           finished_groups != 2 {
-          ffi_set_status("failed: incomplete Object or PUBLISH_DONE counts")
+          ffi_set_status(
+            "failed: PUBLISH_DONE streams=\{done.stream_count}, objects=\{received_objects}, groups=\{finished_groups}",
+          )
           return
         }
         finished = true
@@ -331,6 +326,55 @@ async fn run_publisher(
         ffi_set_status("published")
         ffi_wait_to_start().wait()
         let stream = publish_stream.unwrap()
+        let mut forwarding_enabled = false
+        while !forwarding_enabled {
+          match client.next_notice().wait() {
+            Some(
+              @session.SubscriptionUpdateRequested(
+                _,
+                update_id,
+                update_stream,
+                _,
+                parameters
+              )
+            ) => {
+              for parameter in parameters {
+                if parameter.kind == 0x10 {
+                  match parameter.value {
+                    @protocol.Byte(value) if value != 0 =>
+                      forwarding_enabled = true
+                    _ => ()
+                  }
+                }
+              }
+              let response : @protocol.RequestOkMessage = {
+                parameters: [],
+                properties: [],
+              }
+              match
+                client
+                .session()
+                .accept_subscription_update(update_stream, update_id, response) {
+                Ok(actions) => client.dispatch(actions)
+                Err(_) => {
+                  ffi_set_status("failed to accept subscription update")
+                  return
+                }
+              }
+            }
+            Some(@session.SessionEnded(_)) => {
+              ffi_set_status("peer ended while awaiting subscription update")
+              return
+            }
+            None => {
+              ffi_set_status(
+                "failed: WebTransport session ended awaiting subscription update",
+              )
+              return
+            }
+            _ => ()
+          }
+        }
         if !publish_group(client, stream, 0UL) ||
           !publish_group(client, stream, 1UL) {
           return

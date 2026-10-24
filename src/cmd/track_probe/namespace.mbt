@@ -142,13 +142,13 @@ fn NamespaceProbeState::observe(
         if publisher && self.cancelling_publication && self.withdrawn {
           self.publisher_session_ended = true
           println(
-            "moq-rs closed the Namespace publisher session after withdrawal ({end.to_repr()})",
+            "moqx closed the Namespace publisher session after withdrawal ({end.to_repr()})",
           )
         } else if !publisher && self.cancelling_subscription {
           self.subscriber_session_ended = true
           self.ended = true
           println(
-            "moq-rs closed the Namespace subscriber session after cancellation ({end.to_repr()})",
+            "moqx closed the Namespace subscriber session after cancellation ({end.to_repr()})",
           )
         } else {
           let peer_role = if publisher { "publisher" } else { "subscriber" }
@@ -329,7 +329,7 @@ pub fn run_namespace(
   wait_namespace_stage(publisher, subscriber, state, Withdrawn)
   println("Namespace publication request stream shutdown completed")
   if state.publisher_session_ended {
-    println("moq-rs closed the publisher session after Namespace withdrawal")
+    println("moqx closed the publisher session after Namespace withdrawal")
   }
 
   state.cancelling_subscription = true
@@ -349,7 +349,7 @@ pub fn run_namespace(
     )
   }
   if state.subscriber_session_ended {
-    println("moq-rs closed the subscriber session after Namespace cancellation")
+    println("moqx closed the subscriber session after Namespace cancellation")
     fail(
       "Namespace cancellation closed the session before independent track continuation",
     )

@@ -250,6 +250,28 @@ fn LifecycleState::observe_publisher(
   for notice in notices {
     match notice {
       @session.PublishRejected(_, _) => fail("PUBLISH rejected")
+      @session.SubscriptionUpdateRequested(request_id, update_id, stream, _, _) => {
+        guard request_id == self.publish_a || request_id == self.publish_b else {
+          fail("subscription update targeted an unknown lifecycle track")
+        }
+        let response : @protocol.RequestOkMessage = {
+          parameters: [],
+          properties: [],
+        }
+        let (update_notices, _) = drive_session_result(
+          peer.client,
+          peer.session,
+          peer.session.accept_subscription_update(stream, update_id, response),
+          peer.driver,
+        )
+        for update_notice in update_notices {
+          match update_notice {
+            @session.SubscriptionUpdateApplied(_, _, _, _) =>
+              println("PUBLISH subscription update accepted")
+            _ => ()
+          }
+        }
+      }
       @session.ObjectStreamFinished(stream) =>
         match self.object_stream_requests.get(stream) {
           Some(request_id) if request_id == self.publish_a =>
