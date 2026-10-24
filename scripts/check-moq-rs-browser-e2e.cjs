@@ -12,6 +12,16 @@ if (!mode || !["subscribe", "publish"].includes(mode) || !url || !fingerprintBas
 const fingerprint = [...Buffer.from(fingerprintBase64, "base64")];
 if (fingerprint.length !== 32) throw new Error("expected a 32-byte SHA-256 certificate fingerprint");
 
+function withTimeout(promise, milliseconds, message) {
+  let timer;
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(message)), milliseconds);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
 async function runNative(role) {
   const args = [
     role, "127.0.0.1", nativePort, "/interop", "interop", "multi-object", "2", "2", "--insecure",
@@ -156,8 +166,8 @@ async function main() {
         );
         status = await page.evaluate(() => globalThis.__moqE2EResult?.status);
         if (status !== "publishing-done") throw new Error(`Browser publisher failed: ${status}`);
-        await native.success;
-        await native.stop();
+        await withTimeout(native.success, 15000, "timed out waiting for Native PUBLISH_DONE");
+        await withTimeout(native.stop(), 5000, "timed out stopping Native subscriber");
         await page.evaluate(() => globalThis.__moqE2EFinish());
         await page.waitForFunction(
           () => globalThis.__moqE2EResult?.status === "passed" ||
@@ -180,7 +190,18 @@ async function main() {
         : "Browser publisher → Native subscriber passed: 4 Objects, 2 Groups, Properties, FIN, PUBLISH_DONE(2)",
     );
   } finally {
-    if (native && native.child.exitCode === null) native.child.kill("SIGTERM");
+    if (native && native.child.exitCode === null) {
+      native.child.kill("SIGTERM");
+      const exited = await Promise.race([
+        native.done.then(() => true, () => true),
+        new Promise(resolve => setTimeout(() => resolve(false), 3000)),
+      ]);
+      if (!exited) {
+        native.child.kill("SIGKILL");
+        await withTimeout(native.done, 5000, "Native child did not exit after SIGKILL")
+          .catch(() => {});
+      }
+    }
     if (browser) await browser.close();
     await new Promise(resolve => originServer.close(resolve));
   }

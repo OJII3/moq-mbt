@@ -49,10 +49,12 @@ for ((attempt = 0; attempt < 100; attempt++)); do
 done
 
 echo "Checking raw QUIC and WebTransport concurrently on moq-rs 127.0.0.1:$port"
-moon run --release --target native src/cmd/setup_probe -- \
+timeout --signal=TERM --kill-after=5s "${MOQ_RS_SETUP_TIMEOUT:-45}s" \
+  moon run --release --target native src/cmd/setup_probe -- \
   127.0.0.1 "$port" /interop --insecure >"$task_tmp/raw.log" 2>&1 &
 raw_pid=$!
-node scripts/check-moq-rs-webtransport.cjs \
+timeout --signal=TERM --kill-after=5s "${MOQ_RS_SETUP_TIMEOUT:-45}s" \
+  node scripts/check-moq-rs-webtransport.cjs \
   "https://127.0.0.1:$port/interop" "$fingerprint" \
   >"$task_tmp/webtransport.log" 2>&1 &
 webtransport_pid=$!
@@ -61,16 +63,20 @@ status=0
 if wait "$raw_pid"; then
   raw_pid=
 else
-  status=$?
+  status=1
 fi
 if wait "$webtransport_pid"; then
   webtransport_pid=
 else
-  status=$?
+  status=1
 fi
 cat "$task_tmp/raw.log" "$task_tmp/webtransport.log"
 if ((status != 0)); then
   cat "$relay_log" >&2
+  echo "raw QUIC log:" >&2
+  cat "$task_tmp/raw.log" >&2
+  echo "WebTransport log:" >&2
+  cat "$task_tmp/webtransport.log" >&2
   exit "$status"
 fi
 
@@ -80,7 +86,12 @@ else
   e2e_modes=(subscribe publish)
 fi
 for mode in "${e2e_modes[@]}"; do
-  node scripts/check-moq-rs-browser-e2e.cjs \
+  timeout --signal=TERM --kill-after=5s "${MOQ_RS_BROWSER_TIMEOUT:-120}s" \
+    node scripts/check-moq-rs-browser-e2e.cjs \
     "$mode" "https://127.0.0.1:$port/interop" "$fingerprint" "$port" \
-    "$browser_e2e_bundle"
+    "$browser_e2e_bundle" || {
+      echo "Browser E2E ($mode) failed; relay log:" >&2
+      cat "$relay_log" >&2
+      exit 1
+    }
 done
