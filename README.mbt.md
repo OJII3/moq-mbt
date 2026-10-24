@@ -1,69 +1,171 @@
 # moq-mbt
 
-MoQ (Media over QUIC Transport) implementation in [MoonBit](https://www.moonbitlang.com/).
+Media over QUIC (MoQ) Transport implementation in [MoonBit](https://www.moonbitlang.com/).
 
 ## Overview
 
-`moq-mbt` aims to provide a lightweight, cross-platform implementation of the Media over QUIC (MoQ) Transport protocol written in MoonBit.
+`moq-mbt` is a cross-platform implementation of the MoQ Transport protocol targeting **draft-ietf-moq-transport-18** (Draft 18). It provides both native QUIC (via MsQuic) and browser WebTransport adapters.
 
-## Key Goals & Features
+## Features
 
+- **Specification**: Targeting [draft-ietf-moq-transport-18](https://datatracker.ietf.org/doc/draft-ietf-moq-transport/18/)
+  - SETUP handshake (`moqt-18` ALPN / WebTransport subprotocol)
+  - Multi-track Publish and Subscribe lifecycles
+  - Namespace publication and subscription
+  - Standalone FETCH and Joining FETCH
+  - Subgroup streams and Object Datagrams
+  - `GOAWAY` handling and graceful session draining
 - **Multi-Target Support**:
-  - **Native**: Powered by [`libmsquic`](https://github.com/microsoft/msquic) for high-performance native QUIC networking.
-  - **Browser**: JavaScript target using the browser's WebTransport API.
-- **Specification Compliance**:
-  - Targeting **draft-ietf-moq-transport-18** (Draft 18).
-  - Aiming for interoperability with external MoQ relay servers and client implementations.
-- **Reference Architecture**:
-  - Actively referencing the architecture and implementation of [openmoq/moq5](https://github.com/openmoq/moq5).
+  - **Native**: Built with [`libmsquic`](https://github.com/microsoft/msquic) for raw QUIC networking.
+  - **Browser**: Built for JavaScript / WebAssembly environments via the browser's WebTransport API.
+- **Sans-I/O Architecture**: The protocol encoding/decoding and session state machine are decoupled from network I/O, timers, and platform runtimes.
+- **Interoperability**: Verified end-to-end against [`moq-rs`](https://github.com/cloudflare/moq-rs) relays across Native QUIC ↔ moq-rs ↔ Browser WebTransport.
 
-## Status
+## Packages
 
-This project is currently under early and active development. The current
-Draft 18 implementation supports SETUP, multi-track requests, subscription
-updates and cancellation, GOAWAY draining, Namespace publication and
-subscription, Standalone and Joining FETCH, reliable Subgroup streams, and
-Object Datagrams:
-
-- `protocol`: vi64 integers, SETUP and request framing, Subgroup objects.
-- `session`: incremental handshake, track and Namespace request lifecycles, Standalone and Joining FETCH, and multiple Object streams.
-- `transport`: native MsQuic client using the `moqt-18` ALPN.
-- `cmd/setup_probe`: a client that exchanges SETUP with an external relay.
-- `cmd/track_probe`: publisher, subscriber, lifecycle, Namespace, Standalone FETCH, and Joining FETCH probes for Draft 18 relays.
-
-The JavaScript WebTransport adapter is available in `src/js_adapter`. It is
-built only for the `js` target and uses `mizchi/js` for JavaScript interop
-without adding those dependencies to `protocol` or `session`.
-
-## Development
-
-The Nix devShell includes MoonBit, Node.js tooling, Chromium, MsQuic, OpenSSL,
-and the pinned moq-rs relay. Node.js is used by development scripts; the
-JavaScript runtime target is the browser. Run the local Draft 18
-interoperability checks with:
-
-```sh
-nix develop -c bash scripts/check-interop.sh
-nix develop -c bash scripts/check-moq-rs-dual.sh
+```text
+src/
+├── protocol/       # Wire format, vi64 integer codec, control and data messages
+├── session/        # Sans-I/O session state machine (tracks, requests, streams)
+├── transport/      # Native MsQuic QUIC transport adapter
+├── js_adapter/     # Browser WebTransport adapter
+├── cmd/
+│   ├── setup_probe          # CLI: SETUP handshake verification
+│   ├── track_probe          # CLI: Publish, Subscribe, Fetch, and Namespace probe
+│   └── web_interop_probe    # WebTransport probe for browser
+└── examples/
+    └── browser/             # Browser publish and subscribe sample
 ```
 
-The check starts the pinned moq-rs relay on `127.0.0.1:4443`. It verifies
-certificate rejection, Draft 18 SETUP, and multi-Object/Group publish and
-subscribe. The dual check connects raw QUIC and a Playwright Chromium
-WebTransport client to the same relay, exchanges Draft 18 SETUP, and runs
-Native → Browser and Browser → Native publish/subscribe E2E. It checks Objects,
-Properties, FIN, and `PUBLISH_DONE.stream_count`, and verifies rejection of an
-incorrect certificate pin. See [interop notes](docs/interop.md) for the pinned
-browser versions, tested scenarios, and limits. This validates Browser
-WebTransport ↔ moq-rs ↔ Native raw QUIC. The interop script also verifies a
-session peer test observes an Object Datagram separately from local send
-completion. The pinned relay does not forward Normal Object Datagrams, so relay
-Datagram delivery is documented as unverified. Native WebTransport is a
-separate M6 implementation.
+| Package | Description | Target |
+| :--- | :--- | :--- |
+| `ojii3/moq-mbt/protocol` | Framing, message serialization, and deserialization | Native, JS |
+| `ojii3/moq-mbt/session` | Session state machine and request lifecycles | Native, JS |
+| `ojii3/moq-mbt/transport` | Native QUIC client using `libmsquic` | Native |
+| `ojii3/moq-mbt/js_adapter` | WebTransport client adapter and browser session facade | JS (Browser) |
+
+## Quick Start
+
+### Prerequisites
+
+Using Nix:
+
+```sh
+nix develop
+```
+
+Without Nix:
+- [MoonBit CLI](https://www.moonbitlang.com/download/) (`moon`)
+- `libmsquic` (for native target)
+- Node.js 20+ and Chromium (for browser target)
+
+### CLI Probes (Native)
+
+#### Build
+
+```sh
+moon build --target native src/cmd/setup_probe
+moon build --target native src/cmd/track_probe
+```
+
+#### Handshake Probe (`setup_probe`)
+
+Verify connection and SETUP handshake with a relay:
+
+```sh
+moon run src/cmd/setup_probe -- <HOST> <PORT> <PATH> [--insecure]
+
+# Example
+moon run src/cmd/setup_probe -- 127.0.0.1 4443 /interop --insecure
+```
+
+#### Track Operations (`track_probe`)
+
+```sh
+# Publish tracks (HOST PORT PATH NAMESPACE TRACK GROUPS OBJECTS_PER_GROUP)
+moon run src/cmd/track_probe -- publish 127.0.0.1 4443 /interop my-namespace track0 2 5 --insecure
+
+# Subscribe to tracks
+moon run src/cmd/track_probe -- subscribe 127.0.0.1 4443 /interop my-namespace track0 2 5 --insecure
+
+# Other commands
+moon run src/cmd/track_probe -- lifecycle 127.0.0.1 4443 /interop --insecure
+moon run src/cmd/track_probe -- namespace 127.0.0.1 4443 /interop --insecure
+moon run src/cmd/track_probe -- fetch 127.0.0.1 4443 /interop my-namespace track0 0 2 --insecure
+moon run src/cmd/track_probe -- joining-fetch 127.0.0.1 4443 /interop --insecure
+moon run src/cmd/track_probe -- datagram-smoke 127.0.0.1 4443 /interop --insecure
+```
+
+### Browser Sample
+
+A runnable publish/subscribe web sample is available in [`src/examples/browser`](src/examples/browser).
+
+1. Build the web client:
+   ```sh
+   moon build --release --target js src/cmd/web_interop_probe
+   ```
+
+2. Start a local HTTP server:
+   ```sh
+   python3 -m http.server 8000
+   ```
+
+3. Open `http://localhost:8000/src/examples/browser/` in a browser supporting WebTransport.
+
+## Usage
+
+### MoonBit Dependency
+
+Add `ojii3/moq-mbt` to `moon.mod`:
+
+```json
+{
+  "import": {
+    "ojii3/moq-mbt": "0.1.0"
+  }
+}
+```
+
+### Browser Client Example
+
+```moonbit
+let setup : @session.Setup = ...
+let client = @js_adapter.browser_connect("https://example.com/moq", setup)
+client.start()
+
+// Dispatch session actions
+let actions = client.session().subscribe(...)
+client.dispatch(actions)
+
+// Receive session notices
+let notice = client.next_notice()
+```
+
+See [`src/js_adapter/README.md`](src/js_adapter/README.md) for buffer limits, datagram capability, and certificate pinning details.
+
+## Testing
+
+```sh
+# Unit tests
+moon test
+
+# Protocol and relay interoperability checks (requires Nix devShell)
+bash scripts/check-interop.sh
+
+# Native ↔ Browser dual interop check
+bash scripts/check-moq-rs-dual.sh
+```
+
+## Documentation
+
+- [Architecture notes](docs/architecture.md): Session state machine and transport boundary
+- [Interop notes](docs/interop.md): Relay compatibility, tested scenarios, and limits
+- [JavaScript adapter](docs/js-adapter.md): WebTransport details, buffer ownership, and FFI policy
+- [Browser sample guide](src/examples/browser/README.md): Running the browser demo
 
 ## References
 
-- [Architecture notes](docs/architecture.md)
 - [MoQ Transport Draft 18](https://datatracker.ietf.org/doc/draft-ietf-moq-transport/18/)
 - [openmoq/moq5](https://github.com/openmoq/moq5)
-- [libmsquic (Microsoft MsQuic)](https://github.com/microsoft/msquic)
+- [cloudflare/moq-rs](https://github.com/cloudflare/moq-rs)
+- [libmsquic](https://github.com/microsoft/msquic)
