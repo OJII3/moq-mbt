@@ -8,16 +8,15 @@ priv struct PublisherProbeState {
   finished_object_streams : Map[Int64, Bool]
   mut finished_stream_count : UInt64
   mut publish_accepted : Bool
+  mut publish_after : UInt64
+  mut peer_ready : Bool
+  wait_for_start : Bool
   datagrams : Bool
   mut datagram_send_count : UInt64
   mut datagram_send_final_count : UInt64
   mut next_group_index : Int32
   mut publish_done_sent : Bool
 }
-
-///|
-/// Block until the browser E2E harness releases the publisher over stdin.
-extern "C" fn ffi_wait_for_start() -> Int32 = "getchar"
 
 ///|
 fn start_probe_group(
@@ -134,6 +133,21 @@ fn probe_datagrams(group_count : UInt64) -> Array[@protocol.ObjectDatagram] {
 }
 
 ///|
+fn update_enables_forwarding(
+  parameters : Array[@protocol.MessageParameter],
+) -> Bool {
+  for parameter in parameters {
+    if parameter.kind == 0x10 {
+      match parameter.value {
+        @protocol.Byte(value) => return value != 0
+        _ => ()
+      }
+    }
+  }
+  true
+}
+
+///|
 fn handle_publisher_notices(
   _client : @transport.Client,
   _session : @session.ClientSession,
@@ -146,9 +160,47 @@ fn handle_publisher_notices(
       @session.PublishAccepted(_) => {
         eprintln("PUBLISH request accepted")
         state.publish_accepted = true
+        state.publish_after = @env.now() + 1000UL
       }
       @session.PublishRejected(_, error) =>
         fail("PUBLISH rejected (\{error.code})")
+      @session.SubscriptionUpdateRequested(
+        request_id,
+        update_id,
+        stream,
+        _,
+        parameters
+      ) => {
+        eprintln(
+          "PUBLISH update requested (request \{request_id}, update \{update_id}, stream \{stream})",
+        )
+        if update_enables_forwarding(parameters) {
+          state.peer_ready = true
+          eprintln("PUBLISH subscriber forwarding enabled")
+          if state.wait_for_start {
+            eprintln("E2E publisher released by relay subscription update")
+          }
+        }
+        let response : @protocol.RequestOkMessage = {
+          parameters: [],
+          properties: [],
+        }
+        let (update_notices, _) = drive_session_result(
+          _client,
+          _session,
+          _session.accept_subscription_update(stream, update_id, response),
+          _driver,
+        )
+        for update_notice in update_notices {
+          match update_notice {
+            @session.SubscriptionUpdateApplied(_, applied_id, _, _) =>
+              eprintln(
+                "PUBLISH subscription update accepted (request \{applied_id})",
+              )
+            _ => ()
+          }
+        }
+      }
       @session.ControlGoAwayReceived(uri, timeout_ms, request_id) =>
         eprintln(
           "session GOAWAY received (URI \{uri.length()} bytes, timeout \{timeout_ms} ms, request ID \{request_id})",
@@ -227,13 +279,15 @@ fn run_publisher(
     finished_object_streams: {},
     finished_stream_count: 0UL,
     publish_accepted: false,
+    publish_after: 0UL,
+    peer_ready: false,
+    wait_for_start,
     datagram_send_count: 0UL,
     datagram_send_final_count: 0UL,
     next_group_index: 0,
     publish_done_sent: false,
   }
   handle_publisher_notices(client, session, notices, driver, state)
-  let mut waiting_for_start = false
   let deadline = @env.now() + 60000
   while @env.now() < deadline {
     match client.next_event(100) {
@@ -407,12 +461,9 @@ fn run_publisher(
         handle_publisher_notices(client, session, notices, driver, state)
       }
     }
-    if state.publish_accepted && wait_for_start && !waiting_for_start {
-      waiting_for_start = true
-      eprintln("PUBLISH accepted; waiting for E2E subscriber")
-      ignore(ffi_wait_for_start())
-    }
     if state.publish_accepted &&
+      state.peer_ready &&
+      @env.now() >= state.publish_after &&
       state.datagrams &&
       state.datagram_send_count == 0UL {
       for datagram in probe_datagrams(state.group_count) {
@@ -428,6 +479,8 @@ fn run_publisher(
       println("Sent four Object Datagrams (best effort)")
     }
     if state.publish_accepted &&
+      state.peer_ready &&
+      @env.now() >= state.publish_after &&
       state.next_group_index < state.group_count.to_int() &&
       client.has_stream_capacity() {
       let notices = start_probe_group(
@@ -438,6 +491,11 @@ fn run_publisher(
         state.next_group_index,
       )
       handle_publisher_notices(client, session, notices, driver, state)
+    } else if state.publish_accepted &&
+      state.peer_ready &&
+      @env.now() >= state.publish_after &&
+      state.next_group_index < state.group_count.to_int() {
+      eprintln("Waiting for capacity to open the next object stream")
     }
     if !state.publish_done_sent &&
       state.finished_stream_count == state.group_count &&

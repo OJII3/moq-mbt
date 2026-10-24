@@ -6,8 +6,8 @@
     flake-parts.url = "github:hercules-ci/flake-parts";
     moonbit-overlay.url = "github:moonbit-community/moonbit-overlay";
     moonbit-overlay.inputs.nixpkgs.follows = "nixpkgs";
-    moq-rs-src = {
-      url = "github:cloudflare/moq-rs/8779758892d921bcfccbb6e4d9319c149db28c91";
+    moqx-src = {
+      url = "github:openmoq/moqx/f3df41db408a2edbd580a01b97d0e56505ae080e";
       flake = false;
     };
   };
@@ -33,21 +33,18 @@
           overlays = [ inputs.moonbit-overlay.overlays.default ];
         };
 
-        packages.moq-rs-relay = pkgs.callPackage ./nix/moq-rs-relay.nix {
-          src = inputs.moq-rs-src;
-        };
-
         devShells.default = pkgs.mkShell {
           packages = [
+            pkgs.docker
             pkgs.libmsquic
             pkgs.moonbit-bin.latest
             pkgs.nodejs
             pkgs.playwright-driver
             playwrightBrowsers
-            self'.packages.moq-rs-relay
             pkgs.openssl
           ];
           shellHook = ''
+            export MOQX_IMAGE="ghcr.io/openmoq/moqx@sha256:8f0c393c2c4fed0e260c876ab7fcb93a68f97000e3e693d2850ebf0a627eb096"
             export PLAYWRIGHT_CORE_PATH="${pkgs.playwright-driver}"
             export PLAYWRIGHT_BROWSERS_PATH="${playwrightBrowsers}"
           '';

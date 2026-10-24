@@ -19,7 +19,7 @@ Media over QUIC (MoQ) Transport implementation in [MoonBit](https://www.moonbitl
   - **Native**: Built with [`libmsquic`](https://github.com/microsoft/msquic) for raw QUIC networking.
   - **Browser**: Built for JavaScript / WebAssembly environments via the browser's WebTransport API.
 - **Sans-I/O Architecture**: The protocol encoding/decoding and session state machine are decoupled from network I/O, timers, and platform runtimes.
-- **Interoperability**: Verified end-to-end against [`moq-rs`](https://github.com/cloudflare/moq-rs) relays across Native QUIC ↔ moq-rs ↔ Browser WebTransport.
+- **Interoperability**: Native QUIC ↔ moqx ↔ Browser WebTransport interoperability is covered by the pinned relay probes.
 
 ## Packages
 
@@ -153,7 +153,7 @@ moon test
 bash scripts/check-interop.sh
 
 # Native ↔ Browser dual interop check
-bash scripts/check-moq-rs-dual.sh
+bash scripts/check-moqx-dual.sh
 ```
 
 ## Documentation
@@ -167,5 +167,5 @@ bash scripts/check-moq-rs-dual.sh
 
 - [MoQ Transport Draft 18](https://datatracker.ietf.org/doc/draft-ietf-moq-transport/18/)
 - [openmoq/moq5](https://github.com/openmoq/moq5)
-- [cloudflare/moq-rs](https://github.com/cloudflare/moq-rs)
+- [openmoq/moqx](https://github.com/openmoq/moqx)
 - [libmsquic](https://github.com/microsoft/msquic)

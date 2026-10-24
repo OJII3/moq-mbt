@@ -3,11 +3,10 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 task_tmp=$(mktemp -d)
-relay_pid=
+relay_id=
 cleanup() {
-  if [[ -n "$relay_pid" ]]; then
-    kill "$relay_pid" 2>/dev/null || true
-    wait "$relay_pid" 2>/dev/null || true
+  if [[ -n "$relay_id" ]]; then
+    docker rm -f "$relay_id" >/dev/null 2>&1 || true
   fi
   rm -rf "$task_tmp"
 }
@@ -15,7 +14,7 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-port=${MOQ_RS_PORT:-4443}
+port=${MOQX_PORT:-4443}
 openssl ecparam -name prime256v1 -genkey -noout -out "$task_tmp/key.pem" \
   >"$task_tmp/cert.log" 2>&1
 openssl req -x509 -new -key "$task_tmp/key.pem" -sha256 -days 1 \
@@ -28,22 +27,21 @@ printf 'WebTransport certificate SHA-256 (base64): %s\n' "$fingerprint"
 printf '\nWebTransport URL: https://127.0.0.1:%s/interop\n' "$port"
 printf 'WebTransport protocol offer: moqt-18\n'
 
-moq-relay-ietf --bind "127.0.0.1:$port" \
-  --tls-cert "$task_tmp/cert.pem" --tls-key "$task_tmp/key.pem" --dev \
-  >"$task_tmp/relay.log" 2>&1 &
-relay_pid=$!
+relay_config="$task_tmp/moqx.yaml"
+scripts/write-moqx-config.sh "$relay_config" "$port" "$task_tmp/cert.pem" "$task_tmp/key.pem"
+relay_id=$(scripts/start-moqx-container.sh "$task_tmp" "$port")
 for ((attempt = 0; attempt < 100; attempt++)); do
-  if grep -Fq "listening on 127.0.0.1:$port" "$task_tmp/relay.log"; then
-    cat "$task_tmp/relay.log"
+  if [[ $(docker inspect --format '{{.State.Running}}' "$relay_id" 2>/dev/null) == true ]] && ((attempt >= 10)); then
+    docker logs "$relay_id"
     break
   fi
-  if ! kill -0 "$relay_pid" 2>/dev/null || ((attempt == 99)); then
-    cat "$task_tmp/relay.log" >&2
-    echo "moq-relay-ietf failed to start; check the listener port and certificate configuration" >&2
+  if [[ $(docker inspect --format '{{.State.Running}}' "$relay_id" 2>/dev/null) != true ]] || ((attempt == 99)); then
+    docker logs "$relay_id" >&2 || true
+    echo "moqx failed to start; check the listener port and certificate configuration" >&2
     exit 1
   fi
   sleep 0.1
 done
 
-node scripts/check-moq-rs-webtransport.cjs "https://127.0.0.1:$port/interop" "$fingerprint"
-wait "$relay_pid"
+node scripts/check-moqx-webtransport.cjs "https://127.0.0.1:$port/interop" "$fingerprint"
+docker logs -f "$relay_id"

@@ -5,7 +5,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_CORE_PATH);
 const [mode, url, fingerprintBase64, nativePort, bundlePath] = process.argv.slice(2);
 if (!mode || !["subscribe", "publish"].includes(mode) || !url || !fingerprintBase64 || !nativePort || !bundlePath) {
   throw new Error(
-    "usage: check-moq-rs-browser-e2e.cjs <subscribe|publish> <url> <sha256-fingerprint-base64> <native-port> <bundle-path>",
+    "usage: check-moqx-browser-e2e.cjs <subscribe|publish> <url> <sha256-fingerprint-base64> <native-port> <bundle-path>",
   );
 }
 
@@ -22,13 +22,14 @@ function withTimeout(promise, milliseconds, message) {
   ]).finally(() => clearTimeout(timer));
 }
 
-async function runNative(role) {
+async function runNative(role, mode) {
+  const trackName = mode === "publish" ? "browser-publisher" : "multi-object";
   const args = [
-    role, "127.0.0.1", nativePort, "/interop", "interop", "multi-object", "2", "2", "--insecure",
+    role, "127.0.0.1", nativePort, "/interop", "interop", trackName, "2", "2", "--insecure",
   ];
   if (role === "publish") args.push("--hold-open", "--wait-for-start");
   const child = spawn("_build/native/release/build/cmd/track_probe/track_probe.exe", args, {
-    stdio: ["pipe", "pipe", "pipe"],
+    stdio: ["ignore", "pipe", "pipe"],
   });
   let output = "";
   let resolveReady;
@@ -36,10 +37,12 @@ async function runNative(role) {
   let resolveSuccess;
   let rejectSuccess;
   let stopping = false;
-  const readyMarker = role === "publish" ? "PUBLISH request accepted" : "SUBSCRIBE_OK received";
+  const readyMarker = role === "publish" ? "PUBLISH request accepted" : "SUBSCRIBE request sent";
   const successMarker = role === "publish" ? "PUBLISH_DONE send completed" : "PUBLISH_DONE received";
   const ready = new Promise((resolve, reject) => { resolveReady = resolve; rejectReady = reject; });
   const success = new Promise((resolve, reject) => { resolveSuccess = resolve; rejectSuccess = reject; });
+  ready.catch(() => {});
+  success.catch(() => {});
   const onOutput = (data, stream) => {
     output += data;
     stream.write(data);
@@ -67,7 +70,8 @@ async function runNative(role) {
     done,
     ready,
     success,
-    start: () => child.stdin.end("\n"),
+    output: () => output,
+    start: () => {},
     stop: () => {
       stopping = true;
       if (child.exitCode === null) child.kill("SIGTERM");
@@ -79,18 +83,19 @@ async function runNative(role) {
 async function main() {
   const originServer = createServer((_request, response) => {
     response.writeHead(200, { "content-type": "text/html" });
-    response.end("<!doctype html><title>moq-rs browser interop</title>");
+    response.end("<!doctype html><title>moqx browser interop</title>");
   });
   await new Promise(resolve => originServer.listen(0, "127.0.0.1", resolve));
   let browser;
-  let native;
+  const nativePeers = [];
+  let nativeSubscriber;
   try {
     browser = await chromium.launch();
     const page = await browser.newPage();
     page.on("console", message => console.log(`browser: ${message.text()}`));
     page.on("pageerror", error => console.error(`browser error: ${error.message}`));
-    await page.addInitScript(({ uri, certificateHash, mode }) => {
-      globalThis.__moqE2EConfig = { uri, certificateHash, mode };
+    await page.addInitScript(({ uri, certificateHash, mode, track }) => {
+      globalThis.__moqE2EConfig = { uri, certificateHash, mode, track };
       globalThis.__moqE2EResult = { status: "loading" };
       globalThis.__moqE2EStartPromise = new Promise(resolve => {
         globalThis.__moqE2EStart = resolve;
@@ -98,7 +103,12 @@ async function main() {
       globalThis.__moqE2EFinishPromise = new Promise(resolve => {
         globalThis.__moqE2EFinish = resolve;
       });
-    }, { uri: url.replace(/^https:/, "moqt:"), certificateHash: fingerprint, mode });
+    }, {
+      uri: url.replace(/^https:/, "moqt:"),
+      certificateHash: fingerprint,
+      mode,
+      track: mode === "publish" ? "browser-publisher" : "multi-object",
+    });
     await page.goto(`http://127.0.0.1:${originServer.address().port}`);
     await page.addScriptTag({ path: bundlePath });
 
@@ -118,11 +128,12 @@ async function main() {
     if (status !== readyStatus) throw new Error(`Browser ${mode} failed before Native peer start: ${status}`);
 
     if (mode === "subscribe") {
-      native = await runNative("publish");
-      await Promise.race([
-        native.ready,
-        new Promise((_, reject) => setTimeout(() => reject(new Error("timed out waiting for Native PUBLISH acceptance")), 20000)),
-      ]);
+      nativeSubscriber = await runNative("subscribe", mode);
+      nativePeers.push(nativeSubscriber);
+      await withTimeout(nativeSubscriber.ready, 20000, "timed out waiting for Native SUBSCRIBE request");
+      const nativePublisher = await runNative("publish", mode);
+      nativePeers.push(nativePublisher);
+      await withTimeout(nativePublisher.ready, 20000, "timed out waiting for Native PUBLISH acceptance");
       await page.evaluate(() => globalThis.__moqE2EStart());
       try {
         await page.waitForFunction(
@@ -136,27 +147,21 @@ async function main() {
         throw new Error(`timed out waiting for browser SUBSCRIBE to be established (status: ${current}): ${error.message}`);
       }
       status = await page.evaluate(() => globalThis.__moqE2EResult?.status);
-      if (status !== "subscribed") throw new Error(`Browser subscribe failed before Native publisher start: ${status}`);
-      native.start();
+      if (status !== "subscribed") throw new Error(`Browser subscribe failed: ${status}`);
     } else {
-      native = await runNative("subscribe");
-      await Promise.race([
-        native.ready,
-        new Promise((_, reject) => setTimeout(() => reject(new Error("timed out waiting for Native SUBSCRIBE_OK")), 20000)),
-      ]);
+      nativeSubscriber = await runNative("subscribe", mode);
+      nativePeers.push(nativeSubscriber);
+      await withTimeout(nativeSubscriber.ready, 20000, "timed out waiting for Native SUBSCRIBE request");
       await page.evaluate(() => globalThis.__moqE2EStart());
     }
     try {
       if (mode === "subscribe") {
-        await Promise.race([
-          page.waitForFunction(
-            () => globalThis.__moqE2EResult?.status === "passed" ||
-              globalThis.__moqE2EResult?.status?.startsWith("failed:"),
-            undefined,
-            { timeout: 45000 },
-          ),
-          native.done,
-        ]);
+        await page.waitForFunction(
+          () => globalThis.__moqE2EResult?.status === "passed" ||
+            globalThis.__moqE2EResult?.status?.startsWith("failed:"),
+          undefined,
+          { timeout: 45000 },
+        );
       } else {
         await page.waitForFunction(
           () => globalThis.__moqE2EResult?.status === "publishing-done" ||
@@ -166,8 +171,8 @@ async function main() {
         );
         status = await page.evaluate(() => globalThis.__moqE2EResult?.status);
         if (status !== "publishing-done") throw new Error(`Browser publisher failed: ${status}`);
-        await withTimeout(native.success, 15000, "timed out waiting for Native PUBLISH_DONE");
-        await withTimeout(native.stop(), 5000, "timed out stopping Native subscriber");
+        await withTimeout(nativeSubscriber.success, 15000, "timed out waiting for Native PUBLISH_DONE");
+        await withTimeout(nativeSubscriber.stop(), 5000, "timed out stopping Native subscriber");
         await page.evaluate(() => globalThis.__moqE2EFinish());
         await page.waitForFunction(
           () => globalThis.__moqE2EResult?.status === "passed" ||
@@ -178,28 +183,36 @@ async function main() {
       }
     } catch (error) {
       const current = await page.evaluate(() => globalThis.__moqE2EResult?.status);
-      throw new Error(`browser ${mode} E2E stopped (status: ${current}): ${error.message}`);
+      const nativeOutput = nativePeers.map(peer => peer.output()).join("\n");
+      throw new Error(`browser ${mode} E2E stopped (status: ${current}): ${error.message}\nNative peer output:\n${nativeOutput}`);
     }
     status = await page.evaluate(() => globalThis.__moqE2EResult?.status);
-    if (status !== "passed") throw new Error(`Browser ${mode} failed: ${status}`);
-    if (mode === "subscribe") await native.stop();
-    else await native.done;
+    if (status !== "passed") {
+      const nativeOutput = nativePeers.map(peer => peer.output()).join("\n");
+      throw new Error(`Browser ${mode} failed: ${status}\nNative peer output:\n${nativeOutput}`);
+    }
+    for (const peer of nativePeers) {
+      if (peer.child.exitCode === null) await withTimeout(peer.stop(), 5000, "timed out stopping Native peer");
+      else await peer.done;
+    }
     console.log(
       mode === "subscribe"
         ? "Native publisher → browser subscriber passed: 4 Objects, 2 Groups, Properties, FIN, PUBLISH_DONE(2)"
         : "Browser publisher → Native subscriber passed: 4 Objects, 2 Groups, Properties, FIN, PUBLISH_DONE(2)",
     );
   } finally {
-    if (native && native.child.exitCode === null) {
-      native.child.kill("SIGTERM");
-      const exited = await Promise.race([
-        native.done.then(() => true, () => true),
-        new Promise(resolve => setTimeout(() => resolve(false), 3000)),
-      ]);
-      if (!exited) {
-        native.child.kill("SIGKILL");
-        await withTimeout(native.done, 5000, "Native child did not exit after SIGKILL")
+    for (const peer of nativePeers) {
+      if (peer.child.exitCode === null) {
+        peer.child.kill("SIGTERM");
+        const exited = await Promise.race([
+          peer.done.then(() => true, () => true),
+          new Promise(resolve => setTimeout(() => resolve(false), 3000)),
+        ]);
+        if (!exited) {
+          peer.child.kill("SIGKILL");
+          await withTimeout(peer.done, 5000, "Native child did not exit after SIGKILL")
           .catch(() => {});
+        }
       }
     }
     if (browser) await browser.close();
@@ -208,6 +221,6 @@ async function main() {
 }
 
 main().catch(error => {
-  console.error(`moq-rs browser E2E failed: ${error.message}`);
+  console.error(`moqx browser E2E failed: ${error.message}`);
   process.exitCode = 1;
 });
