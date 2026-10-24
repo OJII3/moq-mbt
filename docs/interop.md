@@ -5,10 +5,19 @@
 CI は Native moq-rs interop、ブラウザ WebTransport と raw QUIC の moq-rs
 SETUP、JavaScript / WebAssembly の check と test を実行する。Browser E2E probe は
 Native publisher → Browser subscriber と Browser publisher → Native subscriber の
-両方向で Objects、Properties、Group 終端、`PUBLISH_DONE` を確認する。
-moq5 は検証 relay として採用しない。Origin 対応と Origin 拒否検証は後続の
-[#104](https://github.com/OJII3/moq-mbt/issues/104) で扱うため、この
-interop check には含めない。
+両方向で複数 Group / Object、ID、payload、Properties、Object stream の FIN、
+`PUBLISH_DONE.stream_count` を確認する。moq5 は検証 relay として採用しない。
+
+検証ブラウザーは Nix flake lock が固定する Playwright Chromium と
+Playwright WebTransport 実装の組合せである。現在の lock では Playwright 1.64.1、
+Chrome for Testing 156.0.8078.4、`moqt-18`、Draft 18 を使う。workflow は実行時にも
+Playwright と Chrome のバージョンをログへ出す。一時 ECDSA P-256 証明書の正しい
+SHA-256 pin で接続し、誤った pin が拒否されることをブラウザーで確認する。
+
+Origin allowlist と不許可 Origin の拒否は #92 の対象外で、
+[#104](https://github.com/OJII3/moq-mbt/issues/104) で扱う。固定した moq-rs revision
+には allowlist がない。WebTransport server handshake の拒否応答自体は
+fake-transport test で確認する。
 
 Native QUIC の interop script は複数 Group/Object の publish/subscribe と `PUBLISH_DONE` を検証する。現在 pin している moq-rs は REQUEST_UPDATE、同一 track の Datagram と Subgroup stream の混在、Standalone FETCH を完了できず、Namespace withdrawal 後に session を閉じる。そのためこれらは relay interop 成功として扱わず、protocol state は Sans-I/O tests で確認する。
 
@@ -47,7 +56,9 @@ nix develop -c moon run --release --target native src/cmd/track_probe -- \
 
 ### Browser WebTransport 検証
 
-`nix develop -c bash scripts/check-moq-rs-dual.sh` は同じ moq-rs relay process に raw QUIC と WebTransport の接続を同時に開き、両方で Draft 18 SETUP を確認する。さらに一時 ECDSA P-256 証明書の正しい SHA-256 pin で接続し、誤った pin の拒否と Node smoke、Native/Browser 双方向 publish/subscribe を確認する。Native probe は loopback の一時自己署名証明書に限り `--insecure` を使う。
+`nix develop -c bash scripts/check-moq-rs-dual.sh` は同じ moq-rs relay process に raw QUIC と WebTransport の接続を同時に開き、両方で Draft 18 SETUP を確認する。さらに一時 ECDSA P-256 証明書の正しい SHA-256 pin で接続し、誤った pin の拒否と Native/Browser 双方向 publish/subscribe を確認する。各接続と E2E に期限を設定し、失敗時は relay / peer log を出力して子プロセスを終了する。Native probe は loopback の一時自己署名証明書に限り `--insecure` を使う。
+
+Browser WebTransport の connect timeout、遅延した open/write、方向ごとの FIN、送信失敗、close 後に保留 I/O が解放されることは `src/js_adapter/webtransport_test.mbt` の fake-transport tests で決定的に確認する。Datagram の peer-side decode / session routing は `src/session/client_update_test.mbt` で決定的に確認する。これは transport 上の配送確認ではない。固定 moq-rs relay では Native peer に Normal Object Datagram が届かず、実 relay での Datagram delivery は未検証として記録する。Datagram と Subgroup stream の同一 track 混在も relay が拒否するため、成功した interop と扱わない。
 
 ブラウザだけを手動確認する場合は `nix develop -c scripts/serve-moq-rs.sh` を実行する。表示される URL と証明書 hash を使い、`WebTransport` の `protocols` に `moqt-18` を指定する。
 
@@ -66,7 +77,7 @@ await transport.ready
 
 moq-rs の現在の CLI には WebTransport Origin allowlist がない。Origin 拒否は [#104](https://github.com/OJII3/moq-mbt/issues/104) の対象とする。証明書 pin の拒否は自動確認する。接続成功はリスナー起動や TLS 成立だけでは判断せず、WebTransport `ready` の後に MoQ Draft 18 SETUP を受信することまで確認する。
 
-CLI の末尾には Group 数と各 Group の Object 数を指定する。probe は `group-<group id>-object-<object id>` 形式の payload を生成し、subscriber 側で各 Group の Object ID 順と payload を照合する。SETUP はどちらのピアからも先に送れるため、probe は相手 SETUP の受信と、自分の SETUP の QUIC ACK の両方を待つ。続く PUBLISH_OK と SUBSCRIBE_OK も確認し、control request が relay を通ることを検証する。publisher は全 Subgroup stream の ACK 後に PUBLISH_DONE を送り、subscriber は Object 数、Group 終了、PUBLISH_DONE の stream 数がそろった時点で成功する。
+CLI の末尾には Group 数と各 Group の Object 数を指定する。probe は `group-<group id>-object-<object id>` 形式の payload を生成し、subscriber 側で各 Group の Object ID 順と payload を照合する。SETUP はどちらのピアからも先に送れるため、probe は相手 SETUP の受信と、自分の SETUP の QUIC ACK の両方を待つ。続く PUBLISH_OK と SUBSCRIBE_OK も確認し、control request が relay を通ることを検証する。publisher は全 Subgroup stream の ACK 後に PUBLISH_DONE を送り、subscriber は各 Object stream の FIN、Object 数、Group 終了、PUBLISH_DONE の stream 数がそろった時点で成功する。
 
 有限 batch の publisher は `PUBLISH_DONE(TRACK_ENDED)` で終了する。通常の subscriber probe は更新を送らないため、`finish_subscription_updates` で SUBSCRIBE の送信方向を先に FIN する。応答と Object の受信は継続し、PUBLISH_DONE の受信条件は緩和しない。購読更新を検証する lifecycle probe は更新方向を開いたままにする。
 

@@ -43,7 +43,7 @@ async test "WebTransport connection and session lifecycle" {
     Err(message) => fail(message)
   }
   match failed.ready().wait() {
-    Err(error) => assert_eq(error.message, "ready failed")
+    Err(error) => assert_eq(error.message, "server rejected request")
     Ok(_) => fail("a rejected ready promise was accepted")
   }
 
@@ -571,7 +571,7 @@ extern "js" fn ffi_install_fake_webtransport(
   #|       });
   #|       this.ready = pendingReady
   #|         ? new Promise(resolve => { this.resolveReady = resolve; })
-  #|         : rejectReady ? Promise.reject(new Error("ready failed")) : Promise.resolve();
+  #|         : rejectReady ? Promise.reject(new Error("server rejected request")) : Promise.resolve();
   #|       this.closed = new Promise((resolve, reject) => { this.resolveClosed = resolve; this.rejectClosed = reject; });
   #|       globalThis.__moqWtLast = this;
   #|     }
