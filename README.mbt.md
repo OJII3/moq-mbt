@@ -55,8 +55,11 @@ Native → Browser and Browser → Native publish/subscribe E2E. It checks Objec
 Properties, FIN, and `PUBLISH_DONE.stream_count`, and verifies rejection of an
 incorrect certificate pin. See [interop notes](docs/interop.md) for the pinned
 browser versions, tested scenarios, and limits. This validates Browser
-WebTransport ↔ moq-rs ↔ Native raw QUIC; Native WebTransport is a separate M6
-implementation.
+WebTransport ↔ moq-rs ↔ Native raw QUIC. The interop script also verifies a
+session peer test observes an Object Datagram separately from local send
+completion. The pinned relay does not forward Normal Object Datagrams, so relay
+Datagram delivery is documented as unverified. Native WebTransport is a
+separate M6 implementation.
 
 ## References
 

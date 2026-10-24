@@ -14,11 +14,10 @@ Chrome for Testing 156.0.8078.4、`moqt-18`、Draft 18 を使う。workflow は�
 Playwright と Chrome のバージョンをログへ出す。一時 ECDSA P-256 証明書の正しい
 SHA-256 pin で接続し、誤った pin が拒否されることをブラウザーで確認する。
 
-**Origin 拒否はまだ実 relay で検証していない。** 固定した moq-rs revision には
-Origin allowlist がなく、拒否動作を設定できない。WebTransport の server-side
-handshake rejection と close 後の adapter cleanup は fake-transport tests で検証し、
-実 relay の許可 / 不許可 Origin は [#104](https://github.com/OJII3/moq-mbt/issues/104)
-で追跡する。この制約を CI 成功として扱わない。
+Origin allowlist と不許可 Origin の拒否は #92 の対象外で、
+[#104](https://github.com/OJII3/moq-mbt/issues/104) で扱う。固定した moq-rs revision
+には allowlist がない。WebTransport server handshake の拒否応答自体は
+fake-transport test で確認する。
 
 Native QUIC の interop script は複数 Group/Object の publish/subscribe と `PUBLISH_DONE` を検証する。現在 pin している moq-rs は REQUEST_UPDATE、同一 track の Datagram と Subgroup stream の混在、Standalone FETCH を完了できず、Namespace withdrawal 後に session を閉じる。そのためこれらは relay interop 成功として扱わず、protocol state は Sans-I/O tests で確認する。
 
@@ -59,7 +58,7 @@ nix develop -c moon run --release --target native src/cmd/track_probe -- \
 
 `nix develop -c bash scripts/check-moq-rs-dual.sh` は同じ moq-rs relay process に raw QUIC と WebTransport の接続を同時に開き、両方で Draft 18 SETUP を確認する。さらに一時 ECDSA P-256 証明書の正しい SHA-256 pin で接続し、誤った pin の拒否と Native/Browser 双方向 publish/subscribe を確認する。各接続と E2E に期限を設定し、失敗時は relay / peer log を出力して子プロセスを終了する。Native probe は loopback の一時自己署名証明書に限り `--insecure` を使う。
 
-Browser WebTransport の connect timeout、遅延した open/write、方向ごとの FIN、送信失敗、close 後に保留 I/O が解放されることは `src/js_adapter/webtransport_test.mbt` の fake-transport tests で決定的に確認する。実 relay に対する Origin 拒否と Datagram peer interop はこの固定 relay では確認できない。Datagram session tests は peer から受信した sample を照合し、欠落・順序を成功条件にしない。moq-rs は同一 track の Datagram と Subgroup stream 混在を拒否するため、両者を同時に使う E2E は行わない。
+Browser WebTransport の connect timeout、遅延した open/write、方向ごとの FIN、送信失敗、close 後に保留 I/O が解放されることは `src/js_adapter/webtransport_test.mbt` の fake-transport tests で決定的に確認する。Datagram の peer-side decode / session routing は `src/session/client_update_test.mbt` で決定的に確認する。これは transport 上の配送確認ではない。固定 moq-rs relay では Native peer に Normal Object Datagram が届かず、実 relay での Datagram delivery は未検証として記録する。Datagram と Subgroup stream の同一 track 混在も relay が拒否するため、成功した interop と扱わない。
 
 ブラウザだけを手動確認する場合は `nix develop -c scripts/serve-moq-rs.sh` を実行する。表示される URL と証明書 hash を使い、`WebTransport` の `protocols` に `moqt-18` を指定する。
 

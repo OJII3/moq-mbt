@@ -52,7 +52,7 @@ Draft 18 では `MAX_REQUEST_ID` / `REQUESTS_BLOCKED` と独立したキャン�
 
 `scripts/check-interop.sh` は moq-rs relay に対する Draft 18 SETUP と複数 Group/Object の publish/subscribe、Native QUIC の証明書検証を確認する。`scripts/check-moq-rs-dual.sh` は同じ moq-rs endpoint に raw QUIC と WebTransport のクライアントを同時接続し、両方の SETUP、証明書 pin、Node 接続、Native/Browser 双方向 publish/subscribe を確認する。
 
-この E2E 経路は Browser WebTransport ↔ moq-rs relay ↔ Native raw QUIC である。Native WebTransport はこの経路に含まず、M6 の実装対象として扱う。moq-rs で未対応の Origin allowlist、Datagram と Subgroup stream の同一 track 混在、REQUEST_UPDATE、relay FETCH は成功した interop と記録しない。relay 制約と再現コマンドは [interop notes](interop.md) に記録する。
+この E2E 経路は Browser WebTransport ↔ moq-rs relay ↔ Native raw QUIC である。Native WebTransport はこの経路に含まず、M6 の実装対象として扱う。Origin allowlist / 拒否は #92 の対象外で [#104](https://github.com/OJII3/moq-mbt/issues/104) で扱う。moq-rs で未対応の Datagram と Subgroup stream の同一 track 混在、REQUEST_UPDATE、relay FETCH は成功した interop と記録しない。relay 制約と再現コマンドは [interop notes](interop.md) に記録する。
 
 ## 追加する構成
 

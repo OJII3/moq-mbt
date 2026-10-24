@@ -97,3 +97,26 @@ test "GOAWAY, pending update, cancellation, and late object events stay ordered"
   assert_eq(subscriber.receive(@session.StreamFinished(40)), Ok([]))
   assert_eq(subscriber.cancel_request(0UL), Ok([]))
 }
+
+///|
+test "Datagram send completion is separate from peer Object delivery" {
+  let publisher = publisher_started()
+  let object = update_datagram(1, 7, b"peer-sample")
+  assert_eq(
+    publisher.send_object_datagram(20, object),
+    Ok([
+      @session.SendDatagram(@protocol.encode_object_datagram(object).unwrap()),
+    ]),
+  )
+  assert_eq(publisher.receive(@session.DatagramSendComplete), Ok([]))
+
+  let peer = subscriber_started()
+  assert_eq(
+    peer.receive(
+      @session.DatagramReceived(
+        @protocol.encode_object_datagram(object).unwrap(),
+      ),
+    ),
+    Ok([@session.Notify(@session.ObjectDatagramReceived(0, object))]),
+  )
+}
