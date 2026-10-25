@@ -22,6 +22,9 @@ priv struct PublisherProbeState {
 }
 
 ///|
+extern "C" fn ffi_wait_for_start() -> Int32 = "getchar"
+
+///|
 fn start_probe_group(
   client : @transport.Client,
   session : @session.ClientSession,
@@ -257,12 +260,9 @@ fn handle_publisher_notices(
         eprintln(
           "PUBLISH update requested (request \{request_id}, update \{update_id}, stream \{stream})",
         )
-        if update_enables_forwarding(parameters) {
+        if update_enables_forwarding(parameters) && !state.wait_for_start {
           state.peer_ready = true
           eprintln("PUBLISH subscriber forwarding enabled")
-          if state.wait_for_start {
-            eprintln("E2E publisher released by relay subscription update")
-          }
         }
         let response : @protocol.RequestOkMessage = {
           parameters: [],
@@ -379,6 +379,7 @@ fn run_publisher(
     publish_done_sent: false,
   }
   handle_publisher_notices(client, session, notices, driver, state)
+  let mut waiting_for_start = false
   let deadline = @env.now() + 60000
   while @env.now() < deadline {
     match client.next_event(100) {
@@ -551,6 +552,13 @@ fn run_publisher(
         )
         handle_publisher_notices(client, session, notices, driver, state)
       }
+    }
+    if state.publish_accepted && wait_for_start && !waiting_for_start {
+      waiting_for_start = true
+      eprintln("PUBLISH accepted; waiting for subscriber readiness")
+      ignore(ffi_wait_for_start())
+      state.peer_ready = true
+      eprintln("Publisher released by subscriber readiness")
     }
     if state.publish_accepted &&
       state.peer_ready &&

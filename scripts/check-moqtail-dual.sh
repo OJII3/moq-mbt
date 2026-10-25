@@ -165,10 +165,12 @@ else
 fi
 run_probe datagram-smoke datagram-smoke 127.0.0.1 "$port" /interop --insecure
 
+mkfifo "$task_tmp/mixed-publisher.stdin"
+exec 3<>"$task_tmp/mixed-publisher.stdin"
 timeout --signal=TERM --kill-after=5s "${MOQTAIL_SCENARIO_TIMEOUT:-60}s" \
   moon run --release --target native src/cmd/track_probe -- \
-  publish 127.0.0.1 "$port" /interop interop datagram-mixed 3 2 --datagrams --insecure \
-  >"$task_tmp/mixed-publisher.log" 2>&1 &
+  publish 127.0.0.1 "$port" /interop interop datagram-mixed 3 2 --datagrams --insecure --wait-for-start \
+  <&3 >"$task_tmp/mixed-publisher.log" 2>&1 &
 scenario_publisher_pid=$!
 for ((attempt = 0; attempt < 100; attempt++)); do
   if grep -Fq 'PUBLISH request accepted' "$task_tmp/mixed-publisher.log"; then break; fi
@@ -187,15 +189,17 @@ timeout --signal=TERM --kill-after=5s "${MOQTAIL_SCENARIO_TIMEOUT:-60}s" \
   >"$task_tmp/mixed-subscriber.log" 2>&1 &
 scenario_subscriber_pid=$!
 for ((attempt = 0; attempt < 100; attempt++)); do
-  if grep -Fq 'SUBSCRIBE request sent' "$task_tmp/mixed-subscriber.log"; then break; fi
+  if grep -Fq 'SUBSCRIBE_OK received' "$task_tmp/mixed-subscriber.log"; then break; fi
   if ! kill -0 "$scenario_subscriber_pid" 2>/dev/null || ((attempt == 99)); then
     cat "$task_tmp/mixed-publisher.log" "$task_tmp/mixed-subscriber.log" >&2
     cat "$task_tmp/relay.log" >&2
-    echo "mixed-mode subscriber did not send SUBSCRIBE" >&2
+    echo "mixed-mode subscriber did not complete SUBSCRIBE" >&2
     exit 1
   fi
   sleep 0.1
 done
+printf '\n' >&3
+exec 3>&-
 if ! wait "$scenario_subscriber_pid"; then
   scenario_subscriber_pid=
   cat "$task_tmp/mixed-publisher.log" "$task_tmp/mixed-subscriber.log" >&2
