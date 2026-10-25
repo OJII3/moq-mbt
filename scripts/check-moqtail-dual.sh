@@ -17,7 +17,7 @@ cleanup() {
     fi
   done
   if [[ -n "$relay_pid" ]]; then
-    kill "$relay_pid" 2>/dev/null || true
+    kill -KILL "$relay_pid" 2>/dev/null || true
     wait "$relay_pid" 2>/dev/null || true
   fi
   rm -rf "$task_tmp"
