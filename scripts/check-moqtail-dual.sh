@@ -167,7 +167,7 @@ run_probe datagram-smoke datagram-smoke 127.0.0.1 "$port" /interop --insecure
 
 timeout --signal=TERM --kill-after=5s "${MOQTAIL_SCENARIO_TIMEOUT:-60}s" \
   moon run --release --target native src/cmd/track_probe -- \
-  publish 127.0.0.1 "$port" /interop interop datagram-mixed 3 2 --datagrams --insecure \
+  publish 127.0.0.1 "$port" /interop interop datagram-mixed 3 2 --datagrams --insecure --wait-for-start \
   >"$task_tmp/mixed-publisher.log" 2>&1 &
 scenario_publisher_pid=$!
 for ((attempt = 0; attempt < 100; attempt++)); do
