@@ -1,6 +1,16 @@
-name = "ojii3/moq-mbt"
+name = "OJII3/moq-mbt"
 
 version = "0.1.0"
+
+readme = "README.md"
+
+repository = "https://github.com/OJII3/moq-mbt"
+
+license = "MIT"
+
+keywords = [ "moq", "quic", "webtransport", "media" ]
+
+description = "Media over QUIC (MoQ) Transport implementation in MoonBit"
 
 source = "src"
 

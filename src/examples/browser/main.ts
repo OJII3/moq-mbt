@@ -20,7 +20,7 @@ form.addEventListener("submit", async event => {
   globalThis.__moqE2EStartPromise = new Promise(resolve => { startTransfer = resolve; });
   globalThis.__moqE2EFinishPromise = new Promise(resolve => { finishPublisher = resolve; });
   try {
-    await import("mbt:ojii3/moq-mbt/cmd/web_interop_probe");
+    await import("mbt:OJII3/moq-mbt/cmd/web_interop_probe");
   } catch (error) {
     status.textContent = `Could not load the sample bundle: ${String(error)}`;
   }

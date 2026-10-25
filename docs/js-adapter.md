@@ -1,7 +1,7 @@
 # JavaScript adapter boundary
 
 The JavaScript-only adapter lives in `src/js_adapter` and is published as
-`ojii3/moq-mbt/js_adapter`. Its package supports only the `js` target. The
+`OJII3/moq-mbt/js_adapter`. Its package supports only the `js` target. The
 native MsQuic transport and command packages remain native-only, while
 `protocol` and `session` stay independent of JavaScript packages.
 

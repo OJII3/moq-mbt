@@ -39,10 +39,10 @@ src/
 
 | Package | Description | Target |
 | :--- | :--- | :--- |
-| `ojii3/moq-mbt/protocol` | Framing, message serialization, and deserialization | Native, JS |
-| `ojii3/moq-mbt/session` | Session state machine and request lifecycles | Native, JS |
-| `ojii3/moq-mbt/transport` | Native QUIC client using `libmsquic` | Native |
-| `ojii3/moq-mbt/js_adapter` | WebTransport client adapter and browser session facade | JS (Browser) |
+| `OJII3/moq-mbt/protocol` | Framing, message serialization, and deserialization | Native, JS |
+| `OJII3/moq-mbt/session` | Session state machine and request lifecycles | Native, JS |
+| `OJII3/moq-mbt/transport` | Native QUIC client using `libmsquic` | Native |
+| `OJII3/moq-mbt/js_adapter` | WebTransport client adapter and browser session facade | JS (Browser) |
 
 ## Quick Start
 
@@ -116,12 +116,12 @@ A runnable publish/subscribe web sample is available in [`src/examples/browser`]
 
 ### MoonBit Dependency
 
-Add `ojii3/moq-mbt` to `moon.mod`:
+Add `OJII3/moq-mbt` to `moon.mod`:
 
 ```json
 {
   "import": {
-    "ojii3/moq-mbt": "0.1.0"
+    "OJII3/moq-mbt": "0.1.0"
   }
 }
 ```
