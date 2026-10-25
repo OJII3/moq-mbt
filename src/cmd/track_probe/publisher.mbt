@@ -1,5 +1,6 @@
 ///|
 priv struct PublisherProbeState {
+  track : @protocol.TrackName
   publish_stream : Int64
   mut done_stream : Int64?
   group_count : UInt64
@@ -11,6 +12,8 @@ priv struct PublisherProbeState {
   mut publish_after : UInt64
   mut peer_ready : Bool
   wait_for_start : Bool
+  wait_for_fetch : Bool
+  mut fetch_served : Bool
   datagrams : Bool
   mut datagram_send_count : UInt64
   mut datagram_send_final_count : UInt64
@@ -148,11 +151,91 @@ fn update_enables_forwarding(
 }
 
 ///|
+fn serve_publisher_fetch(
+  client : @transport.Client,
+  session : @session.ClientSession,
+  driver : SessionActionDriver,
+  state : PublisherProbeState,
+  request_id : UInt64,
+  track : @protocol.TrackName,
+  start : @protocol.FetchLocation,
+  end : @protocol.FetchLocation,
+) -> Unit raise {
+  guard track == state.track else {
+    fail("relay FETCH requested an unexpected track")
+  }
+  guard start.group <= end.group else {
+    fail("relay FETCH requested an invalid group range")
+  }
+  let response_end : @protocol.FetchLocation = {
+    group: end.group,
+    object: if end.object == 0UL {
+      state.objects_per_group.to_uint64()
+    } else {
+      end.object
+    },
+  }
+  ignore(
+    drive_session_result(
+      client,
+      session,
+      session.accept_fetch(request_id, {
+        end_of_track: 0,
+        end_location: response_end,
+        parameters: [],
+        track_properties: b"",
+      }),
+      driver,
+    ),
+  )
+  let mut group = start.group
+  while group <= end.group {
+    let first_object = if group == start.group { start.object } else { 0UL }
+    let end_object = if group == end.group && end.object != 0UL {
+      end.object
+    } else {
+      state.objects_per_group.to_uint64()
+    }
+    let mut object = first_object
+    while object < end_object {
+      ignore(
+        drive_session_result(
+          client,
+          session,
+          session.send_fetch_object(request_id, {
+            group_id: group,
+            subgroup_id: Some(0UL),
+            object_id: object,
+            publisher_priority: 128,
+            datagram_forwarding: false,
+            properties: probe_properties(),
+            payload: probe_payload(group, object),
+          }),
+          driver,
+        ),
+      )
+      object = object + 1UL
+    }
+    group = group + 1UL
+  }
+  ignore(
+    drive_session_result(
+      client,
+      session,
+      session.finish_fetch(request_id),
+      driver,
+    ),
+  )
+  state.fetch_served = true
+  eprintln("Served relay FETCH request")
+}
+
+///|
 fn handle_publisher_notices(
-  _client : @transport.Client,
-  _session : @session.ClientSession,
+  client : @transport.Client,
+  session : @session.ClientSession,
   notices : Array[@session.ClientSessionNotice],
-  _driver : SessionActionDriver,
+  driver : SessionActionDriver,
   state : PublisherProbeState,
 ) -> Unit raise {
   for notice in notices {
@@ -186,10 +269,10 @@ fn handle_publisher_notices(
           properties: [],
         }
         let (update_notices, _) = drive_session_result(
-          _client,
-          _session,
-          _session.accept_subscription_update(stream, update_id, response),
-          _driver,
+          client,
+          session,
+          session.accept_subscription_update(stream, update_id, response),
+          driver,
         )
         for update_notice in update_notices {
           match update_notice {
@@ -201,6 +284,10 @@ fn handle_publisher_notices(
           }
         }
       }
+      @session.FetchRequested(request_id, _, track, start, end, _) =>
+        serve_publisher_fetch(
+          client, session, driver, state, request_id, track, start, end,
+        )
       @session.ControlGoAwayReceived(uri, timeout_ms, request_id) =>
         eprintln(
           "session GOAWAY received (URI \{uri.length()} bytes, timeout \{timeout_ms} ms, request ID \{request_id})",
@@ -248,6 +335,7 @@ fn run_publisher(
   insecure : Bool,
   hold_open : Bool,
   wait_for_start : Bool,
+  wait_for_fetch : Bool,
 ) -> Unit raise {
   let track : @protocol.TrackName = {
     namespace_fields: [@utf8.encode(namespace_field)],
@@ -270,6 +358,7 @@ fn run_publisher(
     }
   }
   let state : PublisherProbeState = {
+    track,
     publish_stream: request_stream.unwrap(),
     done_stream: None,
     group_count: group_count.to_uint64(),
@@ -282,6 +371,8 @@ fn run_publisher(
     publish_after: 0UL,
     peer_ready: !wait_for_start,
     wait_for_start,
+    wait_for_fetch,
+    fetch_served: false,
     datagram_send_count: 0UL,
     datagram_send_final_count: 0UL,
     next_group_index: 0,
@@ -499,6 +590,7 @@ fn run_publisher(
     }
     if !state.publish_done_sent &&
       state.finished_stream_count == state.group_count &&
+      (!state.wait_for_fetch || state.fetch_served) &&
       (
         !state.datagrams ||
         state.datagram_send_final_count == state.datagram_send_count

@@ -8,7 +8,7 @@ Nix flake は Draft 18 対応の moqtail source commit `4cdcb42de6a887754779d74a
 
 CI の実 relay checks は Native QUIC の複数 Group/Object publish/subscribe、Browser WebTransport と raw QUIC の Draft 18 SETUP、証明書 pin の拒否、Native/Browser 双方向 publish/subscribe、Native `REQUEST_UPDATE` と独立 track の継続、Datagram / Subgroup 混在配送を確認する。
 
-standalone FETCH (`MOQTAIL_RUN_FETCH=1`)、joining FETCH (`MOQTAIL_RUN_JOINING_FETCH=1`)、Namespace withdrawal (`MOQTAIL_RUN_NAMESPACE=1`) は環境変数で個別に実行できる追加シナリオ。既定の relay interop では実行しない。
+standalone FETCH (`MOQTAIL_RUN_FETCH=1`) は live PUBLISH 中に実行し、probe publisher が relay からの upstream FETCH request に応答して Group 0–1 を返す。Namespace withdrawal (`MOQTAIL_RUN_NAMESPACE=1`) も個別に有効化できる。joining FETCH (`MOQTAIL_RUN_JOINING_FETCH=1`) は固定 moqtail で現在失敗する。relay が FETCH objects を返す一方、probe は unsupported range の拒否を期待している。いずれも既定の relay interop では実行しない。
 
 Playwright Chromium と WebTransport 実装も Nix flake で固定する。workflow は実行時にバージョンをログへ出す。一時 ECDSA P-256 証明書の正しい SHA-256 pin で接続し、誤った pin の拒否を確認する。Origin allowlist はこの relay 設定で有効にしていない。Origin 拒否は [#104](https://github.com/OJII3/moq-mbt/issues/104) で扱う。
 

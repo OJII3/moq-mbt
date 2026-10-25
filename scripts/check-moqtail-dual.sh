@@ -7,11 +7,10 @@ relay_pid=
 raw_pid=
 webtransport_pid=
 fetch_publisher_pid=
-fetch_subscriber_pid=
 scenario_subscriber_pid=
 scenario_publisher_pid=
 cleanup() {
-  for pid in "$scenario_subscriber_pid" "$scenario_publisher_pid" "$fetch_subscriber_pid" "$fetch_publisher_pid" "$webtransport_pid" "$raw_pid"; do
+  for pid in "$scenario_subscriber_pid" "$scenario_publisher_pid" "$fetch_publisher_pid" "$webtransport_pid" "$raw_pid"; do
     if [[ -n "$pid" ]]; then
       kill "$pid" 2>/dev/null || true
       wait "$pid" 2>/dev/null || true
@@ -119,38 +118,34 @@ run_probe() {
 }
 
 if [[ ${MOQTAIL_RUN_FETCH:-0} == 1 ]]; then
+  fetch_group_count=2
   timeout --signal=TERM --kill-after=5s "${MOQTAIL_SCENARIO_TIMEOUT:-60}s" \
     moon run --release --target native src/cmd/track_probe -- \
-    publish 127.0.0.1 "$port" /interop interop fetch-live 2 2 --insecure \
-    --hold-open --wait-for-start >"$task_tmp/fetch-publisher.log" 2>&1 &
+    publish 127.0.0.1 "$port" /interop interop fetch-live "$fetch_group_count" 2 \
+    --insecure --hold-open --wait-for-fetch >"$task_tmp/fetch-publisher.log" 2>&1 &
   fetch_publisher_pid=$!
-  timeout --signal=TERM --kill-after=5s "${MOQTAIL_SCENARIO_TIMEOUT:-60}s" \
-    moon run --release --target native src/cmd/track_probe -- \
-    subscribe 127.0.0.1 "$port" /interop interop fetch-live 2 2 --insecure \
-    >"$task_tmp/fetch-subscriber.log" 2>&1 &
-  fetch_subscriber_pid=$!
   for ((attempt = 0; attempt < 100; attempt++)); do
-    if grep -Fq 'SUBSCRIBE request sent' "$task_tmp/fetch-subscriber.log" &&
-      grep -Fq 'PUBLISH request accepted' "$task_tmp/fetch-publisher.log"; then break; fi
-    if ! kill -0 "$fetch_subscriber_pid" 2>/dev/null ||
-      ! kill -0 "$fetch_publisher_pid" 2>/dev/null || ((attempt == 99)); then
-      cat "$task_tmp/fetch-publisher.log" "$task_tmp/fetch-subscriber.log" >&2
+    if grep -Fq 'PUBLISH request accepted' "$task_tmp/fetch-publisher.log"; then break; fi
+    if ! kill -0 "$fetch_publisher_pid" 2>/dev/null || ((attempt == 99)); then
+      tail -n 30 "$task_tmp/fetch-publisher.log" >&2
       cat "$task_tmp/relay.log" >&2
-      echo "FETCH scenario peers did not become ready" >&2
+      echo "FETCH publisher did not register the track" >&2
       exit 1
     fi
     sleep 0.1
   done
-  if ! wait "$fetch_subscriber_pid"; then
-    fetch_subscriber_pid=
-    cat "$task_tmp/fetch-publisher.log" "$task_tmp/fetch-subscriber.log" >&2
-    cat "$task_tmp/relay.log" >&2
-    echo "FETCH scenario subscriber failed" >&2
+  echo "FETCH publisher is active; requesting groups 0 and 1"
+  if ! timeout --signal=TERM --kill-after=5s "${MOQTAIL_SCENARIO_TIMEOUT:-60}s" \
+    _build/native/release/build/cmd/track_probe/track_probe.exe \
+    fetch 127.0.0.1 "$port" /interop interop fetch-live 0 1 --insecure \
+    >"$task_tmp/fetch.log" 2>&1; then
+    cat "$task_tmp/fetch.log" >&2
+    tail -n 50 "$task_tmp/relay.log" >&2
+    tail -n 30 "$task_tmp/fetch-publisher.log" >&2
+    echo "moqtail standalone FETCH scenario failed" >&2
     exit 1
   fi
-  fetch_subscriber_pid=
-  cat "$task_tmp/fetch-publisher.log" "$task_tmp/fetch-subscriber.log"
-  run_probe fetch fetch 127.0.0.1 "$port" /interop interop fetch-live 0 1 --insecure
+  cat "$task_tmp/fetch.log"
   kill "$fetch_publisher_pid" 2>/dev/null || true
   wait "$fetch_publisher_pid" 2>/dev/null || true
   fetch_publisher_pid=
