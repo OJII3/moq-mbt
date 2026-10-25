@@ -3,7 +3,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_CORE_PATH);
 
 const [url, fingerprintBase64] = process.argv.slice(2);
 if (!url || !fingerprintBase64) {
-  throw new Error("usage: check-moqx-webtransport.cjs <url> <sha256-fingerprint-base64>");
+  throw new Error("usage: check-moqtail-webtransport.cjs <url> <sha256-fingerprint-base64>");
 }
 
 const fingerprint = Buffer.from(fingerprintBase64, "base64");

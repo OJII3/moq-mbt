@@ -3,7 +3,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 task_tmp=$(mktemp -d)
-relay_id=
+relay_pid=
 raw_pid=
 webtransport_pid=
 fetch_publisher_pid=
@@ -16,8 +16,9 @@ cleanup() {
       wait "$pid" 2>/dev/null || true
     fi
   done
-  if [[ -n "$relay_id" ]]; then
-    docker rm -f "$relay_id" >/dev/null 2>&1 || true
+  if [[ -n "$relay_pid" ]]; then
+    kill "$relay_pid" 2>/dev/null || true
+    wait "$relay_pid" 2>/dev/null || true
   fi
   rm -rf "$task_tmp"
 }
@@ -25,7 +26,7 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-port=${MOQX_PORT:-4443}
+port=${MOQTAIL_PORT:-4443}
 browser_e2e_bundle=_build/js/release/build/cmd/web_interop_probe/web_interop_probe.js
 moon build --release --target js src/cmd/web_interop_probe
 moon build --release --target native src/cmd/track_probe
@@ -37,28 +38,29 @@ openssl req -x509 -new -key "$task_tmp/key.pem" -sha256 -days 1 \
 fingerprint=$(openssl x509 -in "$task_tmp/cert.pem" -outform DER \
   | openssl dgst -sha256 -binary | openssl base64 -A)
 
-relay_config="$task_tmp/moqx.yaml"
-scripts/write-moqx-config.sh "$relay_config" "$port"
-relay_id=$(scripts/start-moqx-container.sh "$task_tmp" "$port")
+moqtail-relay --host 127.0.0.1 --port "$port" \
+  --cert-file "$task_tmp/cert.pem" --key-file "$task_tmp/key.pem" \
+  >"$task_tmp/relay.log" 2>&1 &
+relay_pid=$!
 for ((attempt = 0; attempt < 100; attempt++)); do
-  if [[ $(docker inspect --format '{{.State.Running}}' "$relay_id" 2>/dev/null) == true ]] && ((attempt >= 10)); then
+  if kill -0 "$relay_pid" 2>/dev/null && ((attempt >= 10)); then
     break
   fi
-  if [[ $(docker inspect --format '{{.State.Running}}' "$relay_id" 2>/dev/null) != true ]] || ((attempt == 99)); then
-    docker logs "$relay_id" >&2 || true
-    echo "moqx failed to start; check the UDP port and certificate configuration" >&2
+  if ! kill -0 "$relay_pid" 2>/dev/null || ((attempt == 99)); then
+    cat "$task_tmp/relay.log" >&2 || true
+    echo "moqtail failed to start; check the UDP port and certificate configuration" >&2
     exit 1
   fi
   sleep 0.1
 done
 
-echo "Checking raw QUIC and WebTransport concurrently on moqx 127.0.0.1:$port"
-timeout --signal=TERM --kill-after=5s "${MOQX_SETUP_TIMEOUT:-45}s" \
+echo "Checking raw QUIC and WebTransport concurrently on moqtail 127.0.0.1:$port"
+timeout --signal=TERM --kill-after=5s "${MOQTAIL_SETUP_TIMEOUT:-45}s" \
   moon run --release --target native src/cmd/setup_probe -- \
   127.0.0.1 "$port" /interop --insecure >"$task_tmp/raw.log" 2>&1 &
 raw_pid=$!
-timeout --signal=TERM --kill-after=5s "${MOQX_SETUP_TIMEOUT:-45}s" \
-  node scripts/check-moqx-webtransport.cjs \
+timeout --signal=TERM --kill-after=5s "${MOQTAIL_SETUP_TIMEOUT:-45}s" \
+  node scripts/check-moqtail-webtransport.cjs \
   "https://127.0.0.1:$port/interop" "$fingerprint" \
   >"$task_tmp/webtransport.log" 2>&1 &
 webtransport_pid=$!
@@ -76,7 +78,7 @@ else
 fi
 cat "$task_tmp/raw.log" "$task_tmp/webtransport.log"
 if ((status != 0)); then
-  docker logs "$relay_id" >&2
+  cat "$task_tmp/relay.log" >&2
   echo "raw QUIC log:" >&2
   cat "$task_tmp/raw.log" >&2
   echo "WebTransport log:" >&2
@@ -85,18 +87,18 @@ if ((status != 0)); then
 fi
 
 
-if [[ -n ${MOQX_E2E_MODES:-} ]]; then
-  read -r -a e2e_modes <<<"$MOQX_E2E_MODES"
+if [[ -n ${MOQTAIL_E2E_MODES:-} ]]; then
+  read -r -a e2e_modes <<<"$MOQTAIL_E2E_MODES"
 else
   e2e_modes=(subscribe publish)
 fi
 for mode in "${e2e_modes[@]}"; do
-  timeout --signal=TERM --kill-after=5s "${MOQX_BROWSER_TIMEOUT:-120}s" \
-    node scripts/check-moqx-browser-e2e.cjs \
+  timeout --signal=TERM --kill-after=5s "${MOQTAIL_BROWSER_TIMEOUT:-120}s" \
+    node scripts/check-moqtail-browser-e2e.cjs \
     "$mode" "https://127.0.0.1:$port/interop" "$fingerprint" "$port" \
     "$browser_e2e_bundle" || {
       echo "Browser E2E ($mode) failed; relay log:" >&2
-      docker logs "$relay_id" >&2
+      cat "$task_tmp/relay.log" >&2
       exit 1
     }
 done
@@ -104,24 +106,24 @@ done
 run_probe() {
   local name=$1
   shift
-  timeout --signal=TERM --kill-after=5s "${MOQX_SCENARIO_TIMEOUT:-60}s" \
+  timeout --signal=TERM --kill-after=5s "${MOQTAIL_SCENARIO_TIMEOUT:-60}s" \
     moon run --release --target native src/cmd/track_probe -- \
     "$@" >"$task_tmp/$name.log" 2>&1 || {
       cat "$task_tmp/$name.log" >&2
-      docker logs "$relay_id" >&2
-      echo "moqx $name scenario failed" >&2
+      cat "$task_tmp/relay.log" >&2
+      echo "moqtail $name scenario failed" >&2
       exit 1
     }
   cat "$task_tmp/$name.log"
 }
 
-if [[ ${MOQX_RUN_FETCH:-0} == 1 ]]; then
-  timeout --signal=TERM --kill-after=5s "${MOQX_SCENARIO_TIMEOUT:-60}s" \
+if [[ ${MOQTAIL_RUN_FETCH:-0} == 1 ]]; then
+  timeout --signal=TERM --kill-after=5s "${MOQTAIL_SCENARIO_TIMEOUT:-60}s" \
     moon run --release --target native src/cmd/track_probe -- \
     publish 127.0.0.1 "$port" /interop interop fetch-live 2 2 --insecure \
     --hold-open --wait-for-start >"$task_tmp/fetch-publisher.log" 2>&1 &
   fetch_publisher_pid=$!
-  timeout --signal=TERM --kill-after=5s "${MOQX_SCENARIO_TIMEOUT:-60}s" \
+  timeout --signal=TERM --kill-after=5s "${MOQTAIL_SCENARIO_TIMEOUT:-60}s" \
     moon run --release --target native src/cmd/track_probe -- \
     subscribe 127.0.0.1 "$port" /interop interop fetch-live 2 2 --insecure \
     >"$task_tmp/fetch-subscriber.log" 2>&1 &
@@ -132,7 +134,7 @@ if [[ ${MOQX_RUN_FETCH:-0} == 1 ]]; then
     if ! kill -0 "$fetch_subscriber_pid" 2>/dev/null ||
       ! kill -0 "$fetch_publisher_pid" 2>/dev/null || ((attempt == 99)); then
       cat "$task_tmp/fetch-publisher.log" "$task_tmp/fetch-subscriber.log" >&2
-      docker logs "$relay_id" >&2
+      cat "$task_tmp/relay.log" >&2
       echo "FETCH scenario peers did not become ready" >&2
       exit 1
     fi
@@ -141,7 +143,7 @@ if [[ ${MOQX_RUN_FETCH:-0} == 1 ]]; then
   if ! wait "$fetch_subscriber_pid"; then
     fetch_subscriber_pid=
     cat "$task_tmp/fetch-publisher.log" "$task_tmp/fetch-subscriber.log" >&2
-    docker logs "$relay_id" >&2
+    cat "$task_tmp/relay.log" >&2
     echo "FETCH scenario subscriber failed" >&2
     exit 1
   fi
@@ -152,22 +154,22 @@ if [[ ${MOQX_RUN_FETCH:-0} == 1 ]]; then
   wait "$fetch_publisher_pid" 2>/dev/null || true
   fetch_publisher_pid=
 else
-  echo "Skipping standalone FETCH; set MOQX_RUN_FETCH=1 to probe the pinned relay"
+  echo "Skipping standalone FETCH; set MOQTAIL_RUN_FETCH=1 to probe the pinned relay"
 fi
 run_probe lifecycle lifecycle 127.0.0.1 "$port" /interop --insecure
-if [[ ${MOQX_RUN_NAMESPACE:-0} == 1 ]]; then
+if [[ ${MOQTAIL_RUN_NAMESPACE:-0} == 1 ]]; then
   run_probe namespace namespace 127.0.0.1 "$port" /interop --insecure
 else
-  echo "Skipping Namespace withdrawal; set MOQX_RUN_NAMESPACE=1 to probe the pinned relay"
+  echo "Skipping Namespace withdrawal; set MOQTAIL_RUN_NAMESPACE=1 to probe the pinned relay"
 fi
-if [[ ${MOQX_RUN_JOINING_FETCH:-0} == 1 ]]; then
+if [[ ${MOQTAIL_RUN_JOINING_FETCH:-0} == 1 ]]; then
   run_probe joining-fetch joining-fetch 127.0.0.1 "$port" /interop --insecure
 else
-  echo "Skipping joining FETCH; set MOQX_RUN_JOINING_FETCH=1 to probe the pinned relay"
+  echo "Skipping joining FETCH; set MOQTAIL_RUN_JOINING_FETCH=1 to probe the pinned relay"
 fi
 run_probe datagram-smoke datagram-smoke 127.0.0.1 "$port" /interop --insecure
 
-timeout --signal=TERM --kill-after=5s "${MOQX_SCENARIO_TIMEOUT:-60}s" \
+timeout --signal=TERM --kill-after=5s "${MOQTAIL_SCENARIO_TIMEOUT:-60}s" \
   moon run --release --target native src/cmd/track_probe -- \
   subscribe 127.0.0.1 "$port" /interop interop datagram-mixed 3 2 --datagrams --insecure \
   >"$task_tmp/mixed-subscriber.log" 2>&1 &
@@ -176,24 +178,24 @@ for ((attempt = 0; attempt < 100; attempt++)); do
   if grep -Fq 'SUBSCRIBE request sent' "$task_tmp/mixed-subscriber.log"; then break; fi
   if ! kill -0 "$scenario_subscriber_pid" 2>/dev/null || ((attempt == 99)); then
     cat "$task_tmp/mixed-subscriber.log" >&2
-    docker logs "$relay_id" >&2
+    cat "$task_tmp/relay.log" >&2
     echo "mixed-mode subscriber did not send SUBSCRIBE" >&2
     exit 1
   fi
   sleep 0.1
 done
-if ! timeout --signal=TERM --kill-after=5s "${MOQX_SCENARIO_TIMEOUT:-60}s" \
+if ! timeout --signal=TERM --kill-after=5s "${MOQTAIL_SCENARIO_TIMEOUT:-60}s" \
   moon run --release --target native src/cmd/track_probe -- \
   publish 127.0.0.1 "$port" /interop interop datagram-mixed 3 2 --datagrams --insecure \
   >"$task_tmp/mixed-publisher.log" 2>&1; then
   cat "$task_tmp/mixed-publisher.log" "$task_tmp/mixed-subscriber.log" >&2
-  docker logs "$relay_id" >&2
+  cat "$task_tmp/relay.log" >&2
   exit 1
 fi
 if ! wait "$scenario_subscriber_pid"; then
   scenario_subscriber_pid=
   cat "$task_tmp/mixed-publisher.log" "$task_tmp/mixed-subscriber.log" >&2
-  docker logs "$relay_id" >&2
+  cat "$task_tmp/relay.log" >&2
   echo "Datagram and Subgroup mixed-mode scenario failed" >&2
   exit 1
 fi

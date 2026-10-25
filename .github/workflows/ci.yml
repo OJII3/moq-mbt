@@ -90,8 +90,8 @@ jobs:
       - name: Update MoonBit package registry
         run: nix develop -c moon update
 
-      - name: Run Native moqx interoperability
+      - name: Run Native moqtail interoperability
         run: nix develop -c bash scripts/check-interop.sh
 
       - name: Run raw QUIC and WebTransport interoperability
-        run: nix develop -c bash scripts/check-moqx-dual.sh
+        run: nix develop -c bash scripts/check-moqtail-dual.sh

@@ -5,7 +5,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_CORE_PATH);
 const [mode, url, fingerprintBase64, nativePort, bundlePath] = process.argv.slice(2);
 if (!mode || !["subscribe", "publish"].includes(mode) || !url || !fingerprintBase64 || !nativePort || !bundlePath) {
   throw new Error(
-    "usage: check-moqx-browser-e2e.cjs <subscribe|publish> <url> <sha256-fingerprint-base64> <native-port> <bundle-path>",
+    "usage: check-moqtail-browser-e2e.cjs <subscribe|publish> <url> <sha256-fingerprint-base64> <native-port> <bundle-path>",
   );
 }
 
@@ -83,7 +83,7 @@ async function runNative(role, mode) {
 async function main() {
   const originServer = createServer((_request, response) => {
     response.writeHead(200, { "content-type": "text/html" });
-    response.end("<!doctype html><title>moqx browser interop</title>");
+    response.end("<!doctype html><title>moqtail browser interop</title>");
   });
   await new Promise(resolve => originServer.listen(0, "127.0.0.1", resolve));
   let browser;
@@ -221,6 +221,6 @@ async function main() {
 }
 
 main().catch(error => {
-  console.error(`moqx browser E2E failed: ${error.message}`);
+  console.error(`moqtail browser E2E failed: ${error.message}`);
   process.exitCode = 1;
 });

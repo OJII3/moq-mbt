@@ -50,9 +50,9 @@ request stream の ID 索引は session の存続中 tombstone として保持�
 
 Draft 18 では `MAX_REQUEST_ID` / `REQUESTS_BLOCKED` と独立したキャンセルメッセージが削除されている。購読更新には `REQUEST_UPDATE`、キャンセルには開いているストリーム方向への `STOP_SENDING` / reset を使う。仕様の [§3.3.2](https://www.ietf.org/archive/id/draft-ietf-moq-transport-18.html#section-3.3.2)、[§10.9](https://www.ietf.org/archive/id/draft-ietf-moq-transport-18.html#section-10.9)、[Appendix A.2](https://www.ietf.org/archive/id/draft-ietf-moq-transport-18.html#appendix-A.2) を参照する。
 
-`scripts/check-interop.sh` は moqx relay に対する Draft 18 SETUP と複数 Group/Object の publish/subscribe、Native QUIC の証明書検証を確認する。`scripts/check-moqx-dual.sh` は同じ moqx endpoint に raw QUIC と WebTransport のクライアントを同時接続し、両方の SETUP、証明書 pin、Node 接続、Native/Browser 双方向 publish/subscribe を確認する。
+`scripts/check-interop.sh` は moqtail relay に対する Draft 18 SETUP と複数 Group/Object の publish/subscribe、Native QUIC の証明書検証を確認する。`scripts/check-moqtail-dual.sh` は同じ moqtail endpoint に raw QUIC と WebTransport のクライアントを同時接続し、両方の SETUP、証明書 pin、Node 接続、Native/Browser 双方向 publish/subscribe を確認する。
 
-この E2E 経路は Browser WebTransport ↔ moqx relay ↔ Native raw QUIC である。Native WebTransport はこの経路に含まず、M6 の実装対象として扱う。Origin allowlist / 拒否は #92 の対象外で [#104](https://github.com/OJII3/moq-mbt/issues/104) で扱う。moqx の revision で未完了となる FETCH、Namespace withdrawal などは成功した interop と記録しない。relay 制約と再現コマンドは [interop notes](interop.md) に記録する。
+この E2E 経路は Browser WebTransport ↔ moqtail relay ↔ Native raw QUIC である。Native WebTransport はこの経路に含まず、M6 の実装対象として扱う。Origin allowlist / 拒否は #92 の対象外で [#104](https://github.com/OJII3/moq-mbt/issues/104) で扱う。FETCH、Namespace withdrawal などの追加シナリオは [interop notes](interop.md) のコマンドで個別に確認する。
 
 ## 追加する構成
 
@@ -64,4 +64,4 @@ src/
 └── transport/
 ```
 
-MsQuic アダプターと JavaScript WebTransport アダプターを用意している。アダプターはそれぞれ `transport` と `js_adapter` にあり、`session` の送受信アクションとトランスポートのイベントを変換する。Browser E2E probe は moqx を介した Native/Browser 双方向 publish/subscribe を検証する。relay 上で未完了の scenarios は Sans-I/O tests で protocol state を確認する。
+MsQuic アダプターと JavaScript WebTransport アダプターを用意している。アダプターはそれぞれ `transport` と `js_adapter` にあり、`session` の送受信アクションとトランスポートのイベントを変換する。Browser E2E probe は moqtail を介した Native/Browser 双方向 publish/subscribe を検証する。relay interop の追加シナリオは [interop notes](interop.md) に記録する。
