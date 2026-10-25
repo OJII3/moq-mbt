@@ -349,7 +349,9 @@ pub fn run_namespace(
     )
   }
   if state.subscriber_session_ended {
-    println("moqtail closed the subscriber session after Namespace cancellation")
+    println(
+      "moqtail closed the subscriber session after Namespace cancellation",
+    )
     fail(
       "Namespace cancellation closed the session before independent track continuation",
     )
