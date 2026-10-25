@@ -28,7 +28,7 @@ printf '\nWebTransport URL: https://127.0.0.1:%s/interop\n' "$port"
 printf 'WebTransport protocol offer: moqt-18\n'
 
 relay_config="$task_tmp/moqx.yaml"
-scripts/write-moqx-config.sh "$relay_config" "$port" "$task_tmp/cert.pem" "$task_tmp/key.pem"
+scripts/write-moqx-config.sh "$relay_config" "$port"
 relay_id=$(scripts/start-moqx-container.sh "$task_tmp" "$port")
 for ((attempt = 0; attempt < 100; attempt++)); do
   if [[ $(docker inspect --format '{{.State.Running}}' "$relay_id" 2>/dev/null) == true ]] && ((attempt >= 10)); then
