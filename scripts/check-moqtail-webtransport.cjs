@@ -41,13 +41,8 @@ function decodeVi64(bytes, offset) {
   return { value, offset: offset + width };
 }
 
-function encodeClientSetup(url) {
-  const parsed = new URL(url);
-  const options = [
-    [1n, Buffer.from(parsed.pathname)],
-    [5n, Buffer.from(parsed.host)],
-    [7n, Buffer.from("moq-mbt/0.1.0")],
-  ];
+function encodeClientSetup() {
+  const options = [[7n, Buffer.from("moq-mbt/0.1.0")]];
   const payload = [];
   let previousKind = 0n;
   for (const [kind, value] of options) {
@@ -157,7 +152,7 @@ async function main() {
       ]);
       await transport.close();
       return { protocol, serverSetup };
-    }, { url, fingerprint: [...fingerprint], setup: [...encodeClientSetup(new URL(url))] });
+    }, { url, fingerprint: [...fingerprint], setup: [...encodeClientSetup()] });
     result.options = decodeServerSetup(Buffer.from(result.serverSetup));
 
     if (result.protocol !== "moqt-18") {

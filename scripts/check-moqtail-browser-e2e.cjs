@@ -27,7 +27,7 @@ async function runNative(role, mode) {
   const args = [
     role, "127.0.0.1", nativePort, "/interop", "interop", trackName, "2", "2", "--insecure",
   ];
-  if (role === "publish") args.push("--hold-open", "--wait-for-start");
+  if (role === "publish") args.push("--hold-open");
   const child = spawn("_build/native/release/build/cmd/track_probe/track_probe.exe", args, {
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -128,12 +128,12 @@ async function main() {
     if (status !== readyStatus) throw new Error(`Browser ${mode} failed before Native peer start: ${status}`);
 
     if (mode === "subscribe") {
-      nativeSubscriber = await runNative("subscribe", mode);
-      nativePeers.push(nativeSubscriber);
-      await withTimeout(nativeSubscriber.ready, 20000, "timed out waiting for Native SUBSCRIBE request");
       const nativePublisher = await runNative("publish", mode);
       nativePeers.push(nativePublisher);
       await withTimeout(nativePublisher.ready, 20000, "timed out waiting for Native PUBLISH acceptance");
+      nativeSubscriber = await runNative("subscribe", mode);
+      nativePeers.push(nativeSubscriber);
+      await withTimeout(nativeSubscriber.ready, 20000, "timed out waiting for Native SUBSCRIBE request");
       await page.evaluate(() => globalThis.__moqE2EStart());
       try {
         await page.waitForFunction(

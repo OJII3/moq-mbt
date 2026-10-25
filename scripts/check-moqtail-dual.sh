@@ -9,8 +9,9 @@ webtransport_pid=
 fetch_publisher_pid=
 fetch_subscriber_pid=
 scenario_subscriber_pid=
+scenario_publisher_pid=
 cleanup() {
-  for pid in "$scenario_subscriber_pid" "$fetch_subscriber_pid" "$fetch_publisher_pid" "$webtransport_pid" "$raw_pid"; do
+  for pid in "$scenario_subscriber_pid" "$scenario_publisher_pid" "$fetch_subscriber_pid" "$fetch_publisher_pid" "$webtransport_pid" "$raw_pid"; do
     if [[ -n "$pid" ]]; then
       kill "$pid" 2>/dev/null || true
       wait "$pid" 2>/dev/null || true
@@ -171,27 +172,35 @@ run_probe datagram-smoke datagram-smoke 127.0.0.1 "$port" /interop --insecure
 
 timeout --signal=TERM --kill-after=5s "${MOQTAIL_SCENARIO_TIMEOUT:-60}s" \
   moon run --release --target native src/cmd/track_probe -- \
+  publish 127.0.0.1 "$port" /interop interop datagram-mixed 3 2 --datagrams --insecure \
+  >"$task_tmp/mixed-publisher.log" 2>&1 &
+scenario_publisher_pid=$!
+for ((attempt = 0; attempt < 100; attempt++)); do
+  if grep -Fq 'PUBLISH request accepted' "$task_tmp/mixed-publisher.log"; then break; fi
+  if ! kill -0 "$scenario_publisher_pid" 2>/dev/null || ((attempt == 99)); then
+    cat "$task_tmp/mixed-publisher.log" >&2
+    cat "$task_tmp/relay.log" >&2
+    echo "mixed-mode publisher did not register the track" >&2
+    exit 1
+  fi
+  sleep 0.1
+done
+
+timeout --signal=TERM --kill-after=5s "${MOQTAIL_SCENARIO_TIMEOUT:-60}s" \
+  moon run --release --target native src/cmd/track_probe -- \
   subscribe 127.0.0.1 "$port" /interop interop datagram-mixed 3 2 --datagrams --insecure \
   >"$task_tmp/mixed-subscriber.log" 2>&1 &
 scenario_subscriber_pid=$!
 for ((attempt = 0; attempt < 100; attempt++)); do
   if grep -Fq 'SUBSCRIBE request sent' "$task_tmp/mixed-subscriber.log"; then break; fi
   if ! kill -0 "$scenario_subscriber_pid" 2>/dev/null || ((attempt == 99)); then
-    cat "$task_tmp/mixed-subscriber.log" >&2
+    cat "$task_tmp/mixed-publisher.log" "$task_tmp/mixed-subscriber.log" >&2
     cat "$task_tmp/relay.log" >&2
     echo "mixed-mode subscriber did not send SUBSCRIBE" >&2
     exit 1
   fi
   sleep 0.1
 done
-if ! timeout --signal=TERM --kill-after=5s "${MOQTAIL_SCENARIO_TIMEOUT:-60}s" \
-  moon run --release --target native src/cmd/track_probe -- \
-  publish 127.0.0.1 "$port" /interop interop datagram-mixed 3 2 --datagrams --insecure \
-  >"$task_tmp/mixed-publisher.log" 2>&1; then
-  cat "$task_tmp/mixed-publisher.log" "$task_tmp/mixed-subscriber.log" >&2
-  cat "$task_tmp/relay.log" >&2
-  exit 1
-fi
 if ! wait "$scenario_subscriber_pid"; then
   scenario_subscriber_pid=
   cat "$task_tmp/mixed-publisher.log" "$task_tmp/mixed-subscriber.log" >&2
@@ -200,4 +209,12 @@ if ! wait "$scenario_subscriber_pid"; then
   exit 1
 fi
 scenario_subscriber_pid=
+if ! wait "$scenario_publisher_pid"; then
+  scenario_publisher_pid=
+  cat "$task_tmp/mixed-publisher.log" >&2
+  cat "$task_tmp/relay.log" >&2
+  echo "Datagram and Subgroup mixed-mode publisher failed" >&2
+  exit 1
+fi
+scenario_publisher_pid=
 cat "$task_tmp/mixed-publisher.log" "$task_tmp/mixed-subscriber.log"

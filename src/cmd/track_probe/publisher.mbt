@@ -280,7 +280,7 @@ fn run_publisher(
     finished_stream_count: 0UL,
     publish_accepted: false,
     publish_after: 0UL,
-    peer_ready: false,
+    peer_ready: !wait_for_start,
     wait_for_start,
     datagram_send_count: 0UL,
     datagram_send_final_count: 0UL,

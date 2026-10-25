@@ -64,27 +64,28 @@ if ! moon run --release --target native src/cmd/setup_probe -- \
 fi
 cat "$task_tmp/probe.log"
 
+# moqtail rejects subscriptions until a publisher has registered the track.
 moon run --release --target native src/cmd/track_probe -- \
-  subscribe 127.0.0.1 "$port" /interop interop multi-object 3 2 --insecure \
-  >"$task_tmp/subscriber.log" 2>&1 &
-subscriber_pid=$!
+  publish 127.0.0.1 "$port" /interop interop multi-object 3 2 --insecure \
+  >"$task_tmp/publisher.log" 2>&1 &
+publisher_pid=$!
 for ((attempt = 0; attempt < 100; attempt++)); do
-  if grep -Fq 'SUBSCRIBE request sent' "$task_tmp/subscriber.log"; then
+  if grep -Fq 'PUBLISH request accepted' "$task_tmp/publisher.log"; then
     break
   fi
-  if ! kill -0 "$subscriber_pid" 2>/dev/null || ((attempt == 99)); then
-    cat "$task_tmp/subscriber.log" >&2
+  if ! kill -0 "$publisher_pid" 2>/dev/null || ((attempt == 99)); then
+    cat "$task_tmp/publisher.log" >&2
     cat "$task_tmp/relay.log" >&2
-    echo "subscriber did not send SUBSCRIBE" >&2
+    echo "publisher did not register the track" >&2
     exit 1
   fi
   sleep 0.1
 done
 
 moon run --release --target native src/cmd/track_probe -- \
-  publish 127.0.0.1 "$port" /interop interop multi-object 3 2 --insecure \
-  >"$task_tmp/publisher.log" 2>&1 &
-publisher_pid=$!
+  subscribe 127.0.0.1 "$port" /interop interop multi-object 3 2 --insecure \
+  >"$task_tmp/subscriber.log" 2>&1 &
+subscriber_pid=$!
 if ! wait "$subscriber_pid"; then
   subscriber_pid=
   cat "$task_tmp/publisher.log" "$task_tmp/subscriber.log" >&2
