@@ -51,7 +51,7 @@ pub fn run_fetch(
         }
         @session.FetchResponseAccepted(id, _, response) if id == request_id => {
           guard response.end_location.group == end_group &&
-            response.end_location.object == 0UL else {
+            response.end_location.object == 2UL else {
             fail(
               "FETCH_OK end location did not match the requested terminal group",
             )

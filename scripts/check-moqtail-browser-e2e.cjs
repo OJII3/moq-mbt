@@ -5,7 +5,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_CORE_PATH);
 const [mode, url, fingerprintBase64, nativePort, bundlePath] = process.argv.slice(2);
 if (!mode || !["subscribe", "publish"].includes(mode) || !url || !fingerprintBase64 || !nativePort || !bundlePath) {
   throw new Error(
-    "usage: check-moqx-browser-e2e.cjs <subscribe|publish> <url> <sha256-fingerprint-base64> <native-port> <bundle-path>",
+    "usage: check-moqtail-browser-e2e.cjs <subscribe|publish> <url> <sha256-fingerprint-base64> <native-port> <bundle-path>",
   );
 }
 
@@ -27,7 +27,7 @@ async function runNative(role, mode) {
   const args = [
     role, "127.0.0.1", nativePort, "/interop", "interop", trackName, "2", "2", "--insecure",
   ];
-  if (role === "publish") args.push("--hold-open", "--wait-for-start");
+  if (role === "publish") args.push("--hold-open");
   const child = spawn("_build/native/release/build/cmd/track_probe/track_probe.exe", args, {
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -83,7 +83,7 @@ async function runNative(role, mode) {
 async function main() {
   const originServer = createServer((_request, response) => {
     response.writeHead(200, { "content-type": "text/html" });
-    response.end("<!doctype html><title>moqx browser interop</title>");
+    response.end("<!doctype html><title>moqtail browser interop</title>");
   });
   await new Promise(resolve => originServer.listen(0, "127.0.0.1", resolve));
   let browser;
@@ -128,12 +128,12 @@ async function main() {
     if (status !== readyStatus) throw new Error(`Browser ${mode} failed before Native peer start: ${status}`);
 
     if (mode === "subscribe") {
-      nativeSubscriber = await runNative("subscribe", mode);
-      nativePeers.push(nativeSubscriber);
-      await withTimeout(nativeSubscriber.ready, 20000, "timed out waiting for Native SUBSCRIBE request");
       const nativePublisher = await runNative("publish", mode);
       nativePeers.push(nativePublisher);
       await withTimeout(nativePublisher.ready, 20000, "timed out waiting for Native PUBLISH acceptance");
+      nativeSubscriber = await runNative("subscribe", mode);
+      nativePeers.push(nativeSubscriber);
+      await withTimeout(nativeSubscriber.ready, 20000, "timed out waiting for Native SUBSCRIBE request");
       await page.evaluate(() => globalThis.__moqE2EStart());
       try {
         await page.waitForFunction(
@@ -221,6 +221,6 @@ async function main() {
 }
 
 main().catch(error => {
-  console.error(`moqx browser E2E failed: ${error.message}`);
+  console.error(`moqtail browser E2E failed: ${error.message}`);
   process.exitCode = 1;
 });

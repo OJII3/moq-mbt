@@ -19,7 +19,7 @@ Media over QUIC (MoQ) Transport implementation in [MoonBit](https://www.moonbitl
   - **Native**: Built with [`libmsquic`](https://github.com/microsoft/msquic) for raw QUIC networking.
   - **Browser**: Built for JavaScript / WebAssembly environments via the browser's WebTransport API.
 - **Sans-I/O Architecture**: The protocol encoding/decoding and session state machine are decoupled from network I/O, timers, and platform runtimes.
-- **Interoperability**: Native QUIC ↔ moqx ↔ Browser WebTransport interoperability is covered by the pinned relay probes.
+- **Interoperability**: Native QUIC ↔ moqtail ↔ Browser WebTransport interoperability is covered by the pinned relay probes.
 
 ## Packages
 
@@ -98,10 +98,10 @@ moon run src/cmd/track_probe -- datagram-smoke 127.0.0.1 4443 /interop --insecur
 
 ### Browser Sample
 
-Start the local `moqx` relay in one terminal:
+Start the local `moqtail` relay in one terminal:
 
 ```sh
-nix develop -c scripts/serve-moqx.sh
+nix develop -c scripts/serve-moqtail.sh
 ```
 
 Keep it running. The script prints the relay URL and its base64 SHA-256
@@ -175,7 +175,7 @@ moon test
 bash scripts/check-interop.sh
 
 # Native ↔ Browser dual interop check
-bash scripts/check-moqx-dual.sh
+bash scripts/check-moqtail-dual.sh
 ```
 
 ## Documentation
@@ -189,5 +189,5 @@ bash scripts/check-moqx-dual.sh
 
 - [MoQ Transport Draft 18](https://datatracker.ietf.org/doc/draft-ietf-moq-transport/18/)
 - [openmoq/moq5](https://github.com/openmoq/moq5)
-- [openmoq/moqx](https://github.com/openmoq/moqx)
+- [moqtail/moqtail](https://github.com/moqtail/moqtail)
 - [libmsquic](https://github.com/microsoft/msquic)

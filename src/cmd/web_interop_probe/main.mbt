@@ -326,55 +326,6 @@ async fn run_publisher(
         ffi_set_status("published")
         ffi_wait_to_start().wait()
         let stream = publish_stream.unwrap()
-        let mut forwarding_enabled = false
-        while !forwarding_enabled {
-          match client.next_notice().wait() {
-            Some(
-              @session.SubscriptionUpdateRequested(
-                _,
-                update_id,
-                update_stream,
-                _,
-                parameters
-              )
-            ) => {
-              for parameter in parameters {
-                if parameter.kind == 0x10 {
-                  match parameter.value {
-                    @protocol.Byte(value) if value != 0 =>
-                      forwarding_enabled = true
-                    _ => ()
-                  }
-                }
-              }
-              let response : @protocol.RequestOkMessage = {
-                parameters: [],
-                properties: [],
-              }
-              match
-                client
-                .session()
-                .accept_subscription_update(update_stream, update_id, response) {
-                Ok(actions) => client.dispatch(actions)
-                Err(_) => {
-                  ffi_set_status("failed to accept subscription update")
-                  return
-                }
-              }
-            }
-            Some(@session.SessionEnded(_)) => {
-              ffi_set_status("peer ended while awaiting subscription update")
-              return
-            }
-            None => {
-              ffi_set_status(
-                "failed: WebTransport session ended awaiting subscription update",
-              )
-              return
-            }
-            _ => ()
-          }
-        }
         if !publish_group(client, stream, 0UL) ||
           !publish_group(client, stream, 1UL) {
           return

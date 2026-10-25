@@ -6,8 +6,8 @@
     flake-parts.url = "github:hercules-ci/flake-parts";
     moonbit-overlay.url = "github:moonbit-community/moonbit-overlay";
     moonbit-overlay.inputs.nixpkgs.follows = "nixpkgs";
-    moqx-src = {
-      url = "github:openmoq/moqx/f3df41db408a2edbd580a01b97d0e56505ae080e";
+    moqtail-src = {
+      url = "github:moqtail/moqtail/4cdcb42de6a887754779d74a06c0bf4a8716e5cb";
       flake = false;
     };
   };
@@ -21,6 +21,21 @@
 
       perSystem = { pkgs, system, self', ... }:
       let
+        moqtailRelay = pkgs.rustPlatform.buildRustPackage {
+          pname = "moqtail-relay";
+          version =
+            (builtins.fromTOML (
+              builtins.readFile "${inputs.moqtail-src}/apps/relay/Cargo.toml"
+            )).package.version;
+          src = inputs.moqtail-src;
+          cargoLock.lockFile = "${inputs.moqtail-src}/Cargo.lock";
+          cargoBuildFlags = [ "--package" "relay" ];
+          cargoTestFlags = [ "--package" "relay" ];
+          postInstall = ''
+            ln -s $out/bin/relay $out/bin/moqtail-relay
+          '';
+          meta.mainProgram = "moqtail-relay";
+        };
         playwrightBrowsers = pkgs.playwright-driver.browsers.override {
           withChromium = true;
           withFirefox = false;
@@ -33,18 +48,19 @@
           overlays = [ inputs.moonbit-overlay.overlays.default ];
         };
 
+        packages.moqtail-relay = moqtailRelay;
+
         devShells.default = pkgs.mkShell {
           packages = [
-            pkgs.docker
             pkgs.libmsquic
             pkgs.moonbit-bin.latest
+            moqtailRelay
             pkgs.nodejs
             pkgs.playwright-driver
             playwrightBrowsers
             pkgs.openssl
           ];
           shellHook = ''
-            export MOQX_IMAGE="ghcr.io/openmoq/moqx@sha256:8f0c393c2c4fed0e260c876ab7fcb93a68f97000e3e693d2850ebf0a627eb096"
             export PLAYWRIGHT_CORE_PATH="${pkgs.playwright-driver}"
             export PLAYWRIGHT_BROWSERS_PATH="${playwrightBrowsers}"
           '';

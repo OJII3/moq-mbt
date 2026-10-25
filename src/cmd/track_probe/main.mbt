@@ -15,6 +15,7 @@ fn main {
   let mut datagrams = false
   let mut hold_open = false
   let mut wait_for_start = false
+  let mut wait_for_fetch = false
   for arg in args {
     if arg == "--insecure" {
       insecure = true
@@ -24,6 +25,8 @@ fn main {
       hold_open = true
     } else if arg == "--wait-for-start" {
       wait_for_start = true
+    } else if arg == "--wait-for-fetch" {
+      wait_for_fetch = true
     }
   }
   let expected_args = match args[1] {
@@ -32,7 +35,8 @@ fn main {
       (if insecure { 1 } else { 0 }) +
       (if datagrams { 1 } else { 0 }) +
       (if hold_open { 1 } else { 0 }) +
-      (if wait_for_start { 1 } else { 0 })
+      (if wait_for_start { 1 } else { 0 }) +
+      (if wait_for_fetch { 1 } else { 0 })
     "subscribe" =>
       9 + (if insecure { 1 } else { 0 }) + (if datagrams { 1 } else { 0 })
     "lifecycle" => if insecure { 6 } else { 5 }
@@ -44,7 +48,7 @@ fn main {
   }
   guard args.length() == expected_args else {
     eprintln(
-      "usage: track_probe publish HOST PORT PATH NAMESPACE TRACK GROUPS OBJECTS_PER_GROUP [--datagrams] [--insecure] [--hold-open] [--wait-for-start]\n       track_probe subscribe HOST PORT PATH NAMESPACE TRACK GROUPS OBJECTS_PER_GROUP [--datagrams] [--insecure]\n       track_probe lifecycle HOST PORT PATH [--insecure]\n       track_probe namespace HOST PORT PATH [--insecure]\n       track_probe datagram-smoke HOST PORT PATH [--insecure]\n       track_probe fetch HOST PORT PATH NAMESPACE TRACK START_GROUP END_GROUP [--insecure]\n       track_probe joining-fetch HOST PORT PATH [--insecure]",
+      "usage: track_probe publish HOST PORT PATH NAMESPACE TRACK GROUPS OBJECTS_PER_GROUP [--datagrams] [--insecure] [--hold-open] [--wait-for-start] [--wait-for-fetch]\n       track_probe subscribe HOST PORT PATH NAMESPACE TRACK GROUPS OBJECTS_PER_GROUP [--datagrams] [--insecure]\n       track_probe lifecycle HOST PORT PATH [--insecure]\n       track_probe namespace HOST PORT PATH [--insecure]\n       track_probe datagram-smoke HOST PORT PATH [--insecure]\n       track_probe fetch HOST PORT PATH NAMESPACE TRACK START_GROUP END_GROUP [--insecure]\n       track_probe joining-fetch HOST PORT PATH [--insecure]",
     )
     exit(2)
     return
@@ -90,6 +94,7 @@ fn main {
           insecure,
           hold_open,
           wait_for_start,
+          wait_for_fetch,
         )
       }
       "subscribe" => {
