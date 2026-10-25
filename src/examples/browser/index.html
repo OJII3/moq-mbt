@@ -40,49 +40,6 @@
     <h2>Status</h2>
     <pre id="status">Not connected</pre>
     <p>The sample sends two Groups with two Objects each, including Properties and normal stream completion.</p>
-    <script>
-      const form = document.querySelector("#connection-form");
-      const status = document.querySelector("#status");
-      const startButton = document.querySelector("#start");
-      const finishButton = document.querySelector("#finish");
-      let startTransfer;
-      let finishPublisher;
-
-      form.addEventListener("submit", event => {
-        event.preventDefault();
-        form.querySelector("button[type=submit]").disabled = true;
-        const certificateHash = document.querySelector("#certificate-hash").value.trim();
-        globalThis.__moqE2EConfig = {
-          uri: document.querySelector("#url").value,
-          certificateHash: certificateHash ? [...Uint8Array.from(atob(certificateHash), c => c.charCodeAt(0))] : [],
-          mode: document.querySelector("#mode").value,
-          namespace: document.querySelector("#namespace").value,
-          track: document.querySelector("#track").value,
-        };
-        globalThis.__moqE2EResult = { status: "loading" };
-        globalThis.__moqE2EStartPromise = new Promise(resolve => { startTransfer = resolve; });
-        globalThis.__moqE2EFinishPromise = new Promise(resolve => { finishPublisher = resolve; });
-        const bundle = document.createElement("script");
-        bundle.src = "/_build/js/release/build/cmd/web_interop_probe/web_interop_probe.js";
-        bundle.onerror = () => { status.textContent = "Could not load the sample bundle. Build it with the command in examples/browser/README.md."; };
-        document.body.append(bundle);
-      });
-
-      startButton.addEventListener("click", () => {
-        startButton.disabled = true;
-        startTransfer?.();
-      });
-      finishButton.addEventListener("click", () => {
-        finishButton.disabled = true;
-        finishPublisher?.();
-      });
-      const statusTimer = setInterval(() => {
-        const current = globalThis.__moqE2EResult?.status ?? "Not connected";
-        status.textContent = current;
-        startButton.disabled = !(current === "ready" || current === "published" || current === "subscribed");
-        finishButton.disabled = current !== "publishing-done";
-        if (current === "passed" || current.startsWith("failed:")) clearInterval(statusTimer);
-      }, 200);
-    </script>
+    <script type="module" src="/main.ts"></script>
   </body>
 </html>
