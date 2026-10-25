@@ -7,6 +7,9 @@ workflows:
         - 'actions/checkout@v7.0.1'
         - 'cachix/cachix-action@v17'
         - 'cachix/install-nix-action@31.11.3'
+    '.github/workflows/release.yml':
+        - 'actions/checkout@v7.0.1'
+        - 'cachix/install-nix-action@31.11.3'
 dependencies:
     'actions/checkout@v7.0.1':
         ref: 'v7.0.1'
