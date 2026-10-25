@@ -55,7 +55,8 @@ if moon run --release --target native src/cmd/setup_probe -- \
   exit 1
 fi
 
-# Disable validation only for this temporary, loopback-only test relay.
+# Disable validation only for this temporary test relay; its probe connects over
+# loopback.
 if ! moon run --release --target native src/cmd/setup_probe -- \
   127.0.0.1 "$port" /interop --insecure >"$task_tmp/probe.log" 2>&1; then
   cat "$task_tmp/probe.log" >&2

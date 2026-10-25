@@ -27,7 +27,7 @@ nix develop -c npm ci
 nix develop -c bash scripts/check-moqtail-dual.sh
 ~~~
 
-Native interop と dual transport のスクリプトはいずれも `moqtail` を 127.0.0.1:4443 で起動する。実行中の relay がある場合は終了してから実行する。ポートは `MOQTAIL_PORT` で変更できる。Native QUIC の証明書検証失敗を確認したあと、自己署名証明書の検証を loopback probe に限って無効にする。
+`check-interop.sh`、`check-moqtail-dual.sh`、`serve-moqtail.sh` が起動する moqtail relay は全インターフェースに bind する。固定版の UDP socket は IPv4/IPv6 dual-stack の `[::]:port` で、`--host 127.0.0.1` は起動ログに表示する接続先を変えるだけで bind address を制限しない。scripts の probe は loopback 経由で接続するが、socket は loopback に限定されない。外部から到達できるかはホストの firewall/network 設定に依存する。実行中の relay がある場合は終了してから実行する。ポートは `MOQTAIL_PORT` で変更できる。Native QUIC の証明書検証失敗を確認したあと、自己署名証明書の検証を loopback probe に限って無効にする。
 
 手動確認では2つの terminal を使う。まず publisher を起動し、次に別の terminal から subscriber を起動する。両方に同じ relay、path、namespace、track を指定する。
 
@@ -41,7 +41,7 @@ nix develop -c moon run --release --target native src/cmd/track_probe -- \
   subscribe 127.0.0.1 4443 /interop interop multi-object 2 2 --insecure
 ~~~
 
-`check-interop.sh` は一時証明書を生成し、moqtail relay を `127.0.0.1:4443` で起動して Native QUIC の Draft 18 interop を確認する。自己署名証明書が既定の Native 証明書検証で拒否されることを確認した後、loopback probe に限って `--insecure` を使う。終了時に publisher、relay、一時ファイルを削除する。
+`check-interop.sh` は一時証明書を生成し、moqtail relay を `MOQTAIL_PORT`（既定値 `4443`）の UDP port で全インターフェースに bind して Native QUIC の Draft 18 interop を確認する。自己署名証明書が既定の Native 証明書検証で拒否されることを確認した後、loopback probe に限って `--insecure` を使う。終了時に publisher、relay、一時ファイルを削除する。
 
 ### Browser WebTransport 検証
 
