@@ -5,14 +5,17 @@ the JS adapter to connect over WebTransport and exchange two Groups with two
 Objects each. Open the page in two tabs with the same URL, namespace, and track;
 choose Publish in one tab and Subscribe in the other.
 
-Build the sample from the repository root:
+Start the Vite development server from this directory:
 
 ```sh
-moon build --release --target js src/cmd/web_interop_probe
-python3 -m http.server 8000
+npm install
+npm run dev
 ```
 
-Open <http://localhost:8000/src/examples/browser/>. `localhost` is a secure
+The MoonBit Vite plugin builds the JavaScript target and watches for changes.
+To create a production bundle, run `npm run build`.
+
+Open the URL printed by Vite. `localhost` is a secure
 context for browser WebTransport. The relay URL must use HTTPS. For a local
 relay with a self-signed certificate, enter its SHA-256 certificate hash in
 base64; the adapter passes that hash through the browser's certificate pinning
