@@ -23,11 +23,14 @@
       let
         moqtailRelay = pkgs.rustPlatform.buildRustPackage {
           pname = "moqtail-relay";
-          version = "0.15.0";
+          version =
+            (builtins.fromTOML (
+              builtins.readFile "${inputs.moqtail-src}/apps/relay/Cargo.toml"
+            )).package.version;
           src = inputs.moqtail-src;
           cargoLock.lockFile = "${inputs.moqtail-src}/Cargo.lock";
           cargoBuildFlags = [ "--package" "relay" ];
-          doCheck = false;
+          cargoTestFlags = [ "--package" "relay" ];
           postInstall = ''
             ln -s $out/bin/relay $out/bin/moqtail-relay
           '';
