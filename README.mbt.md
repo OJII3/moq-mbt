@@ -98,19 +98,32 @@ moon run src/cmd/track_probe -- datagram-smoke 127.0.0.1 4443 /interop --insecur
 
 ### Browser Sample
 
-A runnable publish/subscribe web sample is available in [`src/examples/browser`](src/examples/browser).
+Start the local `moqx` relay in one terminal:
 
-1. Build the web client:
-   ```sh
-   moon build --release --target js src/cmd/web_interop_probe
-   ```
+```sh
+nix develop -c scripts/serve-moqx.sh
+```
 
-2. Start a local HTTP server:
-   ```sh
-   python3 -m http.server 8000
-   ```
+Keep it running. The script prints the relay URL and its base64 SHA-256
+certificate hash.
 
-3. Open `http://localhost:8000/src/examples/browser/` in a browser supporting WebTransport.
+In another terminal, start the browser sample:
+
+```sh
+cd src/examples/browser
+npm install
+npm run dev
+```
+
+Open the URL printed by Vite. In two tabs, enter the relay URL and certificate
+hash printed by the relay script, using the same namespace and track in both.
+Choose **Publish** in one tab and **Subscribe** in the other, then select
+**Connect** in each. When the publisher shows `published` and the subscriber
+shows `ready`, select **Start transfer** in both tabs. The subscriber should
+finish with `passed`; select **Close publisher** after the publisher shows
+`publishing-done`. Press Ctrl+C in the relay terminal to stop and remove it.
+
+See the [browser sample guide](src/examples/browser/README.md) for more details.
 
 ## Usage
 
@@ -126,22 +139,31 @@ Add `OJII3/moq-mbt` to `moon.mod`:
 }
 ```
 
-### Browser Client Example
+### Browser Client API
+
+In MoonBit code built for JavaScript, create the SETUP value and pass it with
+the relay URL to `browser_connect`:
 
 ```moonbit
-let setup : @session.Setup = ...
-let client = @js_adapter.browser_connect("https://example.com/moq", setup)
-client.start()
-
-// Dispatch session actions
-let actions = client.session().subscribe(...)
-client.dispatch(actions)
-
-// Receive session notices
-let notice = client.next_notice()
+let setup : @protocol.Setup = { options: [] }
+let client_result = @js_adapter.browser_connect(
+  "https://relay.example/interop",
+  setup,
+)
 ```
 
-See [`src/js_adapter/README.md`](src/js_adapter/README.md) for buffer limits, datagram capability, and certificate pinning details.
+`browser_connect` returns a `Result`; handle its error before using the client.
+Call `start()` to begin the session, then consume `next_notice()` until you
+receive `HandshakeComplete` before making requests through `session()`. Pass
+each request's returned actions to `dispatch()`, and continue reading notices
+to observe its result. `next_notice()` resolves to `None` when the session ends.
+Call `close(code, reason)` when the application is done. For an explicitly
+trusted certificate hash, use `browser_connect_with_certificate_hashes`.
+
+See [`src/js_adapter/README.md`](src/js_adapter/README.md) for the complete
+adapter API, certificate pinning, browser requirements, buffer limits, and
+datagram behavior. The [browser sample guide](src/examples/browser/README.md)
+shows the API in a runnable publish/subscribe flow.
 
 ## Testing
 
