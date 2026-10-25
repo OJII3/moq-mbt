@@ -98,19 +98,39 @@ moon run src/cmd/track_probe -- datagram-smoke 127.0.0.1 4443 /interop --insecur
 
 ### Browser Sample
 
-A runnable publish/subscribe web sample is available in [`src/examples/browser`](src/examples/browser).
+A runnable publish/subscribe page is available in [`src/examples/browser`](src/examples/browser).
+It uses Vite and the MoonBit Vite plugin to build the browser client; you do not
+need to build the JavaScript target separately.
 
-1. Build the web client:
-   ```sh
-   moon build --release --target js src/cmd/web_interop_probe
-   ```
+From the repository root, start the development server:
 
-2. Start a local HTTP server:
-   ```sh
-   python3 -m http.server 8000
-   ```
+```sh
+cd src/examples/browser
+npm install
+npm run dev
+```
 
-3. Open `http://localhost:8000/src/examples/browser/` in a browser supporting WebTransport.
+Open the URL printed by Vite in a browser that supports WebTransport. `localhost`
+is a secure context, but the relay URL entered on the page must still use HTTPS.
+The page does not start a relay: its default URL is
+`https://127.0.0.1:4443/interop`, so change it if your relay is elsewhere.
+Provide a reachable relay that supports MoQ Transport Draft 18 and negotiates
+the `moqt-18` WebTransport subprotocol.
+
+To try a transfer, open the page in two tabs. Enter the same relay URL,
+namespace, and track in both tabs, choose **Publish** in one and **Subscribe**
+in the other, then select **Connect** in each. Wait for the publisher to show
+`published` and the subscriber to show `ready`, then select **Start transfer**
+in each tab. The publisher sends two Groups
+with two Objects each; the subscriber should finish with the `passed` status.
+When the publisher shows `publishing-done`, select **Close publisher** to close
+its connection.
+
+For a relay using a self-signed certificate, enter its SHA-256 certificate hash
+in base64 in the optional certificate field. Leave the field empty when the
+certificate is trusted by the browser. Run `npm run build` to create a
+production bundle. See the [browser sample guide](src/examples/browser/README.md)
+for more details.
 
 ## Usage
 
@@ -126,22 +146,31 @@ Add `OJII3/moq-mbt` to `moon.mod`:
 }
 ```
 
-### Browser Client Example
+### Browser Client API
+
+In MoonBit code built for JavaScript, create the SETUP value and pass it with
+the relay URL to `browser_connect`:
 
 ```moonbit
-let setup : @session.Setup = ...
-let client = @js_adapter.browser_connect("https://example.com/moq", setup)
-client.start()
-
-// Dispatch session actions
-let actions = client.session().subscribe(...)
-client.dispatch(actions)
-
-// Receive session notices
-let notice = client.next_notice()
+let setup : @protocol.Setup = { options: [] }
+let client_result = @js_adapter.browser_connect(
+  "https://relay.example/interop",
+  setup,
+)
 ```
 
-See [`src/js_adapter/README.md`](src/js_adapter/README.md) for buffer limits, datagram capability, and certificate pinning details.
+`browser_connect` returns a `Result`; handle its error before using the client.
+Call `start()` to begin the session, then consume `next_notice()` until you
+receive `HandshakeComplete` before making requests through `session()`. Pass
+each request's returned actions to `dispatch()`, and continue reading notices
+to observe its result. `next_notice()` resolves to `None` when the session ends.
+Call `close(code, reason)` when the application is done. For an explicitly
+trusted certificate hash, use `browser_connect_with_certificate_hashes`.
+
+See [`src/js_adapter/README.md`](src/js_adapter/README.md) for the complete
+adapter API, certificate pinning, browser requirements, buffer limits, and
+datagram behavior. The [browser sample guide](src/examples/browser/README.md)
+shows the API in a runnable publish/subscribe flow.
 
 ## Testing
 
