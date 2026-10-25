@@ -1,5 +1,5 @@
 // Generated using `moon info`, DON'T EDIT IT
-package "ojii3/moq-mbt/protocol"
+package "OJII3/moq-mbt/protocol"
 
 import {
   "moonbitlang/core/debug",

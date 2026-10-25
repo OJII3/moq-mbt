@@ -1,0 +1,57 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@31.11.3
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check release version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          version="${RELEASE_TAG#v}"
+          test "$RELEASE_TAG" = "v$version"
+          test "$(sed -n 's/^version = "\(.*\)"/\1/p' moon.mod)" = "$version"
+
+      - name: Check Mooncakes credentials
+        env:
+          MOONCAKES_TOKEN: ${{ secrets.MOONCAKES_TOKEN }}
+        run: test -n "$MOONCAKES_TOKEN"
+
+      - name: Update MoonBit dependencies
+        run: nix develop --command moon update
+
+      - name: Verify project
+        run: |
+          nix develop --command moon fmt --check
+          nix develop --command moon check --target native --deny-warn
+          nix develop --command moon test --target native
+
+      - name: Publish to Mooncakes
+        env:
+          MOONCAKES_TOKEN: ${{ secrets.MOONCAKES_TOKEN }}
+        run: |
+          mkdir -p "$HOME/.moon"
+          jq -n --arg username "OJII3" --arg token "$MOONCAKES_TOKEN" \
+            '{username: $username, token: $token}' > "$HOME/.moon/credentials.json"
+          nix develop --command moon publish
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --generate-notes

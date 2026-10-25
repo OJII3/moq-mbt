@@ -1,4 +1,4 @@
 import {
-  "ojii3/moq-mbt/protocol",
+  "OJII3/moq-mbt/protocol",
   "moonbitlang/core/debug",
 }

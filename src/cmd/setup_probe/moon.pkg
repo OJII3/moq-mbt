@@ -1,8 +1,8 @@
 supported_targets = "native"
 
 import {
-  "ojii3/moq-mbt/session",
-  "ojii3/moq-mbt/transport",
+  "OJII3/moq-mbt/session",
+  "OJII3/moq-mbt/transport",
   "moonbitlang/core/encoding/utf8",
   "moonbitlang/core/env",
   "moonbitlang/core/string",

@@ -1,5 +1,5 @@
 // Generated using `moon info`, DON'T EDIT IT
-package "ojii3/moq-mbt/cmd/track_probe"
+package "OJII3/moq-mbt/cmd/track_probe"
 
 // Values
 pub fn run_fetch(String, Int, String, String, String, UInt64, UInt64, Bool) -> Unit raise
