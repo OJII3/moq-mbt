@@ -338,7 +338,7 @@ fn WebTransportSessionDriver::receive_event(
   self.driver.receive(event)
   self.flush()
   match event {
-    @session.PeerClosed(_) | @session.TransportFailed(_) => self.finish()
+    @session.PeerClosed(_) => self.finish()
     _ => ()
   }
 }

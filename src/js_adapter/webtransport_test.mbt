@@ -396,6 +396,7 @@ async test "WebTransport connection and session lifecycle" {
   }
   webtransport_session_driver_routes_setup()
   webtransport_session_driver_reports_close()
+  webtransport_session_driver_finishes_after_callback_failure()
 }
 
 ///|
@@ -499,6 +500,31 @@ async fn webtransport_session_driver_reports_close() -> Unit {
 }
 
 ///|
+async fn webtransport_session_driver_finishes_after_callback_failure() -> Unit {
+  ffi_install_fake_webtransport("moqt-18", false, false)
+  ffi_fake_reject_stream_opens()
+  let connection = match
+    @js_adapter.webtransport_connect("moqt://example.test/open-failure") {
+    Ok(connection) => connection
+    Err(message) => fail(message)
+  }
+  let session = match
+    @session.ClientSession::new(@session.Draft18, { options: [], }) {
+    Ok(session) => session
+    Err(_) => fail("session creation failed")
+  }
+  let driver = @js_adapter.WebTransportSessionDriver::new(connection, session)
+  assert_true(driver.start() is Ok(_))
+  match driver.next_notice().wait() {
+    Some(@session.SessionEnded(@session.Transport(-1L))) => ()
+    Some(_) => fail("stream open failure did not end the session")
+    None => fail("stream open failure ended without a SessionEnded notice")
+  }
+  assert_true(session.start() is Err(@session.SessionClosed))
+  assert_true(driver.next_notice().wait() is None)
+}
+
+///|
 extern "js" fn ffi_install_fake_webtransport(
   protocol : String,
   pending_ready : Bool,
@@ -508,6 +534,7 @@ extern "js" fn ffi_install_fake_webtransport(
   #|   globalThis.__moqWtLast = null;
   #|   globalThis.__moqWtDelayOpen = false;
   #|   globalThis.__moqWtDelayWrites = false;
+  #|   globalThis.__moqWtRejectStreamOpens = false;
   #|   globalThis.__moqWtDatagramsEnabled = true;
   #|   globalThis.__moqWtRejectDatagramWrites = false;
   #|   globalThis.__moqWtDelayDatagramWrites = false;
@@ -549,9 +576,9 @@ extern "js" fn ffi_install_fake_webtransport(
   #|         };
   #|       }
   #|       globalThis.__moqWtDatagramsEnabled = true;
-  #|       this.createUnidirectionalStream = () => Promise.resolve(
-  #|         new WritableStream({ write: chunk => { this.uniWrites = chunk; } }),
-  #|       );
+  #|       this.createUnidirectionalStream = () => globalThis.__moqWtRejectStreamOpens
+  #|         ? Promise.reject(new Error("stream open failed"))
+  #|         : Promise.resolve(new WritableStream({ write: chunk => { this.uniWrites = chunk; } }));
   #|       this.createBidirectionalStream = () => new Promise(resolve => {
   #|         let readableController;
   #|         const readable = new ReadableStream({
@@ -711,6 +738,10 @@ extern "js" fn ffi_fake_abort_error_code() -> Int32 =
 ///|
 extern "js" fn ffi_fake_delay_stream_opens() -> Unit =
   #| () => { globalThis.__moqWtDelayOpen = true; }
+
+///|
+extern "js" fn ffi_fake_reject_stream_opens() -> Unit =
+  #| () => { globalThis.__moqWtRejectStreamOpens = true; }
 
 ///|
 extern "js" fn ffi_fake_resolve_pending_stream_opens() -> Unit =

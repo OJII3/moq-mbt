@@ -36,8 +36,10 @@ pub(all) enum TransportWriteOutcome {
 ///
 /// Implementations must invoke the completion callback exactly once for every
 /// `Accepted` action, either before returning or later. They must not invoke it
-/// for `Retry` or `Fatal`. The callback may run from a transport thread or
-/// promise; the driver serializes the resulting session events.
+/// for `Retry` or `Fatal`. `SessionDriver` is single-thread confined: its public
+/// methods and completion callbacks must run serially on the same thread. A
+/// transport that receives a completion on another thread must marshal the
+/// callback invocation back to the driver's thread.
 pub(open) trait SessionTransport {
   fn open_stream(
     Self,
@@ -66,8 +68,9 @@ pub(all) struct SessionDriverConfig {
 ///
 /// The driver keeps accepted actions in flight, retries temporarily refused
 /// actions without blocking unrelated streams, and turns transport completions
-/// back into session events. Adapters only implement `SessionTransport`; they
-/// do not match on `SessionAction`.
+/// back into session events. All calls, including transport completion
+/// callbacks, must be serialized on one thread. Adapters only implement
+/// `SessionTransport`; they do not match on `SessionAction`.
 pub struct SessionDriver[T] {
   priv transport : T
   priv session : @session.ClientSession
@@ -380,19 +383,25 @@ fn[T : SessionTransport] SessionDriver::attempt_pending(
 }
 
 ///|
-fn[T] SessionDriver::deliver_events(self : SessionDriver[T]) -> Unit {
+fn[T : SessionTransport] SessionDriver::deliver_events(
+  self : SessionDriver[T],
+) -> Unit {
   while self.events.length() > 0 && !self.failed {
     let event = self.events.remove(0)
-    match self.session.receive(event) {
-      Ok(actions) =>
-        if actions.length() > 0 {
-          self.pending = self.pending + actions
-          self.repump = true
+    match event {
+      @session.TransportFailed(status) => self.fail(status)
+      _ =>
+        match self.session.receive(event) {
+          Ok(actions) =>
+            if actions.length() > 0 {
+              self.pending = self.pending + actions
+              self.repump = true
+            }
+          Err(error) => {
+            self.failure = Some(error)
+            self.abort()
+          }
         }
-      Err(error) => {
-        self.failure = Some(error)
-        self.abort()
-      }
     }
   }
 }
@@ -405,6 +414,9 @@ fn[T : SessionTransport] SessionDriver::note_open(
 ) -> Unit {
   if self.pending_opens > 0 {
     self.pending_opens = self.pending_opens - 1
+  }
+  if self.failed {
+    return
   }
   match outcome {
     Opened(stream) => {
@@ -428,6 +440,9 @@ fn[T : SessionTransport] SessionDriver::note_send(
     self.pending_sends = self.pending_sends - 1
   }
   self.note_send_settled(stream)
+  if self.failed {
+    return
+  }
   match outcome {
     Written => self.events.push(@session.SendCompleted(stream, @session.Sent))
     WriteCanceled =>
@@ -473,6 +488,9 @@ fn[T : SessionTransport] SessionDriver::note_datagram(
 ) -> Unit {
   if self.pending_datagrams > 0 {
     self.pending_datagrams = self.pending_datagrams - 1
+  }
+  if self.failed {
+    return
   }
   match outcome {
     Written => self.events.push(@session.DatagramSendComplete(token))
