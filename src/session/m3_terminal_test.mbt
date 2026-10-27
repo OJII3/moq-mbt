@@ -37,7 +37,12 @@ test "SUBSCRIBE PUBLISH_DONE closes its request direction once while objects dra
     ),
     Ok([
       @session.Notify(
-        @session.ObjectReceived(0UL, header, [subscriber_frame(0UL, b"late")]),
+        @session.ObjectReceived(
+          0UL,
+          { namespace_fields: [b"demo"], name: b"video", },
+          header,
+          [subscriber_frame(0UL, b"late")],
+        ),
       ),
     ]),
   )
@@ -213,7 +218,16 @@ test "SUBSCRIBE update FIN still accepts SUBSCRIBE_OK, late Objects, and PUBLISH
         @protocol.encode_subgroup_frame(header, None, frame).unwrap(),
       ),
     ),
-    Ok([@session.Notify(@session.ObjectReceived(0UL, header, [frame]))]),
+    Ok([
+      @session.Notify(
+        @session.ObjectReceived(
+          0UL,
+          { namespace_fields: [b"demo"], name: b"video", },
+          header,
+          [frame],
+        ),
+      ),
+    ]),
   )
   assert_eq(
     subscriber.receive(@session.StreamFinished(40)),

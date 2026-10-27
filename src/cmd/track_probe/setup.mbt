@@ -19,95 +19,239 @@ fn client_stream_direction(
 }
 
 ///|
+/// Native transport backend for the portable session driver. Stream opens are
+/// synchronous; send completions are paired with the transport's SendComplete
+/// events so the driver can release its in-flight slots.
+priv struct ProbeTransport {
+  client : @transport.Client
+  send_waiters : Map[Int64, Array[(@driver.TransportWriteOutcome) -> Unit]]
+  datagram_waiters : Array[(@driver.TransportWriteOutcome) -> Unit]
+}
+
+///|
+fn ProbeTransport::new(client : @transport.Client) -> ProbeTransport {
+  { client, send_waiters: Map([]), datagram_waiters: [], }
+}
+
+///|
+impl @driver.SessionTransport for ProbeTransport with fn open_stream(
+  self,
+  direction,
+  _purpose,
+  on_done,
+) {
+  let opened = try {
+    match direction {
+      @session.Unidirectional => self.client.open_uni()
+      @session.Bidirectional => self.client.open_bidi()
+    }
+  } catch {
+    _ => return @driver.Fatal(-1L)
+  }
+  on_done(@driver.Opened(opened))
+  @driver.Accepted
+}
+
+///|
+impl @driver.SessionTransport for ProbeTransport with fn send(
+  self,
+  stream,
+  bytes,
+  fin,
+  on_done,
+) {
+  let accepted = try {
+    self.client.send(stream, bytes, fin~)
+    true
+  } catch {
+    @transport.SendQueueFull => false
+    _ => return @driver.Fatal(-1L)
+  }
+  if !accepted {
+    return @driver.Retry
+  }
+  let waiters = match self.send_waiters.get(stream) {
+    Some(waiters) => waiters
+    None => {
+      let waiters : Array[(@driver.TransportWriteOutcome) -> Unit] = []
+      self.send_waiters[stream] = waiters
+      waiters
+    }
+  }
+  waiters.push(on_done)
+  @driver.Accepted
+}
+
+///|
+impl @driver.SessionTransport for ProbeTransport with fn send_datagram(
+  self,
+  bytes,
+  on_done,
+) {
+  let accepted = try {
+    ignore(self.client.send_datagram(bytes))
+    true
+  } catch {
+    @transport.DatagramSendQueueFull => false
+    _ => return @driver.Fatal(-1L)
+  }
+  if !accepted {
+    return @driver.Retry
+  }
+  self.datagram_waiters.push(on_done)
+  @driver.Accepted
+}
+
+///|
+impl @driver.SessionTransport for ProbeTransport with fn abort_send(
+  self,
+  stream,
+  code,
+) -> Unit {
+  // The session already closed this stream, so late SendComplete events are
+  // ignored. Release the in-flight slots without producing session events.
+  self.abandon_send(stream)
+  self.client.abort_send(stream, code.reinterpret_as_int64()) catch {
+    _ => ()
+  }
+}
+
+///|
+impl @driver.SessionTransport for ProbeTransport with fn stop_receiving(
+  self,
+  stream,
+  code,
+) -> Unit {
+  self.client.stop_receiving(stream, code.reinterpret_as_int64()) catch {
+    _ => ()
+  }
+}
+
+///|
+impl @driver.SessionTransport for ProbeTransport with fn close_connection(
+  self,
+  code,
+  _reason,
+) -> Unit {
+  self.client.close(error_code=code.reinterpret_as_int64())
+}
+
+///|
+fn ProbeTransport::complete_send(
+  self : ProbeTransport,
+  stream : Int64,
+  canceled : Bool,
+) -> Unit {
+  match self.send_waiters.get(stream) {
+    Some(waiters) if waiters.length() > 0 => {
+      let callback = waiters.remove(0)
+      if waiters.is_empty() {
+        self.send_waiters.remove(stream)
+      }
+      callback(if canceled { @driver.WriteCanceled } else { @driver.Written })
+    }
+    _ => ()
+  }
+}
+
+///|
+fn ProbeTransport::complete_datagram(self : ProbeTransport) -> Unit {
+  if self.datagram_waiters.length() > 0 {
+    let callback = self.datagram_waiters.remove(0)
+    callback(@driver.Written)
+  }
+}
+
+///|
+fn ProbeTransport::abandon_send(self : ProbeTransport, stream : Int64) -> Unit {
+  match self.send_waiters.get(stream) {
+    Some(waiters) => {
+      self.send_waiters.remove(stream)
+      for waiter in waiters {
+        waiter(@driver.Abandoned)
+      }
+    }
+    None => ()
+  }
+}
+
+///|
+/// Probe-side wrapper around the shared driver. The session is bound on the
+/// first action so callers can keep constructing it next to the connection.
 priv struct SessionActionDriver {
-  send_counts : Map[Int64, UInt64]
-  mut pending : Array[@session.ClientSessionAction]
+  mut transport : ProbeTransport?
+  mut inner : @driver.SessionDriver[ProbeTransport]?
 }
 
 ///|
 fn SessionActionDriver::new() -> SessionActionDriver {
-  { send_counts: Map([]), pending: [], }
+  { transport: None, inner: None, }
 }
 
 ///|
-fn attempt_stream_send(
-  stream : Int64,
-  bytes : Bytes,
-  fin : Bool,
-  send : (Int64, Bytes, Bool) -> Unit raise @transport.TransportError,
-) -> Bool raise @transport.TransportError {
-  try {
-    send(stream, bytes, fin)
-    true
-  } catch {
-    @transport.SendQueueFull => false
-    error => raise error
-  }
-}
-
-///|
-fn SessionActionDriver::send_head(
+fn SessionActionDriver::ensure(
   self : SessionActionDriver,
-  send : (Int64, Bytes, Bool) -> Unit raise @transport.TransportError,
-) -> Bool raise @transport.TransportError {
-  match self.pending[0] {
-    @session.Send(stream, bytes, fin) => {
-      let accepted = attempt_stream_send(stream, bytes, fin, send)
-      if accepted {
-        ignore(self.pending.remove(0))
-        let count = match self.send_counts.get(stream) {
-          Some(value) => value
-          None => 0UL
-        }
-        self.send_counts[stream] = count + 1UL
-      }
-      accepted
-    }
-    _ => false
-  }
-}
-
-///|
-fn SessionActionDriver::send_datagram_head(
-  self : SessionActionDriver,
-  send : (Bytes) -> Unit raise @transport.TransportError,
-) -> Bool raise @transport.TransportError {
-  match self.pending[0] {
-    @session.SendDatagram(bytes) => {
-      let accepted = try {
-        send(bytes)
-        true
-      } catch {
-        @transport.DatagramSendQueueFull => false
-        error => raise error
-      }
-      if accepted {
-        ignore(self.pending.remove(0))
-      }
-      accepted
-    }
-    _ => false
-  }
-}
-
-///|
-fn end_driver_session(
   client : @transport.Client,
   session : @session.ClientSession,
-) -> Array[@session.ClientSessionNotice] {
-  client.close()
-  let notices : Array[@session.ClientSessionNotice] = []
-  match session.receive(@session.TransportFailed(-1L)) {
-    Ok(actions) =>
-      for action in actions {
-        match action {
-          @session.Notify(notice) => notices.push(notice)
-          _ => ()
-        }
-      }
-    Err(_) => ()
+) -> @driver.SessionDriver[ProbeTransport] {
+  match self.inner {
+    Some(inner) => inner
+    None => {
+      let transport = ProbeTransport::new(client)
+      let inner = @driver.SessionDriver::new(transport, session, {
+        max_pending_opens: 8,
+        max_pending_sends: 128,
+        max_pending_datagrams: 32,
+      })
+      self.transport = Some(transport)
+      self.inner = Some(inner)
+      inner
+    }
   }
-  notices
+}
+
+///|
+fn SessionActionDriver::complete_send(
+  self : SessionActionDriver,
+  stream : Int64,
+  canceled : Bool,
+) -> Unit {
+  match self.transport {
+    Some(transport) => transport.complete_send(stream, canceled)
+    None => ()
+  }
+}
+
+///|
+fn SessionActionDriver::complete_datagram(self : SessionActionDriver) -> Unit {
+  match self.transport {
+    Some(transport) => transport.complete_datagram()
+    None => ()
+  }
+}
+
+///|
+fn SessionActionDriver::has_pending_sends(
+  self : SessionActionDriver,
+  stream : Int64,
+) -> Bool {
+  match self.inner {
+    Some(inner) => inner.has_pending_sends(stream)
+    None => false
+  }
+}
+
+///|
+fn take_driver_events(
+  driver : SessionActionDriver,
+) -> (
+  Array[@session.ClientSessionNotice],
+  Array[(@session.ClientStreamPurpose, Int64)],
+) {
+  match driver.inner {
+    Some(inner) => (inner.take_notices(), inner.take_opened_streams())
+    None => ([], [])
+  }
 }
 
 ///|
@@ -120,105 +264,13 @@ fn drive_session_actions(
   Array[@session.ClientSessionNotice],
   Array[(@session.ClientStreamPurpose, Int64)],
 ) raise {
-  let mut notices : Array[@session.ClientSessionNotice] = []
-  let opened : Array[(@session.ClientStreamPurpose, Int64)] = []
-  driver.pending = driver.pending + initial
-  let mut blocked = false
-  while driver.pending.length() > 0 && !blocked {
-    let action = driver.pending[0]
-    match action {
-      @session.OpenStream(direction, purpose) => {
-        let stream = try {
-          match direction {
-            @session.Unidirectional => client.open_uni()
-            @session.Bidirectional => client.open_bidi()
-          }
-        } catch {
-          _ => {
-            driver.pending = []
-            notices = notices + end_driver_session(client, session)
-            return (notices, opened)
-          }
-        }
-        opened.push((purpose, stream))
-        let next = match
-          session.receive(@session.StreamOpened(purpose, stream)) {
-          Ok(value) => value
-          Err(error) =>
-            fail("client session rejected opened stream: \{error.to_repr()}")
-        }
-        driver.pending = driver.pending + next
-      }
-      @session.Send(_, _, _) => {
-        let accepted = driver.send_head(fn(
-          s,
-          b,
-          f,
-        ) raise @transport.TransportError {
-          client.send(s, b, fin=f)
-        }) catch {
-          _ => {
-            driver.pending = []
-            notices = notices + end_driver_session(client, session)
-            return (notices, opened)
-          }
-        }
-        if !accepted {
-          blocked = true
-        }
-      }
-      @session.SendDatagram(_) => {
-        let accepted = driver.send_datagram_head(fn(
-          b : Bytes,
-        ) raise @transport.TransportError {
-          ignore(client.send_datagram(b))
-        }) catch {
-          _ => {
-            driver.pending = []
-            notices = notices + end_driver_session(client, session)
-            return (notices, opened)
-          }
-        }
-        if !accepted {
-          blocked = true
-        }
-      }
-      @session.AbortSend(stream, error_code) =>
-        client.abort_send(stream, error_code.reinterpret_as_int64()) catch {
-          _ => {
-            driver.pending = []
-            notices = notices + end_driver_session(client, session)
-            return (notices, opened)
-          }
-        }
-      @session.StopReceiving(stream, error_code) =>
-        client.stop_receiving(stream, error_code.reinterpret_as_int64()) catch {
-          _ => {
-            driver.pending = []
-            notices = notices + end_driver_session(client, session)
-            return (notices, opened)
-          }
-        }
-      @session.CloseConnection(code, _reason) =>
-        client.close(error_code=code.reinterpret_as_int64())
-      @session.Notify(notice) => notices.push(notice)
-    }
-    if !blocked &&
-      !(action is @session.Send(_, _, _)) &&
-      !(action is @session.SendDatagram(_)) {
-      ignore(driver.pending.remove(0))
-    }
-  }
-  (notices, opened)
-}
-
-///|
-fn note_send_complete(driver : SessionActionDriver, stream : Int64) -> Unit {
-  match driver.send_counts.get(stream) {
-    Some(count) if count > 1UL => driver.send_counts[stream] = count - 1UL
-    Some(_) => driver.send_counts.remove(stream)
+  let inner = driver.ensure(client, session)
+  inner.dispatch(initial)
+  match inner.failure() {
+    Some(error) => fail("client session error: \{error.to_repr()}")
     None => ()
   }
+  (inner.take_notices(), inner.take_opened_streams())
 }
 
 ///|
@@ -356,16 +408,8 @@ fn setup_client(
         ignore(notices)
       }
       SendComplete(stream, canceled) => {
-        note_send_complete(driver, stream)
-        let (notices, _) = drive_session_result(
-          client,
-          session,
-          receive_session_event(
-            session,
-            @session.SendComplete(stream, canceled),
-          ),
-          driver,
-        )
+        driver.complete_send(stream, canceled)
+        let (notices, _) = take_driver_events(driver)
         ignore(notices)
         if setup_stream == Some(stream) {
           if canceled {
@@ -391,12 +435,8 @@ fn setup_client(
       }
       DatagramSendStateChanged(_, state) =>
         if state.is_final() {
-          let (notices, _) = drive_session_result(
-            client,
-            session,
-            receive_session_event(session, @session.DatagramSendComplete),
-            driver,
-          )
+          driver.complete_datagram()
+          let (notices, _) = take_driver_events(driver)
           ignore(notices)
         }
       StreamFinished(_)

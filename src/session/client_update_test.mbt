@@ -122,7 +122,15 @@ test "datagrams and subgroup objects use the accepted subscription FORWARD state
   let datagram_bytes = @protocol.encode_object_datagram(datagram).unwrap()
   assert_eq(
     subscriber.receive(@session.DatagramReceived(datagram_bytes)),
-    Ok([@session.Notify(@session.ObjectDatagramReceived(0, datagram))]),
+    Ok([
+      @session.Notify(
+        @session.ObjectDatagramReceived(
+          0,
+          { namespace_fields: [b"demo"], name: b"video", },
+          datagram,
+        ),
+      ),
+    ]),
   )
   let subgroup : @protocol.SubgroupHeader = {
     track_alias: 1,
@@ -155,14 +163,19 @@ test "datagrams and subgroup objects use the accepted subscription FORWARD state
     ),
     Ok([
       @session.Notify(
-        @session.ObjectReceived(0, subgroup, [
-          {
-            object_id: 1,
-            status: @protocol.Normal,
-            properties: b"",
-            payload: b"stream",
-          },
-        ]),
+        @session.ObjectReceived(
+          0,
+          { namespace_fields: [b"demo"], name: b"video", },
+          subgroup,
+          [
+            {
+              object_id: 1,
+              status: @protocol.Normal,
+              properties: b"",
+              payload: b"stream",
+            },
+          ],
+        ),
       ),
     ]),
   )
@@ -225,7 +238,15 @@ test "datagrams and subgroup objects use the accepted subscription FORWARD state
   )
   assert_eq(
     subscriber.receive(@session.DatagramReceived(datagram_bytes)),
-    Ok([@session.Notify(@session.ObjectDatagramReceived(0, datagram))]),
+    Ok([
+      @session.Notify(
+        @session.ObjectDatagramReceived(
+          0,
+          { namespace_fields: [b"demo"], name: b"video", },
+          datagram,
+        ),
+      ),
+    ]),
   )
 }
 
@@ -559,7 +580,12 @@ test "unknown, malformed, and post-cancel datagrams do not reach the application
     Ok([
       @session.AbortSend(30, 1),
       @session.StopReceiving(30, 1),
-      @session.Notify(@session.SubscriptionEnded(0, 30)),
+      @session.Notify(
+        @session.SubscriptionEnded(0, 30, {
+          namespace_fields: [b"demo"],
+          name: b"video",
+        }),
+      ),
     ]),
   )
   assert_eq(
@@ -839,7 +865,12 @@ test "cancellation supersedes a pending UPDATE_FAILED PUBLISH_DONE without abort
     Ok([
       @session.AbortSend(40, 1UL),
       @session.StopReceiving(40, 1UL),
-      @session.Notify(@session.SubscriptionEnded(1UL, 40)),
+      @session.Notify(
+        @session.SubscriptionEnded(1UL, 40, {
+          namespace_fields: [b"demo"],
+          name: b"video",
+        }),
+      ),
     ]),
   )
   assert_eq(
@@ -884,7 +915,12 @@ test "cancellation can supersede a pending UPDATE_FAILED PUBLISH_DONE on local P
     Ok([
       @session.AbortSend(20, 1UL),
       @session.StopReceiving(20, 1UL),
-      @session.Notify(@session.SubscriptionEnded(0UL, 20)),
+      @session.Notify(
+        @session.SubscriptionEnded(0UL, 20, {
+          namespace_fields: [b"demo"],
+          name: b"video",
+        }),
+      ),
     ]),
   )
   assert_eq(publisher.cancel_request(0UL), Ok([]))
@@ -1084,7 +1120,15 @@ test "datagrams route across aliases without ordered object ID state" {
         @protocol.encode_object_datagram(late_a).unwrap(),
       ),
     ),
-    Ok([@session.Notify(@session.ObjectDatagramReceived(0, late_a))]),
+    Ok([
+      @session.Notify(
+        @session.ObjectDatagramReceived(
+          0,
+          { namespace_fields: [b"demo"], name: b"video", },
+          late_a,
+        ),
+      ),
+    ]),
   )
   assert_eq(
     subscriber.receive(
@@ -1092,7 +1136,7 @@ test "datagrams route across aliases without ordered object ID state" {
         @protocol.encode_object_datagram(early_b).unwrap(),
       ),
     ),
-    Ok([@session.Notify(@session.ObjectDatagramReceived(2, early_b))]),
+    Ok([@session.Notify(@session.ObjectDatagramReceived(2, track_b, early_b))]),
   )
   assert_eq(
     subscriber.receive(
@@ -1100,7 +1144,15 @@ test "datagrams route across aliases without ordered object ID state" {
         @protocol.encode_object_datagram(late_a).unwrap(),
       ),
     ),
-    Ok([@session.Notify(@session.ObjectDatagramReceived(0, late_a))]),
+    Ok([
+      @session.Notify(
+        @session.ObjectDatagramReceived(
+          0,
+          { namespace_fields: [b"demo"], name: b"video", },
+          late_a,
+        ),
+      ),
+    ]),
   )
   assert_eq(
     subscriber.receive(
@@ -1108,7 +1160,15 @@ test "datagrams route across aliases without ordered object ID state" {
         @protocol.encode_object_datagram(reordered_a).unwrap(),
       ),
     ),
-    Ok([@session.Notify(@session.ObjectDatagramReceived(0, reordered_a))]),
+    Ok([
+      @session.Notify(
+        @session.ObjectDatagramReceived(
+          0,
+          { namespace_fields: [b"demo"], name: b"video", },
+          reordered_a,
+        ),
+      ),
+    ]),
   )
 }
 
@@ -1163,7 +1223,15 @@ test "datagram object notices preserve forwarding mode, status, properties, and 
           @protocol.encode_object_datagram(datagram).unwrap(),
         ),
       ),
-      Ok([@session.Notify(@session.ObjectDatagramReceived(0, datagram))]),
+      Ok([
+        @session.Notify(
+          @session.ObjectDatagramReceived(
+            0,
+            { namespace_fields: [b"demo"], name: b"video", },
+            datagram,
+          ),
+        ),
+      ]),
     )
   }
 }
@@ -1178,7 +1246,15 @@ test "datagrams do not count toward PUBLISH_DONE and can arrive while streams dr
         @protocol.encode_object_datagram(object).unwrap(),
       ),
     ),
-    Ok([@session.Notify(@session.ObjectDatagramReceived(0, object))]),
+    Ok([
+      @session.Notify(
+        @session.ObjectDatagramReceived(
+          0,
+          { namespace_fields: [b"demo"], name: b"video", },
+          object,
+        ),
+      ),
+    ]),
   )
   let empty_done : @protocol.PublishDoneMessage = {
     code: 3,
@@ -1236,14 +1312,19 @@ test "datagrams do not count toward PUBLISH_DONE and can arrive while streams dr
     ),
     Ok([
       @session.Notify(
-        @session.ObjectReceived(0, header, [
-          {
-            object_id: 0,
-            status: @protocol.Normal,
-            properties: b"",
-            payload: b"stream",
-          },
-        ]),
+        @session.ObjectReceived(
+          0,
+          { namespace_fields: [b"demo"], name: b"video", },
+          header,
+          [
+            {
+              object_id: 0,
+              status: @protocol.Normal,
+              properties: b"",
+              payload: b"stream",
+            },
+          ],
+        ),
       ),
     ]),
   )
@@ -1267,7 +1348,15 @@ test "datagrams do not count toward PUBLISH_DONE and can arrive while streams dr
         @protocol.encode_object_datagram(object).unwrap(),
       ),
     ),
-    Ok([@session.Notify(@session.ObjectDatagramReceived(0, object))]),
+    Ok([
+      @session.Notify(
+        @session.ObjectDatagramReceived(
+          0,
+          { namespace_fields: [b"demo"], name: b"video", },
+          object,
+        ),
+      ),
+    ]),
   )
   assert_eq(
     mixed.receive(@session.StreamFinished(41)),

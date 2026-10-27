@@ -417,7 +417,8 @@ fn ClientSession::end_inbound_subscription(
     actions.push(action)
   }
   if effects.notify_end {
-    actions.push(Notify(SubscriptionEnded(inbound.request_id, stream)))
+    let track = self.requests.get(inbound.publisher_request_id).unwrap().track
+    actions.push(Notify(SubscriptionEnded(inbound.request_id, stream, track)))
   }
   actions
 }

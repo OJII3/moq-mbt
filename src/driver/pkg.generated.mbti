@@ -1,0 +1,76 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "OJII3/moq-mbt/driver"
+
+import {
+  "OJII3/moq-mbt/session",
+  "moonbitlang/core/debug",
+}
+
+// Values
+
+// Errors
+
+// Types and methods
+pub struct SessionDriver[T] {
+  // private fields
+}
+pub fn[T : SessionTransport] SessionDriver::dispatch(Self[T], Array[@session.ClientSessionAction]) -> Unit
+pub fn[T] SessionDriver::failed(Self[T]) -> Bool
+pub fn[T] SessionDriver::failure(Self[T]) -> @session.ClientSessionError?
+pub fn[T] SessionDriver::has_pending_sends(Self[T], Int64) -> Bool
+pub fn[T] SessionDriver::new(T, @session.ClientSession, SessionDriverConfig) -> Self[T]
+pub fn[T] SessionDriver::pending_action_count(Self[T]) -> Int
+pub fn[T : SessionTransport] SessionDriver::receive(Self[T], @session.ClientSessionEvent) -> Unit
+pub fn[T] SessionDriver::session(Self[T]) -> @session.ClientSession
+pub fn[T] SessionDriver::set_update_handler(Self[T], () -> Unit) -> Unit
+pub fn[T] SessionDriver::take_notices(Self[T]) -> Array[@session.ClientSessionNotice]
+pub fn[T] SessionDriver::take_opened_streams(Self[T]) -> Array[(@session.ClientStreamPurpose, Int64)]
+
+pub(all) struct SessionDriverConfig {
+  max_pending_opens : Int
+  max_pending_sends : Int
+  max_pending_datagrams : Int
+} derive(Eq, @debug.Debug)
+pub fn SessionDriverConfig::equal(Self, Self) -> Bool
+pub fn SessionDriverConfig::not_equal(Self, Self) -> Bool
+pub fn SessionDriverConfig::to_repr(Self) -> @debug.Repr
+
+pub(all) enum TransportAcceptance {
+  Accepted
+  Retry
+  Fatal(Int64)
+} derive(Eq, @debug.Debug)
+pub fn TransportAcceptance::equal(Self, Self) -> Bool
+pub fn TransportAcceptance::not_equal(Self, Self) -> Bool
+pub fn TransportAcceptance::to_repr(Self) -> @debug.Repr
+
+pub(all) enum TransportOpenOutcome {
+  Opened(Int64)
+  OpenFailed(Int64)
+} derive(Eq, @debug.Debug)
+pub fn TransportOpenOutcome::equal(Self, Self) -> Bool
+pub fn TransportOpenOutcome::not_equal(Self, Self) -> Bool
+pub fn TransportOpenOutcome::to_repr(Self) -> @debug.Repr
+
+pub(all) enum TransportWriteOutcome {
+  Written
+  WriteCanceled
+  WriteReset(UInt64)
+  WriteFailed(Int64)
+  Abandoned
+} derive(Eq, @debug.Debug)
+pub fn TransportWriteOutcome::equal(Self, Self) -> Bool
+pub fn TransportWriteOutcome::not_equal(Self, Self) -> Bool
+pub fn TransportWriteOutcome::to_repr(Self) -> @debug.Repr
+
+// Type aliases
+
+// Traits
+pub(open) trait SessionTransport {
+  fn open_stream(Self, @session.ClientStreamDirection, @session.ClientStreamPurpose, (TransportOpenOutcome) -> Unit) -> TransportAcceptance
+  fn send(Self, Int64, Bytes, Bool, (TransportWriteOutcome) -> Unit) -> TransportAcceptance
+  fn send_datagram(Self, Bytes, (TransportWriteOutcome) -> Unit) -> TransportAcceptance
+  fn abort_send(Self, Int64, UInt64) -> Unit
+  fn stop_receiving(Self, Int64, UInt64) -> Unit
+  fn close_connection(Self, UInt64, Bytes) -> Unit
+}

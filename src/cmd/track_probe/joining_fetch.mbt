@@ -23,7 +23,7 @@ fn JoiningFetchState::observe_publisher(
 ) -> Unit raise {
   for notice in notices {
     match notice {
-      @session.PublishAccepted(id) if id == self.publish_id =>
+      @session.PublishAccepted(id, _, _) if id == self.publish_id =>
         self.published = true
       @session.PublishRejected(_, error) =>
         fail("joining FETCH PUBLISH rejected: \{error.to_repr()}")
@@ -101,7 +101,7 @@ fn JoiningFetchState::observe_subscriber(
         fail("joining FETCH SUBSCRIBE rejected: \{error.to_repr()}")
       @session.SubscriptionUpdateRejected(_, _, error) =>
         fail("joining FETCH filter update rejected: \{error.to_repr()}")
-      @session.ObjectReceived(id, header, frames) => {
+      @session.ObjectReceived(id, _, header, frames) => {
         guard self.aliases.get(id) == Some(header.track_alias) else {
           fail("joining FETCH live Object alias did not match")
         }

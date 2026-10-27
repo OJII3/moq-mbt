@@ -222,15 +222,34 @@ fn ClientSession::stream_opened(
       subscription.opened_stream_count = subscription.opened_stream_count + 1UL
       subscription.open_stream_count = subscription.open_stream_count + 1UL
       self.pending_object_streams.remove(token)
-      self.outgoing_object_streams[stream] = {
+      let outgoing : OutgoingObjectStream = {
         subscription_stream: pending.subscription_stream,
         header: pending.header,
+        token,
         previous_object_id: None,
-        finishing: false,
+        finishing: pending.finish_requested,
         abort_sent: false,
         pending_send_count: 1UL,
       }
-      Ok([Send(stream, @protocol.encode_subgroup_header(pending.header), false)])
+      let actions : Array[ClientSessionAction] = [
+        Send(stream, @protocol.encode_subgroup_header(pending.header), false),
+      ]
+      for frame in pending.frames {
+        match encode_outgoing_object(outgoing, frame) {
+          Ok(bytes) => {
+            actions.push(Send(stream, bytes, false))
+            outgoing.pending_send_count = outgoing.pending_send_count + 1UL
+          }
+          Err(_) => return Err(Track(InvalidControlMessage))
+        }
+      }
+      if pending.finish_requested {
+        actions.push(Send(stream, b"", true))
+        outgoing.pending_send_count = outgoing.pending_send_count + 1UL
+      }
+      self.outgoing_object_streams[stream] = outgoing
+      self.group_streams[token] = stream
+      Ok(actions)
     }
     FetchData(request_id) => self.start_outbound_fetch_data(stream, request_id)
   }

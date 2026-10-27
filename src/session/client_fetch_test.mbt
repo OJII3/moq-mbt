@@ -683,7 +683,7 @@ test "cancelling a pending subscription releases its Joining FETCH" {
       @session.Notify(@session.FetchRejected(3UL, 42, invalid_joining_id)),
       @session.AbortSend(40, 1UL),
       @session.StopReceiving(40, 1UL),
-      @session.Notify(@session.SubscriptionEnded(1UL, 40)),
+      @session.Notify(@session.SubscriptionEnded(1UL, 40, track)),
     ]),
   )
   assert_eq(publisher.receive(@session.Clock(30000UL)), Ok([]))
@@ -705,7 +705,7 @@ test "PUBLISH request ID is a valid Joining subscription" {
         ).unwrap(),
       ),
     ),
-    Ok([@session.Notify(@session.PublishAccepted(0UL))]),
+    Ok([@session.Notify(@session.PublishAccepted(0UL, track, 7UL))]),
   )
 
   let header : @protocol.SubgroupHeader = {

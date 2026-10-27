@@ -40,14 +40,14 @@ fn NamespaceProbeState::observe(
 ) -> Unit raise {
   for notice in notices {
     match notice {
-      @session.PublishAccepted(id) if publisher &&
+      @session.PublishAccepted(id, _, _) if publisher &&
         id == self.independent_publish => self.independent_published = true
       @session.SubscribeEstablished(id, track_alias) if !publisher &&
         Some(id) == self.independent_subscribe => {
         self.independent_alias = Some(track_alias)
         self.independent_subscribed = true
       }
-      @session.ObjectReceived(id, header, frames) if !publisher &&
+      @session.ObjectReceived(id, _, header, frames) if !publisher &&
         Some(id) == self.independent_subscribe => {
         guard Some(header.track_alias) == self.independent_alias &&
           header.group_id == 0UL &&
@@ -383,7 +383,7 @@ pub fn run_namespace(
   let mut continuation_accepted = false
   for notice in continuation_notices {
     match notice {
-      @session.PublishAccepted(id) if id == continuation_publish =>
+      @session.PublishAccepted(id, _, _) if id == continuation_publish =>
         continuation_accepted = true
       @session.PublishRejected(_, error) =>
         fail("independent track republish rejected: \{error.to_repr()}")
@@ -394,7 +394,7 @@ pub fn run_namespace(
   while !continuation_accepted && @env.now() < accept_deadline {
     for notice in lifecycle_poll(continuation_publisher, 20) {
       match notice {
-        @session.PublishAccepted(id) if id == continuation_publish =>
+        @session.PublishAccepted(id, _, _) if id == continuation_publish =>
           continuation_accepted = true
         @session.PublishRejected(_, error) =>
           fail("independent track republish rejected: \{error.to_repr()}")

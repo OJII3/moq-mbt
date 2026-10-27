@@ -78,9 +78,13 @@ releases the reader and writer and resolves waiting reads with `DatagramsClosed`
 SETUP options; the WebTransport URL supplies those values. Call `start()` after
 connection creation, then use `dispatch(actions)` for actions returned by
 operations on `driver.session()`, and `next_notice()` to receive session
-notices. The driver starts the session after WebTransport negotiation succeeds and continues to
-poll its monotonic clock while active. I/O promises feed completion or failure
-events back into the session without pausing the stream and datagram readers.
+notices. The adapter implements `SessionTransport` from the shared `driver`
+package; action queueing, per-stream ordering, and retry live there, with
+browser queue limits (8 opens / 128 sends / 32 datagrams) passed as
+`SessionDriverConfig`. The driver starts the session after WebTransport
+negotiation succeeds and continues to poll its monotonic clock while active.
+I/O promises feed completion or failure events back into the session without
+pausing the stream and datagram readers.
 
 `SendComplete` represents the backend's completion point. In this adapter it
 means the browser accepted each write and, for FIN, completed `writer.close()`;

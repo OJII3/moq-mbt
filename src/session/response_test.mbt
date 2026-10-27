@@ -33,7 +33,15 @@ test "ClientSession buffers interleaved fragmented PUBLISH and SUBSCRIBE respons
     )
     assert_eq(
       session.receive(@session.StreamData(20, publish_ok[split:].to_owned())),
-      Ok([@session.Notify(@session.PublishAccepted(0))]),
+      Ok([
+        @session.Notify(
+          @session.PublishAccepted(
+            0,
+            { namespace_fields: [b"demo"], name: b"video", },
+            1UL,
+          ),
+        ),
+      ]),
     )
   }
 }
@@ -62,7 +70,12 @@ test "ClientSession rejects a second initial response after either request is ac
       Ok([
         @session.AbortSend(20, 3),
         @session.StopReceiving(20, 3),
-        @session.Notify(@session.SubscriptionEnded(0, 20)),
+        @session.Notify(
+          @session.SubscriptionEnded(0, 20, {
+            namespace_fields: [b"demo"],
+            name: b"video",
+          }),
+        ),
       ]),
     )
   }
@@ -73,7 +86,12 @@ test "ClientSession rejects a second initial response after either request is ac
       Ok([
         @session.AbortSend(30, 3),
         @session.StopReceiving(30, 3),
-        @session.Notify(@session.SubscriptionEnded(0, 30)),
+        @session.Notify(
+          @session.SubscriptionEnded(0, 30, {
+            namespace_fields: [b"demo"],
+            name: b"video",
+          }),
+        ),
       ]),
     )
   }

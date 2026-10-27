@@ -38,7 +38,15 @@ test "GOAWAY, pending update, cancellation, and late object events stay ordered"
         @protocol.encode_object_datagram(datagram).unwrap(),
       ),
     ),
-    Ok([@session.Notify(@session.ObjectDatagramReceived(0, datagram))]),
+    Ok([
+      @session.Notify(
+        @session.ObjectDatagramReceived(
+          0,
+          { namespace_fields: [b"demo"], name: b"video", },
+          datagram,
+        ),
+      ),
+    ]),
   )
   assert_eq(
     subscriber.receive(
@@ -62,11 +70,20 @@ test "GOAWAY, pending update, cancellation, and late object events stay ordered"
   )
 
   assert_eq(
+    subscriber.send_goaway(0UL),
+    Ok([@session.Send(10, client_goaway_control(1UL, 0UL, b""), false)]),
+  )
+  assert_eq(
     subscriber.cancel_request(0UL),
     Ok([
       @session.AbortSend(30, 1UL),
       @session.StopReceiving(30, 1UL),
-      @session.Notify(@session.SubscriptionEnded(0, 30)),
+      @session.Notify(
+        @session.SubscriptionEnded(0, 30, {
+          namespace_fields: [b"demo"],
+          name: b"video",
+        }),
+      ),
     ]),
   )
   assert_eq(
@@ -117,6 +134,14 @@ test "Datagram send completion is separate from peer Object delivery" {
         @protocol.encode_object_datagram(object).unwrap(),
       ),
     ),
-    Ok([@session.Notify(@session.ObjectDatagramReceived(0, object))]),
+    Ok([
+      @session.Notify(
+        @session.ObjectDatagramReceived(
+          0,
+          { namespace_fields: [b"demo"], name: b"video", },
+          object,
+        ),
+      ),
+    ]),
   )
 }

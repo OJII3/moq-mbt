@@ -36,7 +36,7 @@ fn handle_subscriber_notices(
           "request GOAWAY received (request \{request_id}, stream \{stream}, URI \{uri.length()} bytes, timeout \{timeout_ms} ms)",
         )
       @session.SessionEnded(end) => fail("session ended: \{end.to_repr()}")
-      @session.ObjectReceived(_, header, frames) => {
+      @session.ObjectReceived(_, _, header, frames) => {
         guard header.group_id < state.group_count else {
           fail("received unexpected group \{header.group_id}")
         }
@@ -69,7 +69,7 @@ fn handle_subscriber_notices(
           )
         }
       }
-      @session.ObjectDatagramReceived(request_id, datagram) => {
+      @session.ObjectDatagramReceived(request_id, _, datagram) => {
         guard state.expect_datagram else {
           fail("received unexpected Object Datagram")
         }
@@ -284,16 +284,8 @@ fn run_subscriber(
         }
       }
       SendComplete(stream, canceled) => {
-        note_send_complete(driver, stream)
-        let (notices, _) = drive_session_result(
-          client,
-          session,
-          receive_session_event(
-            session,
-            @session.SendComplete(stream, canceled),
-          ),
-          driver,
-        )
+        driver.complete_send(stream, canceled)
+        let (notices, _) = take_driver_events(driver)
         if handle_subscriber_notices(notices, state) {
           return
         }
@@ -334,12 +326,8 @@ fn run_subscriber(
       }
       DatagramSendStateChanged(_, send_state) =>
         if send_state.is_final() {
-          let (notices, _) = drive_session_result(
-            client,
-            session,
-            receive_session_event(session, @session.DatagramSendComplete),
-            driver,
-          )
+          driver.complete_datagram()
+          let (notices, _) = take_driver_events(driver)
           if handle_subscriber_notices(notices, state) {
             return
           }

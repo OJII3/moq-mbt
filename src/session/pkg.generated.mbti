@@ -41,6 +41,7 @@ pub fn ClientSession::finish_fetch(Self, UInt64) -> Result[Array[ClientSessionAc
 pub fn ClientSession::finish_object_stream(Self, Int64) -> Result[Array[ClientSessionAction], ClientSessionError]
 pub fn ClientSession::finish_subscription_updates(Self, UInt64) -> Result[Array[ClientSessionAction], ClientSessionError]
 pub fn ClientSession::new(Version, @protocol.Setup) -> Result[Self, @protocol.CodecError]
+pub fn ClientSession::open_object_group(Self, Int64, UInt64, end_of_group? : Bool) -> Result[(ObjectGroupWriter, Array[ClientSessionAction]), ClientSessionError]
 pub fn ClientSession::open_object_stream(Self, Int64, @protocol.SubgroupHeader) -> Result[Array[ClientSessionAction], ClientSessionError]
 pub fn ClientSession::publish_application_namespace(Self, @protocol.TrackNamespace) -> Result[Array[ClientSessionAction], ClientSessionError]
 pub fn ClientSession::publish_done(Self, Int64, UInt64, Bytes) -> Result[Array[ClientSessionAction], ClientSessionError]
@@ -60,11 +61,15 @@ pub fn ClientSession::send_fetch_range_end(Self, UInt64, @protocol.FetchRangeEnd
 pub fn ClientSession::send_goaway(Self, UInt64) -> Result[Array[ClientSessionAction], ClientSessionError]
 pub fn ClientSession::send_object(Self, Int64, @protocol.SubgroupFrame) -> Result[Array[ClientSessionAction], ClientSessionError]
 pub fn ClientSession::send_object_datagram(Self, Int64, @protocol.ObjectDatagram) -> Result[Array[ClientSessionAction], ClientSessionError]
+pub fn ClientSession::send_object_datagram_for_track(Self, @protocol.TrackName, @protocol.ObjectDatagram) -> Result[Array[ClientSessionAction], ClientSessionError]
 pub fn ClientSession::start(Self) -> Result[Array[ClientSessionAction], ClientSessionError]
 pub fn ClientSession::state(Self) -> ClientSessionState
 pub fn ClientSession::subscribe_namespace(Self, @protocol.TrackNamespace) -> Result[(UInt64, Array[ClientSessionAction]), ClientSessionError]
 pub fn ClientSession::subscribe_track(Self, @protocol.TrackName) -> Result[(UInt64, Array[ClientSessionAction]), ClientSessionError]
 pub fn ClientSession::subscribe_track_with_parameters(Self, @protocol.TrackName, Array[@protocol.MessageParameter]) -> Result[(UInt64, Array[ClientSessionAction]), ClientSessionError]
+pub fn ClientSession::subscription_track(Self, Int64) -> @protocol.TrackName?
+pub fn ClientSession::track_alias_for_request(Self, UInt64) -> UInt64?
+pub fn ClientSession::track_for_request(Self, UInt64) -> @protocol.TrackName?
 pub fn ClientSession::update_fetch(Self, UInt64, Array[@protocol.MessageParameter]) -> Result[(UInt64, Array[ClientSessionAction]), ClientSessionError]
 pub fn ClientSession::update_namespace_subscription(Self, UInt64, @protocol.TrackNamespace) -> Result[(UInt64, Array[ClientSessionAction]), ClientSessionError]
 pub fn ClientSession::update_published_namespace(Self, UInt64, Array[@protocol.MessageParameter]) -> Result[(UInt64, Array[ClientSessionAction]), ClientSessionError]
@@ -142,7 +147,7 @@ pub fn ClientSessionEvent::to_repr(Self) -> @debug.Repr
 pub(all) enum ClientSessionNotice {
   HandshakeComplete(@protocol.Setup)
   ControlMessageReceived(@protocol.ControlMessage)
-  PublishAccepted(UInt64)
+  PublishAccepted(UInt64, @protocol.TrackName, UInt64)
   PublishRejected(UInt64, @protocol.RequestErrorMessage)
   SubscribeEstablished(UInt64, UInt64)
   SubscribeRejected(UInt64, @protocol.RequestErrorMessage)
@@ -184,9 +189,9 @@ pub(all) enum ClientSessionNotice {
   SubscriptionUpdateApplied(UInt64, UInt64, Int64, Array[@protocol.MessageParameter])
   SubscriptionUpdateAccepted(UInt64, UInt64, @protocol.RequestOkMessage)
   SubscriptionUpdateRejected(UInt64, UInt64, @protocol.RequestErrorMessage)
-  SubscriptionEnded(UInt64, Int64)
-  ObjectReceived(UInt64, @protocol.SubgroupHeader, Array[@protocol.SubgroupFrame])
-  ObjectDatagramReceived(UInt64, @protocol.ObjectDatagram)
+  SubscriptionEnded(UInt64, Int64, @protocol.TrackName)
+  ObjectReceived(UInt64, @protocol.TrackName, @protocol.SubgroupHeader, Array[@protocol.SubgroupFrame])
+  ObjectDatagramReceived(UInt64, @protocol.TrackName, @protocol.ObjectDatagram)
   ObjectStreamReset(UInt64, Int64)
   ObjectStreamFinished(Int64)
   GroupFinished(UInt64, UInt64)
@@ -247,6 +252,15 @@ pub(all) enum HandshakeProgress {
 pub fn HandshakeProgress::equal(Self, Self) -> Bool
 pub fn HandshakeProgress::not_equal(Self, Self) -> Bool
 pub fn HandshakeProgress::to_repr(Self) -> @debug.Repr
+
+pub struct ObjectGroupWriter {
+  // private fields
+}
+pub fn ObjectGroupWriter::abort(Self, UInt64) -> Result[Array[ClientSessionAction], ClientSessionError]
+pub fn ObjectGroupWriter::finish(Self) -> Result[Array[ClientSessionAction], ClientSessionError]
+pub fn ObjectGroupWriter::rotate(Self) -> Result[Array[ClientSessionAction], ClientSessionError]
+pub fn ObjectGroupWriter::send(Self, Bytes) -> Result[Array[ClientSessionAction], ClientSessionError]
+pub fn ObjectGroupWriter::send_frame(Self, @protocol.SubgroupFrame) -> Result[Array[ClientSessionAction], ClientSessionError]
 
 pub(all) enum TrackSessionError {
   InvalidControlMessage

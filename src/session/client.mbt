@@ -52,7 +52,7 @@ pub(all) enum ClientSessionEvent {
 pub(all) enum ClientSessionNotice {
   HandshakeComplete(@protocol.Setup)
   ControlMessageReceived(@protocol.ControlMessage)
-  PublishAccepted(UInt64)
+  PublishAccepted(UInt64, @protocol.TrackName, UInt64)
   PublishRejected(UInt64, @protocol.RequestErrorMessage)
   SubscribeEstablished(UInt64, UInt64)
   SubscribeRejected(UInt64, @protocol.RequestErrorMessage)
@@ -135,13 +135,14 @@ pub(all) enum ClientSessionNotice {
   )
   SubscriptionUpdateAccepted(UInt64, UInt64, @protocol.RequestOkMessage)
   SubscriptionUpdateRejected(UInt64, UInt64, @protocol.RequestErrorMessage)
-  SubscriptionEnded(UInt64, Int64)
+  SubscriptionEnded(UInt64, Int64, @protocol.TrackName)
   ObjectReceived(
     UInt64,
+    @protocol.TrackName,
     @protocol.SubgroupHeader,
     Array[@protocol.SubgroupFrame]
   )
-  ObjectDatagramReceived(UInt64, @protocol.ObjectDatagram)
+  ObjectDatagramReceived(UInt64, @protocol.TrackName, @protocol.ObjectDatagram)
   ObjectStreamReset(UInt64, Int64)
   ObjectStreamFinished(Int64)
   GroupFinished(UInt64, UInt64)
@@ -263,6 +264,7 @@ pub struct ClientSession {
   priv ignored_object_streams : Map[Int64, IgnoredObjectStream]
   priv pending_object_streams : Map[UInt64, PendingObjectStream]
   priv outgoing_object_streams : Map[Int64, OutgoingObjectStream]
+  priv group_streams : Map[UInt64, Int64]
 }
 
 ///|
@@ -323,6 +325,7 @@ pub fn ClientSession::new(
         ignored_object_streams: {},
         pending_object_streams: {},
         outgoing_object_streams: {},
+        group_streams: {},
       })
   }
 }

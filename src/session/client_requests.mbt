@@ -312,7 +312,15 @@ fn ClientSession::receive_response(
               None
             },
           }
-          [Notify(PublishAccepted(request_id))] +
+          [
+            Notify(
+              PublishAccepted(
+                request_id,
+                request.track,
+                request.track_alias.unwrap(),
+              ),
+            ),
+          ] +
           self.drain_joining_fetches(request_id, stream)
         }
         (Subscribing, @protocol.SubscribeOk(response)) if !request.is_accepted() => {
@@ -931,7 +939,7 @@ fn ClientSession::end_request_stream(
     }
   }
   if effects.notify_end {
-    actions.push(Notify(SubscriptionEnded(request_id, stream)))
+    actions.push(Notify(SubscriptionEnded(request_id, stream, request.track)))
   }
   actions
 }

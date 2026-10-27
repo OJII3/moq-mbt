@@ -155,16 +155,8 @@ fn lifecycle_poll(
       notices
     }
     SendComplete(stream, canceled) => {
-      note_send_complete(peer.driver, stream)
-      let (notices, _) = drive_session_result(
-        peer.client,
-        peer.session,
-        receive_session_event(
-          peer.session,
-          @session.SendComplete(stream, canceled),
-        ),
-        peer.driver,
-      )
+      peer.driver.complete_send(stream, canceled)
+      let (notices, _) = take_driver_events(peer.driver)
       notices
     }
     SendStopped(stream, code) => {
@@ -195,12 +187,8 @@ fn lifecycle_poll(
       notices
     }
     DatagramSendStateChanged(_, send_state) if send_state.is_final() => {
-      let (notices, _) = drive_session_result(
-        peer.client,
-        peer.session,
-        receive_session_event(peer.session, @session.DatagramSendComplete),
-        peer.driver,
-      )
+      peer.driver.complete_datagram()
+      let (notices, _) = take_driver_events(peer.driver)
       notices
     }
     DatagramSendStateChanged(_, _) => []
@@ -283,7 +271,7 @@ fn LifecycleState::observe_publisher(
       @session.SendFinished(stream, canceled) if self.done_b_sent &&
         stream == self.publish_stream_b => {
         guard !canceled else { fail("track B PUBLISH_DONE send was canceled") }
-        if peer.driver.send_counts.get(stream) is None {
+        if !peer.driver.has_pending_sends(stream) {
           self.done_b_send_completed = true
         }
       }
@@ -310,9 +298,9 @@ fn wait_lifecycle_publishes(
   while !(accepted_a && accepted_b) && @env.now() < deadline {
     for notice in lifecycle_poll(publisher, 20) {
       match notice {
-        @session.PublishAccepted(request_id) if request_id == publish_a =>
+        @session.PublishAccepted(request_id, _, _) if request_id == publish_a =>
           accepted_a = true
-        @session.PublishAccepted(request_id) if request_id == publish_b =>
+        @session.PublishAccepted(request_id, _, _) if request_id == publish_b =>
           accepted_b = true
         @session.PublishRejected(_, _) => fail("PUBLISH rejected")
         @session.SessionEnded(_) => fail("publisher session ended")
@@ -358,7 +346,7 @@ fn LifecycleState::observe_subscriber(
         }
       @session.SubscriptionUpdateRejected(_, _, _) =>
         fail("REQUEST_UPDATE rejected")
-      @session.ObjectReceived(request_id, header, frames) => {
+      @session.ObjectReceived(request_id, _, header, frames) => {
         let is_a = request_id == self.subscribe_a
         let track_alias_value = if is_a {
           self.alias_a.unwrap()
@@ -408,7 +396,7 @@ fn LifecycleState::observe_subscriber(
         } else {
           fail("received an unexpected lifecycle Group end")
         }
-      @session.SubscriptionEnded(request_id, _) if request_id ==
+      @session.SubscriptionEnded(request_id, _, _) if request_id ==
         self.subscribe_a => {
         self.cancelled_a = true
         println("Track A subscription cancelled")

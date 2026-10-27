@@ -51,7 +51,7 @@ jobs:
           moon build --target js src/cmd/web_interop_probe
 
       - name: Check portable packages on WebAssembly
-        run: moon check --target wasm-gc --deny-warn src/protocol src/session
+        run: moon check --target wasm-gc --deny-warn src/protocol src/session src/driver
 
       - name: Run MoonBit tests
         run: moon test
@@ -59,7 +59,7 @@ jobs:
       - name: Run protocol and session tests on JavaScript and WebAssembly
         run: |
           moon test --target js src/protocol src/session src/js_adapter
-          moon test --target wasm-gc src/protocol src/session
+          moon test --target wasm-gc src/protocol src/session src/driver
 
       - name: Check formatting
         run: moon fmt --check

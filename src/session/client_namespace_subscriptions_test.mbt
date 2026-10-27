@@ -676,7 +676,9 @@ test "canceling namespace discovery leaves an independent track subscription act
         @protocol.encode_subgroup_frame(header, None, frame).unwrap(),
       ),
     ),
-    Ok([@session.Notify(@session.ObjectReceived(track_id, header, [frame]))]),
+    Ok([
+      @session.Notify(@session.ObjectReceived(track_id, track, header, [frame])),
+    ]),
   )
 }
 

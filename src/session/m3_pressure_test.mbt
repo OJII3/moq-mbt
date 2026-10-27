@@ -54,7 +54,12 @@ test "M3 rejected update drains a near-full stream set across cancellation" {
     Ok([
       @session.AbortSend(40, 1UL),
       @session.StopReceiving(40, 1UL),
-      @session.Notify(@session.SubscriptionEnded(1UL, 40)),
+      @session.Notify(
+        @session.SubscriptionEnded(1UL, 40, {
+          namespace_fields: [b"demo"],
+          name: b"video",
+        }),
+      ),
     ]),
   )
   for stream in active_streams {
