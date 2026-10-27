@@ -28,9 +28,9 @@ pub fn[T] SessionDriver::take_notices(Self[T]) -> Array[@session.SessionNotice]
 pub fn[T] SessionDriver::take_opened_streams(Self[T]) -> Array[(@session.ClientStreamPurpose, Int64)]
 
 pub(all) struct SessionDriverConfig {
-  max_pending_opens : Int
-  max_pending_sends : Int
-  max_pending_datagrams : Int
+  max_in_flight_opens : Int
+  max_in_flight_sends : Int
+  max_in_flight_datagrams : Int
 } derive(Eq, @debug.Debug)
 pub fn SessionDriverConfig::equal(Self, Self) -> Bool
 pub fn SessionDriverConfig::not_equal(Self, Self) -> Bool

@@ -24,7 +24,7 @@
 
 外部パッケージのテストは `test_support.ScriptedTransport` と実際の `SessionDriver` を組み合わせる。テスト側は受理・再試行・完了をscriptし、peerイベントをdriverへ渡す。sessionの処理や状態遷移をテスト用コードに複製しない。
 
-送信アクションの実行は `driver` の `SessionDriver` に集約する。アダプターは `SessionTransport` の primitive 操作だけを実装し、`SessionAction` の variant ごとの分岐や queue を持たない。`SessionDriver` はアクションを受理されるまで保持し、`Retry` では同じアクションを再試行する。ストリームごとのアクション順を維持し、あるストリームの拒否が無関係なストリームの送信を止めない。queue 上限（open / send / datagram）は `SessionDriverConfig` としてアダプターから注入し、driver や adapter に固定値を埋め込まない。
+送信アクションの実行は `driver` の `SessionDriver` に集約する。アダプターは `SessionTransport` の primitive 操作だけを実装し、`SessionAction` の variant ごとの分岐や queue を持たない。`SessionDriver` は transport に受理される前のアクションを保持し、`Retry` では同じアクションを再試行する。ストリームごとのアクション順を維持し、あるストリームの拒否が無関係なストリームの送信を止めない。`SessionDriverConfig` の `max_in_flight_*` は transport に受理されて完了 callback を待つ open / send / datagram 数を制限する。これは未受理アクションを保持する driver queue の上限ではなく、その queue 自体には現在上限がない。各 adapter や transport が持つ個別 queue の上限とは別の制御である。
 
 driver は `Accepted` の完了を `StreamOpened`、`SendCompleted`、`StreamReset`、`TransportFailed` などのセッションイベントに変換して session へ戻す。`SendCompleted` は `Sent` または `Reset` を取り、bool の意味を呼び出し側に推測させない。開設や送信の致命的失敗は `TransportFailed` として渡し、アクションを黙って破棄しない。アクションの受理はトランスポートへの投入を意味し、ピアでのアプリケーション処理完了は別途通知で追跡する。
 

@@ -55,22 +55,26 @@ pub(open) trait SessionTransport {
 }
 
 ///|
-/// Queue limits injected by the adapter. A value of zero or less disables the
-/// limit for that action kind.
+/// Maximum number of transport-accepted operations awaiting completion.
+/// These limits cover opens, stream sends, and datagram sends in flight; they
+/// do not bound the driver's queue of actions awaiting transport acceptance.
+/// A value of zero or less disables the corresponding limit.
 pub(all) struct SessionDriverConfig {
-  max_pending_opens : Int32
-  max_pending_sends : Int32
-  max_pending_datagrams : Int32
+  max_in_flight_opens : Int32
+  max_in_flight_sends : Int32
+  max_in_flight_datagrams : Int32
 } derive(Debug, Eq)
 
 ///|
 /// Portable pump for `SessionAction` values.
 ///
-/// The driver keeps accepted actions in flight, retries temporarily refused
-/// actions without blocking unrelated streams, and turns transport completions
-/// back into session events. All calls, including transport completion
-/// callbacks, must be serialized on one thread. Adapters only implement
-/// `SessionTransport`; they do not match on `SessionAction`.
+/// The driver tracks transport-accepted operations in flight, retries
+/// temporarily refused actions without blocking unrelated streams, and turns
+/// transport completions back into session events. Its queue of actions
+/// awaiting transport acceptance has no configured size limit. All calls,
+/// including transport completion callbacks, must be serialized on one thread.
+/// Adapters only implement `SessionTransport`; they do not match on
+/// `SessionAction`.
 pub struct SessionDriver[T] {
   priv transport : T
   priv session : @session.ClientSession
@@ -79,10 +83,10 @@ pub struct SessionDriver[T] {
   priv mut events : Array[@session.SessionEvent]
   priv mut notices : Array[@session.SessionNotice]
   priv mut opened_streams : Array[(@session.ClientStreamPurpose, Int64)]
-  priv mut pending_opens : Int32
-  priv mut pending_sends : Int32
+  priv mut in_flight_opens : Int32
+  priv mut in_flight_sends : Int32
   priv send_streams : Map[Int64, Int32]
-  priv mut pending_datagrams : Int32
+  priv mut in_flight_datagrams : Int32
   priv blocked_streams : Array[Int64]
   priv mut blocked_datagrams : Bool
   priv mut blocked_opens : Bool
@@ -107,10 +111,10 @@ pub fn[T] SessionDriver::new(
     events: [],
     notices: [],
     opened_streams: [],
-    pending_opens: 0,
-    pending_sends: 0,
+    in_flight_opens: 0,
+    in_flight_sends: 0,
     send_streams: Map([]),
-    pending_datagrams: 0,
+    in_flight_datagrams: 0,
     blocked_streams: [],
     blocked_datagrams: false,
     blocked_opens: false,
@@ -279,7 +283,7 @@ fn[T : SessionTransport] SessionDriver::attempt_pending(
         if self.blocked_opens || self.at_open_limit() {
           remaining.push(action)
         } else {
-          self.pending_opens = self.pending_opens + 1
+          self.in_flight_opens = self.in_flight_opens + 1
           let accepted = self.transport.open_stream(direction, purpose, fn(
             outcome,
           ) {
@@ -288,12 +292,12 @@ fn[T : SessionTransport] SessionDriver::attempt_pending(
           match accepted {
             Accepted => self.repump = true
             Retry => {
-              self.pending_opens = self.pending_opens - 1
+              self.in_flight_opens = self.in_flight_opens - 1
               self.blocked_opens = true
               remaining.push(action)
             }
             Fatal(status) => {
-              self.pending_opens = self.pending_opens - 1
+              self.in_flight_opens = self.in_flight_opens - 1
               self.fail(status)
             }
           }
@@ -306,7 +310,7 @@ fn[T : SessionTransport] SessionDriver::attempt_pending(
             @session.SendFin(_, _) => true
             _ => false
           }
-          self.pending_sends = self.pending_sends + 1
+          self.in_flight_sends = self.in_flight_sends + 1
           self.note_send_started(stream)
           let accepted = self.transport.send(stream, bytes, fin, fn(outcome) {
             self.note_send(stream, outcome)
@@ -314,13 +318,13 @@ fn[T : SessionTransport] SessionDriver::attempt_pending(
           match accepted {
             Accepted => self.repump = true
             Retry => {
-              self.pending_sends = self.pending_sends - 1
+              self.in_flight_sends = self.in_flight_sends - 1
               self.note_send_settled(stream)
               self.blocked_streams.push(stream)
               remaining.push(action)
             }
             Fatal(status) => {
-              self.pending_sends = self.pending_sends - 1
+              self.in_flight_sends = self.in_flight_sends - 1
               self.note_send_settled(stream)
               self.fail(status)
             }
@@ -330,19 +334,19 @@ fn[T : SessionTransport] SessionDriver::attempt_pending(
         if self.blocked_datagrams || self.at_datagram_limit() {
           remaining.push(action)
         } else {
-          self.pending_datagrams = self.pending_datagrams + 1
+          self.in_flight_datagrams = self.in_flight_datagrams + 1
           let accepted = self.transport.send_datagram(bytes, fn(outcome) {
             self.note_datagram(token, outcome)
           })
           match accepted {
             Accepted => self.repump = true
             Retry => {
-              self.pending_datagrams = self.pending_datagrams - 1
+              self.in_flight_datagrams = self.in_flight_datagrams - 1
               self.blocked_datagrams = true
               remaining.push(action)
             }
             Fatal(status) => {
-              self.pending_datagrams = self.pending_datagrams - 1
+              self.in_flight_datagrams = self.in_flight_datagrams - 1
               self.fail(status)
             }
           }
@@ -412,8 +416,8 @@ fn[T : SessionTransport] SessionDriver::note_open(
   purpose : @session.ClientStreamPurpose,
   outcome : TransportOpenOutcome,
 ) -> Unit {
-  if self.pending_opens > 0 {
-    self.pending_opens = self.pending_opens - 1
+  if self.in_flight_opens > 0 {
+    self.in_flight_opens = self.in_flight_opens - 1
   }
   if self.failed {
     return
@@ -436,8 +440,8 @@ fn[T : SessionTransport] SessionDriver::note_send(
   stream : Int64,
   outcome : TransportWriteOutcome,
 ) -> Unit {
-  if self.pending_sends > 0 {
-    self.pending_sends = self.pending_sends - 1
+  if self.in_flight_sends > 0 {
+    self.in_flight_sends = self.in_flight_sends - 1
   }
   self.note_send_settled(stream)
   if self.failed {
@@ -486,8 +490,8 @@ fn[T : SessionTransport] SessionDriver::note_datagram(
   token : UInt64,
   outcome : TransportWriteOutcome,
 ) -> Unit {
-  if self.pending_datagrams > 0 {
-    self.pending_datagrams = self.pending_datagrams - 1
+  if self.in_flight_datagrams > 0 {
+    self.in_flight_datagrams = self.in_flight_datagrams - 1
   }
   if self.failed {
     return
@@ -510,20 +514,20 @@ fn[T : SessionTransport] SessionDriver::note_datagram(
 
 ///|
 fn[T] SessionDriver::at_open_limit(self : SessionDriver[T]) -> Bool {
-  self.config.max_pending_opens > 0 &&
-  self.pending_opens >= self.config.max_pending_opens
+  self.config.max_in_flight_opens > 0 &&
+  self.in_flight_opens >= self.config.max_in_flight_opens
 }
 
 ///|
 fn[T] SessionDriver::at_send_limit(self : SessionDriver[T]) -> Bool {
-  self.config.max_pending_sends > 0 &&
-  self.pending_sends >= self.config.max_pending_sends
+  self.config.max_in_flight_sends > 0 &&
+  self.in_flight_sends >= self.config.max_in_flight_sends
 }
 
 ///|
 fn[T] SessionDriver::at_datagram_limit(self : SessionDriver[T]) -> Bool {
-  self.config.max_pending_datagrams > 0 &&
-  self.pending_datagrams >= self.config.max_pending_datagrams
+  self.config.max_in_flight_datagrams > 0 &&
+  self.in_flight_datagrams >= self.config.max_in_flight_datagrams
 }
 
 ///|
