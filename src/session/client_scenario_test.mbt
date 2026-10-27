@@ -7,7 +7,7 @@ test "GOAWAY, pending update, cancellation, and late object events stay ordered"
     .unwrap()
   assert_eq(update_id, 2UL)
   assert_eq(actions, [
-    @session.Send(30, request_update_bytes(update_id, forward_off), false),
+    @session.SendChunk(30, request_update_bytes(update_id, forward_off)),
   ])
 
   assert_eq(
@@ -15,7 +15,7 @@ test "GOAWAY, pending update, cancellation, and late object events stay ordered"
       @session.StreamData(11, client_goaway_control(2UL, 100UL, b"moqt://next")),
     ),
     Ok([
-      @session.Notify(
+      @session.EmitNotice(
         @session.ControlMessageReceived(
           @protocol.GoAwayControl({
             uri: b"moqt://next",
@@ -24,7 +24,7 @@ test "GOAWAY, pending update, cancellation, and late object events stay ordered"
           }),
         ),
       ),
-      @session.Notify(
+      @session.EmitNotice(
         @session.ControlGoAwayReceived(b"moqt://next", 100UL, 2UL),
       ),
     ]),
@@ -39,7 +39,7 @@ test "GOAWAY, pending update, cancellation, and late object events stay ordered"
       ),
     ),
     Ok([
-      @session.Notify(
+      @session.EmitNotice(
         @session.ObjectDatagramReceived(
           0,
           { namespace_fields: [b"demo"], name: b"video", },
@@ -58,7 +58,11 @@ test "GOAWAY, pending update, cancellation, and late object events stay ordered"
         ).unwrap(),
       ),
     ),
-    Ok([@session.Notify(@session.SubscriptionUpdateAccepted(0, 2, update_ok()))]),
+    Ok([
+      @session.EmitNotice(
+        @session.SubscriptionUpdateAccepted(0, 2, update_ok()),
+      ),
+    ]),
   )
   assert_eq(
     subscriber.receive(
@@ -71,14 +75,14 @@ test "GOAWAY, pending update, cancellation, and late object events stay ordered"
 
   assert_eq(
     subscriber.send_goaway(0UL),
-    Ok([@session.Send(10, client_goaway_control(1UL, 0UL, b""), false)]),
+    Ok([@session.SendChunk(10, client_goaway_control(1UL, 0UL, b""))]),
   )
   assert_eq(
     subscriber.cancel_request(0UL),
     Ok([
       @session.AbortSend(30, 1UL),
       @session.StopReceiving(30, 1UL),
-      @session.Notify(
+      @session.EmitNotice(
         @session.SubscriptionEnded(0, 30, {
           namespace_fields: [b"demo"],
           name: b"video",
@@ -111,7 +115,7 @@ test "GOAWAY, pending update, cancellation, and late object events stay ordered"
     ),
     Ok([@session.StopReceiving(40, 1UL)]),
   )
-  assert_eq(subscriber.receive(@session.StreamFinished(40)), Ok([]))
+  assert_eq(subscriber.receive(@session.InboundStreamFinished(40)), Ok([]))
   assert_eq(subscriber.cancel_request(0UL), Ok([]))
 }
 
@@ -121,11 +125,20 @@ test "Datagram send completion is separate from peer Object delivery" {
   let object = update_datagram(1, 7, b"peer-sample")
   assert_eq(
     publisher.send_object_datagram(20, object),
-    Ok([
-      @session.SendDatagram(@protocol.encode_object_datagram(object).unwrap()),
-    ]),
+    Ok(
+      (
+        0UL,
+        [
+          @session.SendDatagram(
+            0UL,
+            @protocol.encode_object_datagram(object).unwrap(),
+          ),
+          @session.EmitNotice(@session.DatagramQueued(0UL)),
+        ],
+      ),
+    ),
   )
-  assert_eq(publisher.receive(@session.DatagramSendComplete), Ok([]))
+  assert_eq(publisher.receive(@session.DatagramSendComplete(0UL)), Ok([]))
 
   let peer = subscriber_started()
   assert_eq(
@@ -135,7 +148,7 @@ test "Datagram send completion is separate from peer Object delivery" {
       ),
     ),
     Ok([
-      @session.Notify(
+      @session.EmitNotice(
         @session.ObjectDatagramReceived(
           0,
           { namespace_fields: [b"demo"], name: b"video", },

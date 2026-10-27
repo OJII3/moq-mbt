@@ -21,7 +21,7 @@ pub fn ClientSession::open_object_group(
   subscription_stream : Int64,
   group_id : UInt64,
   end_of_group~ : Bool = false,
-) -> Result[(ObjectGroupWriter, Array[ClientSessionAction]), ClientSessionError] {
+) -> Result[(ObjectGroupWriter, Array[SessionAction]), ClientSessionError] {
   let publisher_request_id = match
     self.publisher_request_for_subscription(subscription_stream) {
     Some(value) => value
@@ -77,7 +77,7 @@ pub fn ClientSession::open_object_group(
 pub fn ObjectGroupWriter::send(
   self : ObjectGroupWriter,
   payload : Bytes,
-) -> Result[Array[ClientSessionAction], ClientSessionError] {
+) -> Result[Array[SessionAction], ClientSessionError] {
   self.send_frame({
     object_id: self.next_object_id,
     status: @protocol.Normal,
@@ -92,7 +92,7 @@ pub fn ObjectGroupWriter::send(
 pub fn ObjectGroupWriter::send_frame(
   self : ObjectGroupWriter,
   frame : @protocol.SubgroupFrame,
-) -> Result[Array[ClientSessionAction], ClientSessionError] {
+) -> Result[Array[SessionAction], ClientSessionError] {
   if self.finished || self.aborted {
     return Err(UnexpectedMessage)
   }
@@ -117,7 +117,7 @@ pub fn ObjectGroupWriter::send_frame(
 /// ID. The returned actions contain the FIN and the next `OpenStream`.
 pub fn ObjectGroupWriter::rotate(
   self : ObjectGroupWriter,
-) -> Result[Array[ClientSessionAction], ClientSessionError] {
+) -> Result[Array[SessionAction], ClientSessionError] {
   let finish_actions = match self.finish() {
     Ok(value) => value
     Err(error) => return Err(error)
@@ -141,7 +141,7 @@ pub fn ObjectGroupWriter::rotate(
 /// Finish the current group. FIN is sent after already queued Objects.
 pub fn ObjectGroupWriter::finish(
   self : ObjectGroupWriter,
-) -> Result[Array[ClientSessionAction], ClientSessionError] {
+) -> Result[Array[SessionAction], ClientSessionError] {
   if self.finished || self.aborted {
     return Err(UnexpectedMessage)
   }
@@ -157,7 +157,7 @@ pub fn ObjectGroupWriter::finish(
 pub fn ObjectGroupWriter::abort(
   self : ObjectGroupWriter,
   code : UInt64,
-) -> Result[Array[ClientSessionAction], ClientSessionError] {
+) -> Result[Array[SessionAction], ClientSessionError] {
   if self.finished || self.aborted {
     return Err(UnexpectedMessage)
   }
@@ -185,7 +185,7 @@ fn ClientSession::queue_group_object(
   self : ClientSession,
   token : UInt64,
   frame : @protocol.SubgroupFrame,
-) -> Result[Array[ClientSessionAction], ClientSessionError] {
+) -> Result[Array[SessionAction], ClientSessionError] {
   let pending = match self.pending_object_streams.get(token) {
     Some(value) => value
     None => return Err(UnknownStream)
@@ -223,7 +223,7 @@ fn ClientSession::queue_group_object(
 fn ClientSession::finish_pending_group(
   self : ClientSession,
   token : UInt64,
-) -> Result[Array[ClientSessionAction], ClientSessionError] {
+) -> Result[Array[SessionAction], ClientSessionError] {
   match self.pending_object_streams.get(token) {
     Some(pending) => {
       pending.finish_requested = true
@@ -238,7 +238,7 @@ fn ClientSession::cancel_pending_group(
   self : ClientSession,
   token : UInt64,
   code : UInt64,
-) -> Result[Array[ClientSessionAction], ClientSessionError] {
+) -> Result[Array[SessionAction], ClientSessionError] {
   match self.pending_object_streams.get(token) {
     Some(pending) => {
       pending.cancelled_error_code = Some(code)
@@ -253,7 +253,7 @@ fn ClientSession::abort_outgoing_object_stream(
   self : ClientSession,
   stream : Int64,
   code : UInt64,
-) -> Result[Array[ClientSessionAction], ClientSessionError] {
+) -> Result[Array[SessionAction], ClientSessionError] {
   let outgoing = match self.outgoing_object_streams.get(stream) {
     Some(value) => value
     None => return Err(UnknownStream)
@@ -263,7 +263,8 @@ fn ClientSession::abort_outgoing_object_stream(
   let extra = self.finish_failed_subscription(subscription_stream)
   Ok(
     self.finish_actions(
-      [AbortSend(stream, code), Notify(SendFinished(stream, true))] + extra,
+      [AbortSend(stream, code), EmitNotice(StreamSendFinished(stream, Reset))] +
+      extra,
     ),
   )
 }

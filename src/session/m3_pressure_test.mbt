@@ -37,8 +37,8 @@ test "M3 rejected update drains a near-full stream set across cancellation" {
     reason: b"resource pressure",
     redirect: b"",
   }
-  let reject_actions : Array[@session.ClientSessionAction] = [
-    @session.Send(40, @protocol.encode_request_error(error).unwrap(), false),
+  let reject_actions : Array[@session.SessionAction] = [
+    @session.SendChunk(40, @protocol.encode_request_error(error).unwrap()),
   ]
   for stream in active_streams {
     reject_actions.push(@session.AbortSend(stream, 0UL))
@@ -54,7 +54,7 @@ test "M3 rejected update drains a near-full stream set across cancellation" {
     Ok([
       @session.AbortSend(40, 1UL),
       @session.StopReceiving(40, 1UL),
-      @session.Notify(
+      @session.EmitNotice(
         @session.SubscriptionEnded(1UL, 40, {
           namespace_fields: [b"demo"],
           name: b"video",
@@ -64,8 +64,10 @@ test "M3 rejected update drains a near-full stream set across cancellation" {
   )
   for stream in active_streams {
     assert_eq(
-      publisher.receive(@session.SendComplete(stream, true)),
-      Ok([@session.Notify(@session.SendFinished(stream, true))]),
+      publisher.receive(@session.SendCompleted(stream, @session.Reset)),
+      Ok([
+        @session.EmitNotice(@session.StreamSendFinished(stream, @session.Reset)),
+      ]),
     )
   }
   assert_eq(

@@ -4,7 +4,7 @@ fn test_namespace(fields : Array[Bytes]) -> @protocol.TrackNamespace {
 }
 
 ///|
-fn has_close_connection(actions : Array[@session.ClientSessionAction]) -> Bool {
+fn has_close_connection(actions : Array[@session.SessionAction]) -> Bool {
   for action in actions {
     match action {
       @session.CloseConnection(3UL, _) => return true
@@ -15,10 +15,10 @@ fn has_close_connection(actions : Array[@session.ClientSessionAction]) -> Bool {
 }
 
 ///|
-fn has_rejection_send(actions : Array[@session.ClientSessionAction]) -> Bool {
+fn has_rejection_send(actions : Array[@session.SessionAction]) -> Bool {
   for action in actions {
     match action {
-      @session.Send(42, _, true) => return true
+      @session.SendFin(42, _) => return true
       _ => ()
     }
   }
@@ -27,12 +27,12 @@ fn has_rejection_send(actions : Array[@session.ClientSessionAction]) -> Bool {
 
 ///|
 fn has_fin_send(
-  actions : Array[@session.ClientSessionAction],
+  actions : Array[@session.SessionAction],
   stream : Int64,
 ) -> Bool {
   for action in actions {
     match action {
-      @session.Send(actual, _, true) if actual == stream => return true
+      @session.SendFin(actual, _) if actual == stream => return true
       _ => ()
     }
   }
@@ -40,12 +40,10 @@ fn has_fin_send(
 }
 
 ///|
-fn has_namespace_rejection(
-  actions : Array[@session.ClientSessionAction],
-) -> Bool {
+fn has_namespace_rejection(actions : Array[@session.SessionAction]) -> Bool {
   for action in actions {
     match action {
-      @session.Notify(@session.NamespaceSubscriptionRejected(3UL, 42, _)) =>
+      @session.EmitNotice(@session.NamespaceSubscriptionRejected(3UL, 42, _)) =>
         return true
       _ => ()
     }
@@ -66,14 +64,13 @@ test "SUBSCRIBE_NAMESPACE restores full names, including empty suffixes, then wi
   assert_eq(
     client.receive(@session.StreamOpened(@session.Request(request_id), 30)),
     Ok([
-      @session.Send(
+      @session.SendChunk(
         30,
         @protocol.encode_subscribe_namespace({
           request_id,
           track_namespace: prefix,
           parameters: [],
         }).unwrap(),
-        false,
       ),
     ]),
   )
@@ -84,7 +81,9 @@ test "SUBSCRIBE_NAMESPACE restores full names, including empty suffixes, then wi
   assert_eq(
     client.receive(@session.StreamData(30, ok)),
     Ok([
-      @session.Notify(@session.NamespaceSubscriptionEstablished(request_id, 30)),
+      @session.EmitNotice(
+        @session.NamespaceSubscriptionEstablished(request_id, 30),
+      ),
     ]),
   )
   assert_eq(
@@ -96,7 +95,7 @@ test "SUBSCRIBE_NAMESPACE restores full names, including empty suffixes, then wi
         }).unwrap(),
       ),
     ),
-    Ok([@session.Notify(@session.NamespaceDiscovered(request_id, full))]),
+    Ok([@session.EmitNotice(@session.NamespaceDiscovered(request_id, full))]),
   )
   assert_eq(
     client.receive(
@@ -105,7 +104,7 @@ test "SUBSCRIBE_NAMESPACE restores full names, including empty suffixes, then wi
         @protocol.encode_namespace({ track_namespace: test_namespace([]), }).unwrap(),
       ),
     ),
-    Ok([@session.Notify(@session.NamespaceDiscovered(request_id, prefix))]),
+    Ok([@session.EmitNotice(@session.NamespaceDiscovered(request_id, prefix))]),
   )
   assert_eq(
     client.receive(
@@ -115,7 +114,9 @@ test "SUBSCRIBE_NAMESPACE restores full names, including empty suffixes, then wi
       ),
     ),
     Ok([
-      @session.Notify(@session.NamespaceNoLongerAvailable(request_id, prefix)),
+      @session.EmitNotice(
+        @session.NamespaceNoLongerAvailable(request_id, prefix),
+      ),
     ]),
   )
   assert_eq(
@@ -127,7 +128,9 @@ test "SUBSCRIBE_NAMESPACE restores full names, including empty suffixes, then wi
         }).unwrap(),
       ),
     ),
-    Ok([@session.Notify(@session.NamespaceNoLongerAvailable(request_id, full))]),
+    Ok([
+      @session.EmitNotice(@session.NamespaceNoLongerAvailable(request_id, full)),
+    ]),
   )
 }
 
@@ -170,11 +173,11 @@ test "namespace subscription rejects DONE before NAMESPACE and closes on FIN wit
     ),
   )
   assert_eq(
-    second.receive(@session.StreamFinished(31)),
+    second.receive(@session.InboundStreamFinished(31)),
     Ok([
-      @session.Send(31, b"", true),
-      @session.Notify(@session.NamespaceNoLongerAvailable(second_id, full)),
-      @session.Notify(@session.NamespaceSubscriptionEnded(second_id, 31)),
+      @session.SendFin(31, b""),
+      @session.EmitNotice(@session.NamespaceNoLongerAvailable(second_id, full)),
+      @session.EmitNotice(@session.NamespaceSubscriptionEnded(second_id, 31)),
     ]),
   )
 
@@ -198,10 +201,10 @@ test "namespace subscription rejects DONE before NAMESPACE and closes on FIN wit
   )
   ignore(peer_cancel.accept_namespace_subscription(33, []).unwrap())
   assert_eq(
-    peer_cancel.receive(@session.StreamFinished(33)),
+    peer_cancel.receive(@session.InboundStreamFinished(33)),
     Ok([
-      @session.Send(33, b"", true),
-      @session.Notify(@session.NamespaceSubscriptionEnded(1UL, 33)),
+      @session.SendFin(33, b""),
+      @session.EmitNotice(@session.NamespaceSubscriptionEnded(1UL, 33)),
     ]),
   )
 
@@ -222,10 +225,10 @@ test "namespace subscription rejects DONE before NAMESPACE and closes on FIN wit
   assert_eq(
     canceled.cancel_request(cancel_id),
     Ok([
-      @session.Send(32, b"", true),
+      @session.SendFin(32, b""),
       @session.StopReceiving(32, 1UL),
-      @session.Notify(@session.NamespaceNoLongerAvailable(cancel_id, full)),
-      @session.Notify(@session.NamespaceSubscriptionEnded(cancel_id, 32)),
+      @session.EmitNotice(@session.NamespaceNoLongerAvailable(cancel_id, full)),
+      @session.EmitNotice(@session.NamespaceSubscriptionEnded(cancel_id, 32)),
     ]),
   )
   assert_eq(canceled.cancel_request(cancel_id), Ok([]))
@@ -252,28 +255,28 @@ test "peer namespace subscriptions enumerate app names and reject tuple prefix o
       ),
     ),
     Ok([
-      @session.Notify(@session.NamespaceSubscriptionRequested(1UL, 40, prefix)),
+      @session.EmitNotice(
+        @session.NamespaceSubscriptionRequested(1UL, 40, prefix),
+      ),
     ]),
   )
   let actions = publisher.accept_namespace_subscription(40, [child]).unwrap()
   assert_eq(actions, [
-    @session.Send(
+    @session.SendChunk(
       40,
       @protocol.encode_request_ok_for(
         { parameters: [], properties: b"", },
         @protocol.Namespace,
       ).unwrap(),
-      false,
     ),
-    @session.Notify(@session.NamespaceSubscriptionEstablished(1UL, 40)),
-    @session.Send(
+    @session.EmitNotice(@session.NamespaceSubscriptionEstablished(1UL, 40)),
+    @session.SendChunk(
       40,
       @protocol.encode_namespace({
         track_namespace: test_namespace([b"child"]),
       }).unwrap(),
-      false,
     ),
-    @session.Notify(@session.NamespaceDiscovered(1UL, child)),
+    @session.EmitNotice(@session.NamespaceDiscovered(1UL, child)),
   ])
 
   ignore(
@@ -332,15 +335,17 @@ test "namespace prefix update switches suffix interpretation at REQUEST_OK in on
       @session.StreamData(70, old_namespace + update_ok + new_namespace),
     ),
     Ok([
-      @session.Notify(@session.NamespaceDiscovered(request_id, old_name)),
-      @session.Notify(
+      @session.EmitNotice(@session.NamespaceDiscovered(request_id, old_name)),
+      @session.EmitNotice(
         @session.NamespaceSubscriptionUpdateAccepted(request_id, update_id, {
           parameters: [],
           properties: b"",
         }),
       ),
-      @session.Notify(@session.NamespaceNoLongerAvailable(request_id, old_name)),
-      @session.Notify(@session.NamespaceDiscovered(request_id, new_name)),
+      @session.EmitNotice(
+        @session.NamespaceNoLongerAvailable(request_id, old_name),
+      ),
+      @session.EmitNotice(@session.NamespaceDiscovered(request_id, new_name)),
     ]),
   )
 }
@@ -389,13 +394,13 @@ test "namespace prefix update response split across chunks uses new prefix after
       ),
     ),
     Ok([
-      @session.Notify(
+      @session.EmitNotice(
         @session.NamespaceSubscriptionUpdateAccepted(request_id, update_id, {
           parameters: [],
           properties: b"",
         }),
       ),
-      @session.Notify(
+      @session.EmitNotice(
         @session.NamespaceDiscovered(
           request_id,
           test_namespace([b"after", b"child"]),
@@ -438,7 +443,7 @@ test "peer namespace prefix update is accepted and re-enumerates under new prefi
   assert_eq(
     publisher.receive(@session.StreamData(72, update)),
     Ok([
-      @session.Notify(
+      @session.EmitNotice(
         @session.NamespaceSubscriptionUpdateRequested(
           1UL, update_id, 72, new_prefix,
         ),
@@ -451,28 +456,26 @@ test "peer namespace prefix update is accepted and re-enumerates under new prefi
       properties: b"",
     }),
     Ok([
-      @session.Send(
+      @session.SendChunk(
         72,
         @protocol.encode_request_ok_for(
           { parameters: [], properties: b"", },
           @protocol.RequestUpdate,
         ).unwrap(),
-        false,
       ),
-      @session.Notify(
+      @session.EmitNotice(
         @session.NamespaceSubscriptionUpdateAccepted(1UL, update_id, {
           parameters: [],
           properties: b"",
         }),
       ),
-      @session.Send(
+      @session.SendChunk(
         72,
         @protocol.encode_namespace({
           track_namespace: test_namespace([b"room"]),
         }).unwrap(),
-        false,
       ),
-      @session.Notify(@session.NamespaceDiscovered(1UL, current)),
+      @session.EmitNotice(@session.NamespaceDiscovered(1UL, current)),
     ]),
   )
 }
@@ -569,24 +572,24 @@ test "namespace prefix updates reject overlap and rejection leaves other subscri
     .unwrap()
   assert_true(
     rejected.contains(
-      @session.Send(75, @protocol.encode_request_error(error).unwrap(), true),
+      @session.SendFin(75, @protocol.encode_request_error(error).unwrap()),
     ),
   )
   assert_true(
     rejected.contains(
-      @session.Notify(@session.NamespaceNoLongerAvailable(1UL, active_name)),
+      @session.EmitNotice(@session.NamespaceNoLongerAvailable(1UL, active_name)),
     ),
   )
   assert_true(
     rejected.contains(
-      @session.Notify(
+      @session.EmitNotice(
         @session.NamespaceSubscriptionUpdateRejected(1UL, update_id, error),
       ),
     ),
   )
   assert_true(
     rejected.contains(
-      @session.Notify(@session.NamespaceSubscriptionEnded(1UL, 75)),
+      @session.EmitNotice(@session.NamespaceSubscriptionEnded(1UL, 75)),
     ),
   )
   assert_true(rejected.contains(@session.StopReceiving(75, 1UL)))
@@ -595,12 +598,11 @@ test "namespace prefix updates reject overlap and rejection leaves other subscri
     .publish_application_namespace(test_namespace([b"independent", b"next"]))
     .unwrap()
     .contains(
-      @session.Send(
+      @session.SendChunk(
         76,
         @protocol.encode_namespace({
           track_namespace: test_namespace([b"next"]),
         }).unwrap(),
-        false,
       ),
     ),
   )
@@ -656,7 +658,7 @@ test "canceling namespace discovery leaves an independent track subscription act
     .cancel_request(namespace_id)
     .unwrap()
     .contains(
-      @session.Notify(@session.NamespaceSubscriptionEnded(namespace_id, 30)),
+      @session.EmitNotice(@session.NamespaceSubscriptionEnded(namespace_id, 30)),
     ),
   )
   let header = client_subgroup_header(10UL, 0UL)
@@ -677,7 +679,9 @@ test "canceling namespace discovery leaves an independent track subscription act
       ),
     ),
     Ok([
-      @session.Notify(@session.ObjectReceived(track_id, track, header, [frame])),
+      @session.EmitNotice(
+        @session.ObjectReceived(track_id, track, header, [frame]),
+      ),
     ]),
   )
 }
@@ -768,19 +772,19 @@ test "rejected namespace prefix update terminates only its request" {
     .unwrap()
   assert_true(
     actions.contains(
-      @session.Notify(
+      @session.EmitNotice(
         @session.NamespaceNoLongerAvailable(request_id, active_name),
       ),
     ),
   )
   assert_true(
     actions.contains(
-      @session.Notify(@session.NamespaceSubscriptionEnded(request_id, 78)),
+      @session.EmitNotice(@session.NamespaceSubscriptionEnded(request_id, 78)),
     ),
   )
   assert_true(
     actions.contains(
-      @session.Notify(
+      @session.EmitNotice(
         @session.NamespaceSubscriptionUpdateRejected(
           request_id, update_id, error,
         ),
@@ -831,7 +835,9 @@ test "namespace prefix matching treats sibling tuple branches as disjoint" {
       ),
     ),
     Ok([
-      @session.Notify(@session.NamespaceSubscriptionRequested(3UL, 52, right)),
+      @session.EmitNotice(
+        @session.NamespaceSubscriptionRequested(3UL, 52, right),
+      ),
     ]),
   )
   ignore(
@@ -898,31 +904,29 @@ test "accepted local namespace publications are enumerated and withdrawn to peer
     ),
   )
   assert_eq(publisher.accept_namespace_subscription(40, []).unwrap(), [
-    @session.Send(40, ok, false),
-    @session.Notify(@session.NamespaceSubscriptionEstablished(1UL, 40)),
-    @session.Send(
+    @session.SendChunk(40, ok),
+    @session.EmitNotice(@session.NamespaceSubscriptionEstablished(1UL, 40)),
+    @session.SendChunk(
       40,
       @protocol.encode_namespace({
         track_namespace: test_namespace([b"series"]),
       }).unwrap(),
-      false,
     ),
-    @session.Notify(@session.NamespaceDiscovered(1UL, full)),
+    @session.EmitNotice(@session.NamespaceDiscovered(1UL, full)),
   ])
   assert_eq(
     publisher.cancel_request(publish_id),
     Ok([
-      @session.Send(
+      @session.SendChunk(
         40,
         @protocol.encode_namespace_done({
           track_namespace: test_namespace([b"series"]),
         }).unwrap(),
-        false,
       ),
-      @session.Notify(@session.NamespaceNoLongerAvailable(1UL, full)),
+      @session.EmitNotice(@session.NamespaceNoLongerAvailable(1UL, full)),
       @session.AbortSend(30, 1UL),
       @session.StopReceiving(30, 1UL),
-      @session.Notify(@session.NamespaceWithdrawn(publish_id, 30)),
+      @session.EmitNotice(@session.NamespaceWithdrawn(publish_id, 30)),
     ]),
   )
 }

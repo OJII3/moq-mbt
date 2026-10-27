@@ -6,7 +6,7 @@ fn ClientSession::receive_peer_request(
   self : ClientSession,
   stream : Int64,
   bytes : Bytes,
-) -> Result[Array[ClientSessionAction], ClientSessionError] {
+) -> Result[Array[SessionAction], ClientSessionError] {
   match self.inbound_subscriptions.get(stream) {
     Some(inbound) if inbound.lifetime.cancelled ||
       inbound.lifetime.peer_send_closed => return Ok([])
@@ -23,7 +23,7 @@ fn ClientSession::receive_peer_request(
     return Err(BufferLimitExceeded)
   }
   let mut remaining = buffer + bytes
-  let actions : Array[ClientSessionAction] = []
+  let actions : Array[SessionAction] = []
   while !remaining.is_empty() {
     match
       @protocol.decode_control_with_context(remaining, @protocol.RequestStream) {
@@ -50,9 +50,9 @@ fn ClientSession::receive_peer_request(
                 Ok(value) => value
                 Err(codec_error) => return Err(Encoding(codec_error))
               }
-              actions.push(Send(stream, error_bytes, true))
+              actions.push(SendFin(stream, error_bytes))
               actions.push(
-                Notify(FetchRejected(request.request_id, stream, error)),
+                EmitNotice(FetchRejected(request.request_id, stream, error)),
               )
               continue
             }
@@ -70,9 +70,9 @@ fn ClientSession::receive_peer_request(
                     Ok(value) => value
                     Err(codec_error) => return Err(Encoding(codec_error))
                   }
-                  actions.push(Send(stream, error_bytes, true))
+                  actions.push(SendFin(stream, error_bytes))
                   actions.push(
-                    Notify(FetchRejected(request.request_id, stream, error)),
+                    EmitNotice(FetchRejected(request.request_id, stream, error)),
                   )
                 } else {
                   self.fetch_streams[stream] = request.request_id
@@ -86,7 +86,7 @@ fn ClientSession::receive_peer_request(
                     request.parameters,
                   )
                   actions.push(
-                    Notify(
+                    EmitNotice(
                       FetchRequested(
                         request.request_id,
                         stream,
@@ -160,7 +160,7 @@ fn ClientSession::receive_peer_request(
                 Ok(value) => value
                 Err(error) => return Err(Encoding(error))
               }
-              actions.push(Send(stream, error, true))
+              actions.push(SendFin(stream, error))
             } else {
               let publisher_request_id = match
                 self.find_publisher(request.track) {
@@ -175,7 +175,7 @@ fn ClientSession::receive_peer_request(
                 lifetime: RequestLifetime::new(),
               }
               actions.push(
-                Notify(
+                EmitNotice(
                   SubscriptionRequested(
                     request.request_id,
                     stream,
@@ -275,7 +275,7 @@ fn ClientSession::find_publisher(
 pub fn ClientSession::accept_subscription(
   self : ClientSession,
   stream : Int64,
-) -> Result[Array[ClientSessionAction], ClientSessionError] {
+) -> Result[Array[SessionAction], ClientSessionError] {
   match self.ensure_open() {
     Ok(_) => ()
     Err(error) => return Err(error)
@@ -327,8 +327,8 @@ pub fn ClientSession::accept_subscription(
   Ok(
     self.finish_actions(
       [
-        Send(stream, response, false),
-        Notify(
+        SendChunk(stream, response),
+        EmitNotice(
           SubscriptionAccepted(
             inbound.request_id,
             stream,
@@ -347,7 +347,7 @@ pub fn ClientSession::reject_subscription(
   self : ClientSession,
   stream : Int64,
   error : @protocol.RequestErrorMessage,
-) -> Result[Array[ClientSessionAction], ClientSessionError] {
+) -> Result[Array[SessionAction], ClientSessionError] {
   match self.ensure_open() {
     Ok(_) => ()
     Err(error) => return Err(error)
@@ -372,8 +372,8 @@ pub fn ClientSession::reject_subscription(
   Ok(
     self.finish_actions(
       [
-        Send(stream, response, true),
-        Notify(SubscriptionRejected(inbound.request_id, stream)),
+        SendFin(stream, response),
+        EmitNotice(SubscriptionRejected(inbound.request_id, stream)),
       ] +
       joining_actions,
     ),
@@ -385,7 +385,7 @@ fn ClientSession::end_inbound_subscription(
   self : ClientSession,
   stream : Int64,
   event : RequestLifetimeEvent,
-) -> Array[ClientSessionAction] {
+) -> Array[SessionAction] {
   self.request_goaway_deadlines.remove(stream)
   let inbound = match self.inbound_subscriptions.get(stream) {
     Some(value) => value
@@ -418,7 +418,9 @@ fn ClientSession::end_inbound_subscription(
   }
   if effects.notify_end {
     let track = self.requests.get(inbound.publisher_request_id).unwrap().track
-    actions.push(Notify(SubscriptionEnded(inbound.request_id, stream, track)))
+    actions.push(
+      EmitNotice(SubscriptionEnded(inbound.request_id, stream, track)),
+    )
   }
   actions
 }

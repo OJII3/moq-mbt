@@ -86,10 +86,17 @@ negotiation succeeds and continues to poll its monotonic clock while active.
 I/O promises feed completion or failure events back into the session without
 pausing the stream and datagram readers.
 
-`SendComplete` represents the backend's completion point. In this adapter it
-means the browser accepted each write and, for FIN, completed `writer.close()`;
-it is not a QUIC ACK or peer delivery confirmation. Native backends may provide
-a stronger completion signal, but the common session API does not require one.
+`SendCompleted` represents the backend's completion point and reports `Sent`
+or `Reset`. In this adapter it means the browser accepted each write and, for
+FIN, completed `writer.close()`; it is not a QUIC ACK or peer delivery
+confirmation. Native backends may provide a stronger completion signal, but
+the common session API does not require one.
+
+Object Datagrams are tracked by token. `send_object_datagram` returns a token
+and emits `DatagramQueued(token)` once the session has queued it for transport.
+A local write failure produces `DatagramLocalWriteFailed(token, status)`; the
+browser API exposes no network acknowledgement, so a queued datagram is not
+proof of peer delivery.
 
 ## Browser client facade
 

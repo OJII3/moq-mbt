@@ -2,7 +2,9 @@
 fn client_session_ready() -> @session.ClientSession raise {
   let client = @session.ClientSession::new(@session.Draft18, { options: [], }).unwrap()
   assert_eq(
-    client.receive(@session.DatagramSendCapabilityChanged(true, 65535)),
+    client.receive(
+      @session.DatagramSendCapabilityChanged(enabled=true, max_length=65535),
+    ),
     Ok([]),
   )
   assert_eq(
@@ -11,7 +13,7 @@ fn client_session_ready() -> @session.ClientSession raise {
   )
   assert_eq(
     client.receive(@session.StreamOpened(@session.Control, 10)),
-    Ok([@session.Send(10, b"\xaf\x00\x00\x00", false)]),
+    Ok([@session.SendChunk(10, b"\xaf\x00\x00\x00")]),
   )
   assert_eq(
     client.receive(@session.InboundStreamStarted(11, @session.Unidirectional)),
@@ -19,9 +21,9 @@ fn client_session_ready() -> @session.ClientSession raise {
   )
   assert_eq(
     client.receive(@session.StreamData(11, b"\xaf\x00\x00\x00")),
-    Ok([@session.Notify(@session.HandshakeComplete({ options: [], }))]),
+    Ok([@session.EmitNotice(@session.HandshakeComplete({ options: [], }))]),
   )
-  ignore(client.receive(@session.SendComplete(10, false)))
+  ignore(client.receive(@session.SendCompleted(10, @session.Sent)))
   client
 }
 
@@ -55,11 +57,9 @@ fn client_object(
 }
 
 ///|
-fn client_send_bytes(
-  actions : Array[@session.ClientSessionAction],
-) -> Bytes raise {
+fn client_send_bytes(actions : Array[@session.SessionAction]) -> Bytes raise {
   match actions {
-    [@session.Send(_, bytes, _)] => bytes
+    [@session.SendChunk(_, bytes)] | [@session.SendFin(_, bytes)] => bytes
     _ => fail("expected one send action")
   }
 }
@@ -93,7 +93,7 @@ test "ClientSession shares even request IDs across tracks and routes interleaved
   assert_eq(
     publisher.receive(@session.StreamOpened(@session.Request(2), 22)),
     Ok([
-      @session.Send(
+      @session.SendChunk(
         22,
         @protocol.encode_publish({
           request_id: 2,
@@ -102,14 +102,13 @@ test "ClientSession shares even request IDs across tracks and routes interleaved
           parameters: [],
           properties: b"",
         }).unwrap(),
-        false,
       ),
     ]),
   )
   assert_eq(
     publisher.receive(@session.StreamOpened(@session.Request(0), 20)),
     Ok([
-      @session.Send(
+      @session.SendChunk(
         20,
         @protocol.encode_publish({
           request_id: 0,
@@ -118,7 +117,6 @@ test "ClientSession shares even request IDs across tracks and routes interleaved
           parameters: [],
           properties: b"",
         }).unwrap(),
-        false,
       ),
     ]),
   )
@@ -129,12 +127,12 @@ test "ClientSession shares even request IDs across tracks and routes interleaved
   }).unwrap()
   assert_eq(
     publisher.receive(@session.StreamData(22, publish_ok)),
-    Ok([@session.Notify(@session.PublishAccepted(2, track_b, 2UL))]),
+    Ok([@session.EmitNotice(@session.PublishAccepted(2, track_b, 2UL))]),
   )
   assert_eq(
     publisher.receive(@session.StreamData(20, publish_ok)),
     Ok([
-      @session.Notify(
+      @session.EmitNotice(
         @session.PublishAccepted(
           0,
           { namespace_fields: [b"demo"], name: b"video", },
@@ -160,28 +158,26 @@ test "ClientSession shares even request IDs across tracks and routes interleaved
   assert_eq(
     subscriber.receive(@session.StreamOpened(@session.Request(2), 32)),
     Ok([
-      @session.Send(
+      @session.SendChunk(
         32,
         @protocol.encode_subscribe({
           request_id: 2,
           track: track_b,
           parameters: [],
         }).unwrap(),
-        false,
       ),
     ]),
   )
   assert_eq(
     subscriber.receive(@session.StreamOpened(@session.Request(0), 30)),
     Ok([
-      @session.Send(
+      @session.SendChunk(
         30,
         @protocol.encode_subscribe({
           request_id: 0,
           track: track_a,
           parameters: [],
         }).unwrap(),
-        false,
       ),
     ]),
   )
@@ -202,7 +198,7 @@ test "ClientSession shares even request IDs across tracks and routes interleaved
   )
   assert_eq(
     publisher.receive(@session.StreamData(40, subscribe_a_from_relay)),
-    Ok([@session.Notify(@session.SubscriptionRequested(1, 40, track_a))]),
+    Ok([@session.EmitNotice(@session.SubscriptionRequested(1, 40, track_a))]),
   )
   assert_eq(
     publisher.receive(@session.InboundStreamStarted(42, @session.Bidirectional)),
@@ -210,37 +206,35 @@ test "ClientSession shares even request IDs across tracks and routes interleaved
   )
   assert_eq(
     publisher.receive(@session.StreamData(42, subscribe_b_from_relay)),
-    Ok([@session.Notify(@session.SubscriptionRequested(3, 42, track_b))]),
+    Ok([@session.EmitNotice(@session.SubscriptionRequested(3, 42, track_b))]),
   )
 
   assert_eq(
     publisher.accept_subscription(40),
     Ok([
-      @session.Send(
+      @session.SendChunk(
         40,
         @protocol.encode_subscribe_ok({
           track_alias: 1,
           parameters: [],
           properties: b"",
         }).unwrap(),
-        false,
       ),
-      @session.Notify(@session.SubscriptionAccepted(1, 40, 1)),
+      @session.EmitNotice(@session.SubscriptionAccepted(1, 40, 1)),
     ]),
   )
   assert_eq(
     publisher.accept_subscription(42),
     Ok([
-      @session.Send(
+      @session.SendChunk(
         42,
         @protocol.encode_subscribe_ok({
           track_alias: 2,
           parameters: [],
           properties: b"",
         }).unwrap(),
-        false,
       ),
-      @session.Notify(@session.SubscriptionAccepted(3, 42, 2)),
+      @session.EmitNotice(@session.SubscriptionAccepted(3, 42, 2)),
     ]),
   )
   assert_eq(
@@ -254,7 +248,7 @@ test "ClientSession shares even request IDs across tracks and routes interleaved
         }).unwrap(),
       ),
     ),
-    Ok([@session.Notify(@session.SubscribeEstablished(2, 20))]),
+    Ok([@session.EmitNotice(@session.SubscribeEstablished(2, 20))]),
   )
   assert_eq(
     subscriber.receive(
@@ -267,7 +261,7 @@ test "ClientSession shares even request IDs across tracks and routes interleaved
         }).unwrap(),
       ),
     ),
-    Ok([@session.Notify(@session.SubscribeEstablished(0, 10))]),
+    Ok([@session.EmitNotice(@session.SubscribeEstablished(0, 10))]),
   )
 
   let header_a = client_subgroup_header(1, 5)
@@ -284,11 +278,11 @@ test "ClientSession shares even request IDs across tracks and routes interleaved
   )
   assert_eq(
     publisher.receive(@session.StreamOpened(@session.Object(0), 50)),
-    Ok([@session.Send(50, @protocol.encode_subgroup_header(header_a), false)]),
+    Ok([@session.SendChunk(50, @protocol.encode_subgroup_header(header_a))]),
   )
   assert_eq(
     publisher.receive(@session.StreamOpened(@session.Object(1), 52)),
-    Ok([@session.Send(52, @protocol.encode_subgroup_header(header_b), false)]),
+    Ok([@session.SendChunk(52, @protocol.encode_subgroup_header(header_b))]),
   )
   assert_eq(
     subscriber.receive(
@@ -340,7 +334,7 @@ test "ClientSession shares even request IDs across tracks and routes interleaved
   assert_eq(
     subscriber.receive(@session.StreamData(60, object_a0)),
     Ok([
-      @session.Notify(
+      @session.EmitNotice(
         @session.ObjectReceived(
           0,
           { namespace_fields: [b"demo"], name: b"video", },
@@ -353,7 +347,7 @@ test "ClientSession shares even request IDs across tracks and routes interleaved
   assert_eq(
     subscriber.receive(@session.StreamData(62, object_b0)),
     Ok([
-      @session.Notify(
+      @session.EmitNotice(
         @session.ObjectReceived(2, track_b, subscriber_header_b, [frame_b0]),
       ),
     ]),
@@ -361,7 +355,7 @@ test "ClientSession shares even request IDs across tracks and routes interleaved
   assert_eq(
     subscriber.receive(@session.StreamData(60, object_a1)),
     Ok([
-      @session.Notify(
+      @session.EmitNotice(
         @session.ObjectReceived(
           0,
           { namespace_fields: [b"demo"], name: b"video", },
@@ -374,53 +368,46 @@ test "ClientSession shares even request IDs across tracks and routes interleaved
   assert_eq(
     subscriber.receive(@session.StreamData(62, object_b1)),
     Ok([
-      @session.Notify(
+      @session.EmitNotice(
         @session.ObjectReceived(2, track_b, subscriber_header_b, [frame_b1]),
       ),
     ]),
   )
 
-  assert_eq(
-    publisher.finish_object_stream(50),
-    Ok([@session.Send(50, b"", true)]),
-  )
-  assert_eq(
-    publisher.finish_object_stream(52),
-    Ok([@session.Send(52, b"", true)]),
-  )
+  assert_eq(publisher.finish_object_stream(50), Ok([@session.SendFin(50, b"")]))
+  assert_eq(publisher.finish_object_stream(52), Ok([@session.SendFin(52, b"")]))
   for _ in 0..<3 {
     assert_eq(
-      publisher.receive(@session.SendComplete(50, false)),
-      Ok([@session.Notify(@session.SendFinished(50, false))]),
+      publisher.receive(@session.SendCompleted(50, @session.Sent)),
+      Ok([@session.EmitNotice(@session.StreamSendFinished(50, @session.Sent))]),
     )
     assert_eq(
-      publisher.receive(@session.SendComplete(52, false)),
-      Ok([@session.Notify(@session.SendFinished(52, false))]),
+      publisher.receive(@session.SendCompleted(52, @session.Sent)),
+      Ok([@session.EmitNotice(@session.StreamSendFinished(52, @session.Sent))]),
     )
   }
   assert_eq(
-    publisher.receive(@session.SendComplete(50, false)),
+    publisher.receive(@session.SendCompleted(50, @session.Sent)),
     Ok([
-      @session.Notify(@session.SendFinished(50, false)),
-      @session.Notify(@session.ObjectStreamFinished(50)),
+      @session.EmitNotice(@session.StreamSendFinished(50, @session.Sent)),
+      @session.EmitNotice(@session.ObjectStreamSendFinished(50)),
     ]),
   )
   assert_eq(
-    publisher.receive(@session.SendComplete(52, false)),
+    publisher.receive(@session.SendCompleted(52, @session.Sent)),
     Ok([
-      @session.Notify(@session.SendFinished(52, false)),
-      @session.Notify(@session.ObjectStreamFinished(52)),
+      @session.EmitNotice(@session.StreamSendFinished(52, @session.Sent)),
+      @session.EmitNotice(@session.ObjectStreamSendFinished(52)),
     ]),
   )
   assert_eq(
     publisher.publish_done(40, 3, b""),
     Ok([
-      @session.Send(
+      @session.SendFin(
         40,
         @protocol.encode_publish_done({ code: 3, stream_count: 1, reason: b"", }).unwrap(),
-        true,
       ),
-      @session.Notify(
+      @session.EmitNotice(
         @session.PublishDone(1, { code: 3, stream_count: 1, reason: b"", }),
       ),
     ]),
@@ -428,12 +415,11 @@ test "ClientSession shares even request IDs across tracks and routes interleaved
   assert_eq(
     publisher.publish_done(42, 3, b""),
     Ok([
-      @session.Send(
+      @session.SendFin(
         42,
         @protocol.encode_publish_done({ code: 3, stream_count: 1, reason: b"", }).unwrap(),
-        true,
       ),
-      @session.Notify(
+      @session.EmitNotice(
         @session.PublishDone(3, { code: 3, stream_count: 1, reason: b"", }),
       ),
     ]),
@@ -445,7 +431,7 @@ test "ClientSession shares even request IDs across tracks and routes interleaved
         @protocol.encode_publish_done({ code: 3, stream_count: 1, reason: b"", }).unwrap(),
       ),
     ),
-    Ok([@session.Send(32, b"", true)]),
+    Ok([@session.SendFin(32, b"")]),
   )
   assert_eq(
     subscriber.receive(
@@ -454,22 +440,22 @@ test "ClientSession shares even request IDs across tracks and routes interleaved
         @protocol.encode_publish_done({ code: 3, stream_count: 1, reason: b"", }).unwrap(),
       ),
     ),
-    Ok([@session.Send(30, b"", true)]),
+    Ok([@session.SendFin(30, b"")]),
   )
   assert_eq(
-    subscriber.receive(@session.StreamFinished(60)),
+    subscriber.receive(@session.InboundStreamFinished(60)),
     Ok([
-      @session.Notify(@session.GroupFinished(0, 5)),
-      @session.Notify(
+      @session.EmitNotice(@session.GroupFinished(0, 5)),
+      @session.EmitNotice(
         @session.PublishDone(0, { code: 3, stream_count: 1, reason: b"", }),
       ),
     ]),
   )
   assert_eq(
-    subscriber.receive(@session.StreamFinished(62)),
+    subscriber.receive(@session.InboundStreamFinished(62)),
     Ok([
-      @session.Notify(@session.GroupFinished(2, 7)),
-      @session.Notify(
+      @session.EmitNotice(@session.GroupFinished(2, 7)),
+      @session.EmitNotice(
         @session.PublishDone(2, { code: 3, stream_count: 1, reason: b"", }),
       ),
     ]),
@@ -489,15 +475,15 @@ test "ClientSession preserves SETUP trailing control bytes" {
       @session.StreamData(11, b"\x00\x00" + b"\x10\x00\x03\x00\x00\x00"),
     ),
     Ok([
-      @session.Notify(@session.HandshakeComplete({ options: [], })),
-      @session.Notify(
+      @session.EmitNotice(@session.HandshakeComplete({ options: [], })),
+      @session.EmitNotice(
         @session.ControlMessageReceived(
           @protocol.GoAwayControl({ uri: b"", timeout_ms: 0, request_id: 0, }),
         ),
       ),
-      @session.Notify(@session.ControlGoAwayReceived(b"", 0UL, 0UL)),
+      @session.EmitNotice(@session.ControlGoAwayReceived(b"", 0UL, 0UL)),
       @session.CloseConnection(0UL, b""),
-      @session.Notify(@session.SessionEnded(@session.Local(0UL, b""))),
+      @session.EmitNotice(@session.SessionEnded(@session.Local(0UL, b""))),
     ]),
   )
 }
@@ -519,7 +505,7 @@ test "peer request ID parity and duplicate violations close the session" {
     ),
     Ok([
       @session.CloseConnection(4, b""),
-      @session.Notify(@session.SessionEnded(@session.Local(4, b""))),
+      @session.EmitNotice(@session.SessionEnded(@session.Local(4, b""))),
     ]),
   )
   assert_eq(invalid.receive(@session.StreamData(40, b"")), Ok([]))
@@ -537,7 +523,7 @@ test "peer request ID parity and duplicate violations close the session" {
   }).unwrap()
   assert_eq(
     duplicate.receive(@session.StreamData(40, first)),
-    Ok([@session.Notify(@session.SubscriptionRequested(1, 40, track))]),
+    Ok([@session.EmitNotice(@session.SubscriptionRequested(1, 40, track))]),
   )
   assert_eq(
     duplicate.receive(@session.InboundStreamStarted(41, @session.Bidirectional)),
@@ -547,7 +533,7 @@ test "peer request ID parity and duplicate violations close the session" {
     duplicate.receive(@session.StreamData(41, first)),
     Ok([
       @session.CloseConnection(4, b""),
-      @session.Notify(@session.SessionEnded(@session.Local(4, b""))),
+      @session.EmitNotice(@session.SessionEnded(@session.Local(4, b""))),
     ]),
   )
   assert_eq(duplicate.receive(@session.StreamData(41, b"")), Ok([]))
@@ -573,7 +559,7 @@ test "peer request ID parity accepts distinct odd IDs" {
         ),
       ),
       Ok([
-        @session.Notify(
+        @session.EmitNotice(
           @session.SubscriptionRequested(request_id, stream, track),
         ),
       ]),
@@ -582,31 +568,29 @@ test "peer request ID parity accepts distinct odd IDs" {
   assert_eq(
     publisher.accept_subscription(40),
     Ok([
-      @session.Send(
+      @session.SendChunk(
         40,
         @protocol.encode_subscribe_ok({
           track_alias: 1,
           parameters: [],
           properties: b"",
         }).unwrap(),
-        false,
       ),
-      @session.Notify(@session.SubscriptionAccepted(1, 40, 1)),
+      @session.EmitNotice(@session.SubscriptionAccepted(1, 40, 1)),
     ]),
   )
   assert_eq(
     publisher.accept_subscription(41),
     Ok([
-      @session.Send(
+      @session.SendChunk(
         41,
         @protocol.encode_subscribe_ok({
           track_alias: 1,
           parameters: [],
           properties: b"",
         }).unwrap(),
-        false,
       ),
-      @session.Notify(@session.SubscriptionAccepted(3, 41, 1)),
+      @session.EmitNotice(@session.SubscriptionAccepted(3, 41, 1)),
     ]),
   )
 }
@@ -620,7 +604,7 @@ test "ClientSession sends Objects and PUBLISH_DONE on a local PUBLISH stream" {
   assert_eq(
     publisher.receive(@session.StreamOpened(@session.Request(0), 20)),
     Ok([
-      @session.Send(
+      @session.SendChunk(
         20,
         @protocol.encode_publish({
           request_id: 0,
@@ -629,7 +613,6 @@ test "ClientSession sends Objects and PUBLISH_DONE on a local PUBLISH stream" {
           parameters: [],
           properties: b"",
         }).unwrap(),
-        false,
       ),
     ]),
   )
@@ -641,7 +624,7 @@ test "ClientSession sends Objects and PUBLISH_DONE on a local PUBLISH stream" {
       ),
     ),
     Ok([
-      @session.Notify(
+      @session.EmitNotice(
         @session.PublishAccepted(
           0,
           { namespace_fields: [b"demo"], name: b"video", },
@@ -658,42 +641,38 @@ test "ClientSession sends Objects and PUBLISH_DONE on a local PUBLISH stream" {
   )
   assert_eq(
     publisher.receive(@session.StreamOpened(@session.Object(0), 22)),
-    Ok([@session.Send(22, @protocol.encode_subgroup_header(header), false)]),
+    Ok([@session.SendChunk(22, @protocol.encode_subgroup_header(header))]),
   )
   assert_true(
     match publisher.send_object(22, client_object(0, b"payload")) {
-      Ok([@session.Send(22, bytes, false)]) => !bytes.is_empty()
+      Ok([@session.SendChunk(22, bytes)]) => !bytes.is_empty()
       _ => false
     },
   )
+  assert_eq(publisher.finish_object_stream(22), Ok([@session.SendFin(22, b"")]))
   assert_eq(
-    publisher.finish_object_stream(22),
-    Ok([@session.Send(22, b"", true)]),
+    publisher.receive(@session.SendCompleted(22, @session.Sent)),
+    Ok([@session.EmitNotice(@session.StreamSendFinished(22, @session.Sent))]),
   )
   assert_eq(
-    publisher.receive(@session.SendComplete(22, false)),
-    Ok([@session.Notify(@session.SendFinished(22, false))]),
+    publisher.receive(@session.SendCompleted(22, @session.Sent)),
+    Ok([@session.EmitNotice(@session.StreamSendFinished(22, @session.Sent))]),
   )
   assert_eq(
-    publisher.receive(@session.SendComplete(22, false)),
-    Ok([@session.Notify(@session.SendFinished(22, false))]),
-  )
-  assert_eq(
-    publisher.receive(@session.SendComplete(22, false)),
+    publisher.receive(@session.SendCompleted(22, @session.Sent)),
     Ok([
-      @session.Notify(@session.SendFinished(22, false)),
-      @session.Notify(@session.ObjectStreamFinished(22)),
+      @session.EmitNotice(@session.StreamSendFinished(22, @session.Sent)),
+      @session.EmitNotice(@session.ObjectStreamSendFinished(22)),
     ]),
   )
   assert_eq(
     publisher.publish_done(20, 3, b""),
     Ok([
-      @session.Send(
+      @session.SendFin(
         20,
         @protocol.encode_publish_done({ code: 3, stream_count: 1, reason: b"", }).unwrap(),
-        true,
       ),
-      @session.Notify(
+      @session.EmitNotice(
         @session.PublishDone(0, { code: 3, stream_count: 1, reason: b"", }),
       ),
     ]),
@@ -709,7 +688,7 @@ test "ClientSession ends inbound subscriptions when request streams terminate" {
   assert_eq(
     publisher.receive(@session.StreamOpened(@session.Request(0), 20)),
     Ok([
-      @session.Send(
+      @session.SendChunk(
         20,
         @protocol.encode_publish({
           request_id: 0,
@@ -718,7 +697,6 @@ test "ClientSession ends inbound subscriptions when request streams terminate" {
           parameters: [],
           properties: b"",
         }).unwrap(),
-        false,
       ),
     ]),
   )
@@ -730,7 +708,7 @@ test "ClientSession ends inbound subscriptions when request streams terminate" {
       ),
     ),
     Ok([
-      @session.Notify(
+      @session.EmitNotice(
         @session.PublishAccepted(
           0,
           { namespace_fields: [b"demo"], name: b"video", },
@@ -751,21 +729,20 @@ test "ClientSession ends inbound subscriptions when request streams terminate" {
         @protocol.encode_subscribe({ request_id: 1, track, parameters: [], }).unwrap(),
       ),
     ),
-    Ok([@session.Notify(@session.SubscriptionRequested(1, 40, track))]),
+    Ok([@session.EmitNotice(@session.SubscriptionRequested(1, 40, track))]),
   )
   assert_eq(
     publisher.accept_subscription(40),
     Ok([
-      @session.Send(
+      @session.SendChunk(
         40,
         @protocol.encode_subscribe_ok({
           track_alias: 1,
           parameters: [],
           properties: b"",
         }).unwrap(),
-        false,
       ),
-      @session.Notify(@session.SubscriptionAccepted(1, 40, 1)),
+      @session.EmitNotice(@session.SubscriptionAccepted(1, 40, 1)),
     ]),
   )
 
@@ -776,14 +753,14 @@ test "ClientSession ends inbound subscriptions when request streams terminate" {
   )
   assert_eq(
     publisher.receive(@session.StreamOpened(@session.Object(0), 50)),
-    Ok([@session.Send(50, @protocol.encode_subgroup_header(header), false)]),
+    Ok([@session.SendChunk(50, @protocol.encode_subgroup_header(header))]),
   )
   assert_eq(
     publisher.receive(@session.StreamReset(40, 9UL)),
     Ok([
       @session.AbortSend(40, 9UL),
       @session.AbortSend(50, 9UL),
-      @session.Notify(
+      @session.EmitNotice(
         @session.SubscriptionEnded(1, 40, {
           namespace_fields: [b"demo"],
           name: b"video",
@@ -811,21 +788,20 @@ test "ClientSession ends inbound subscriptions when request streams terminate" {
         @protocol.encode_subscribe({ request_id: 3, track, parameters: [], }).unwrap(),
       ),
     ),
-    Ok([@session.Notify(@session.SubscriptionRequested(3, 42, track))]),
+    Ok([@session.EmitNotice(@session.SubscriptionRequested(3, 42, track))]),
   )
   assert_eq(
     publisher.accept_subscription(42),
     Ok([
-      @session.Send(
+      @session.SendChunk(
         42,
         @protocol.encode_subscribe_ok({
           track_alias: 1,
           parameters: [],
           properties: b"",
         }).unwrap(),
-        false,
       ),
-      @session.Notify(@session.SubscriptionAccepted(3, 42, 1)),
+      @session.EmitNotice(@session.SubscriptionAccepted(3, 42, 1)),
     ]),
   )
   assert_eq(
@@ -836,7 +812,7 @@ test "ClientSession ends inbound subscriptions when request streams terminate" {
     publisher.receive(@session.SendStopped(42, 5UL)),
     Ok([
       @session.StopReceiving(42, 5UL),
-      @session.Notify(
+      @session.EmitNotice(
         @session.SubscriptionEnded(3, 42, {
           namespace_fields: [b"demo"],
           name: b"video",
@@ -859,10 +835,9 @@ test "ClientSession stops incoming object streams when a subscription request en
   assert_eq(
     subscriber.receive(@session.StreamOpened(@session.Request(0), 30)),
     Ok([
-      @session.Send(
+      @session.SendChunk(
         30,
         @protocol.encode_subscribe({ request_id: 0, track, parameters: [], }).unwrap(),
-        false,
       ),
     ]),
   )
@@ -877,7 +852,7 @@ test "ClientSession stops incoming object streams when a subscription request en
         }).unwrap(),
       ),
     ),
-    Ok([@session.Notify(@session.SubscribeEstablished(0, 10))]),
+    Ok([@session.EmitNotice(@session.SubscribeEstablished(0, 10))]),
   )
   assert_eq(
     subscriber.receive(
@@ -905,7 +880,7 @@ test "ClientSession stops incoming object streams when a subscription request en
     Ok([
       @session.AbortSend(30, 1UL),
       @session.StopReceiving(60, 1UL),
-      @session.Notify(
+      @session.EmitNotice(
         @session.SubscriptionEnded(0, 30, {
           namespace_fields: [b"demo"],
           name: b"video",
@@ -923,8 +898,8 @@ test "ClientSession stops incoming object streams when a subscription request en
     Ok([@session.StopReceiving(62, 1UL)]),
   )
   assert_eq(subscriber.receive(@session.StreamData(60, b"ignored")), Ok([]))
-  assert_eq(subscriber.receive(@session.StreamFinished(60)), Ok([]))
-  assert_eq(subscriber.receive(@session.StreamFinished(62)), Ok([]))
+  assert_eq(subscriber.receive(@session.InboundStreamFinished(60)), Ok([]))
+  assert_eq(subscriber.receive(@session.InboundStreamFinished(62)), Ok([]))
 }
 
 ///|
@@ -936,14 +911,13 @@ test "ClientSession releases a completed subscription alias" {
   assert_eq(
     subscriber.receive(@session.StreamOpened(@session.Request(0), 30)),
     Ok([
-      @session.Send(
+      @session.SendChunk(
         30,
         @protocol.encode_subscribe({
           request_id: 0,
           track: first_track,
           parameters: [],
         }).unwrap(),
-        false,
       ),
     ]),
   )
@@ -958,7 +932,7 @@ test "ClientSession releases a completed subscription alias" {
         }).unwrap(),
       ),
     ),
-    Ok([@session.Notify(@session.SubscribeEstablished(0, 10))]),
+    Ok([@session.EmitNotice(@session.SubscribeEstablished(0, 10))]),
   )
   assert_eq(
     subscriber.receive(
@@ -968,26 +942,25 @@ test "ClientSession releases a completed subscription alias" {
       ),
     ),
     Ok([
-      @session.Send(30, b"", true),
-      @session.Notify(
+      @session.SendFin(30, b""),
+      @session.EmitNotice(
         @session.PublishDone(0, { code: 0, stream_count: 0, reason: b"", }),
       ),
     ]),
   )
-  assert_eq(subscriber.receive(@session.StreamFinished(30)), Ok([]))
+  assert_eq(subscriber.receive(@session.InboundStreamFinished(30)), Ok([]))
 
   assert_eq(subscriber.subscribe_track(second_track).unwrap().0, 2UL)
   assert_eq(
     subscriber.receive(@session.StreamOpened(@session.Request(2), 32)),
     Ok([
-      @session.Send(
+      @session.SendChunk(
         32,
         @protocol.encode_subscribe({
           request_id: 2,
           track: second_track,
           parameters: [],
         }).unwrap(),
-        false,
       ),
     ]),
   )
@@ -1002,7 +975,7 @@ test "ClientSession releases a completed subscription alias" {
         }).unwrap(),
       ),
     ),
-    Ok([@session.Notify(@session.SubscribeEstablished(2, 10))]),
+    Ok([@session.EmitNotice(@session.SubscribeEstablished(2, 10))]),
   )
 }
 
@@ -1014,7 +987,7 @@ test "ClientSession ends local PUBLISH subscriptions on STOP_SENDING" {
   assert_eq(
     publisher.receive(@session.StreamOpened(@session.Request(0), 20)),
     Ok([
-      @session.Send(
+      @session.SendChunk(
         20,
         @protocol.encode_publish({
           request_id: 0,
@@ -1023,7 +996,6 @@ test "ClientSession ends local PUBLISH subscriptions on STOP_SENDING" {
           parameters: [],
           properties: b"",
         }).unwrap(),
-        false,
       ),
     ]),
   )
@@ -1035,7 +1007,7 @@ test "ClientSession ends local PUBLISH subscriptions on STOP_SENDING" {
       ),
     ),
     Ok([
-      @session.Notify(
+      @session.EmitNotice(
         @session.PublishAccepted(
           0,
           { namespace_fields: [b"demo"], name: b"video", },
@@ -1052,14 +1024,14 @@ test "ClientSession ends local PUBLISH subscriptions on STOP_SENDING" {
   )
   assert_eq(
     publisher.receive(@session.StreamOpened(@session.Object(0), 50)),
-    Ok([@session.Send(50, @protocol.encode_subgroup_header(header), false)]),
+    Ok([@session.SendChunk(50, @protocol.encode_subgroup_header(header))]),
   )
   assert_eq(
     publisher.receive(@session.SendStopped(20, 4UL)),
     Ok([
       @session.StopReceiving(20, 4UL),
       @session.AbortSend(50, 4UL),
-      @session.Notify(
+      @session.EmitNotice(
         @session.SubscriptionEnded(0, 20, {
           namespace_fields: [b"demo"],
           name: b"video",

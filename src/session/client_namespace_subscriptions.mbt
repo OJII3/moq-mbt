@@ -83,7 +83,7 @@ fn ClientSession::receive_peer_namespace_subscription_update(
   self : ClientSession,
   stream : Int64,
   update : @protocol.RequestUpdateMessage,
-) -> Result[Array[ClientSessionAction], ClientSessionError] {
+) -> Result[Array[SessionAction], ClientSessionError] {
   let inbound = self.inbound_namespace_subscriptions.get(stream).unwrap()
   if (update.request_id & 1UL) != 1UL {
     return Err(InvalidRequestId)
@@ -115,7 +115,7 @@ fn ClientSession::receive_peer_namespace_subscription_update(
     )
   }
   Ok([
-    Notify(
+    EmitNotice(
       NamespaceSubscriptionUpdateRequested(
         inbound.request_id,
         update.request_id,
@@ -131,7 +131,7 @@ fn ClientSession::receive_peer_namespace_subscription(
   self : ClientSession,
   stream : Int64,
   message : @protocol.NamespaceRequestMessage,
-) -> Result[Array[ClientSessionAction], ClientSessionError] {
+) -> Result[Array[SessionAction], ClientSessionError] {
   if self.namespace_subscription_streams.get(stream) is Some(_) ||
     self.namespace_request_streams.get(stream) is Some(_) {
     return Err(UnexpectedMessage)
@@ -166,10 +166,12 @@ fn ClientSession::receive_peer_namespace_subscription(
       Ok(value) => value
       Err(value) => return Err(Encoding(value))
     }
-    let actions : Array[ClientSessionAction] = [Send(stream, bytes, true)]
+    let actions : Array[SessionAction] = [SendFin(stream, bytes)]
     if overlaps {
       actions.push(
-        Notify(NamespaceSubscriptionRejected(message.request_id, stream, error)),
+        EmitNotice(
+          NamespaceSubscriptionRejected(message.request_id, stream, error),
+        ),
       )
     }
     return Ok(actions)
@@ -183,7 +185,7 @@ fn ClientSession::receive_peer_namespace_subscription(
     lifetime: RequestLifetime::new(),
   }
   Ok([
-    Notify(
+    EmitNotice(
       NamespaceSubscriptionRequested(
         message.request_id,
         stream,
@@ -198,7 +200,7 @@ fn ClientSession::receive_peer_namespace_subscription(
 pub fn ClientSession::subscribe_namespace(
   self : ClientSession,
   prefix : @protocol.TrackNamespace,
-) -> Result[(UInt64, Array[ClientSessionAction]), ClientSessionError] {
+) -> Result[(UInt64, Array[SessionAction]), ClientSessionError] {
   match self.ensure_new_request_allowed() {
     Ok(_) => ()
     Err(error) => return Err(error)
@@ -231,7 +233,7 @@ pub fn ClientSession::update_namespace_subscription(
   self : ClientSession,
   request_id : UInt64,
   prefix : @protocol.TrackNamespace,
-) -> Result[(UInt64, Array[ClientSessionAction]), ClientSessionError] {
+) -> Result[(UInt64, Array[SessionAction]), ClientSessionError] {
   match self.ensure_new_request_allowed() {
     Ok(_) => ()
     Err(error) => return Err(error)
@@ -273,7 +275,7 @@ pub fn ClientSession::update_namespace_subscription(
     Err(error) => return Err(Encoding(error))
   }
   request.pending_update = Some({ request_id: update_id, prefix, })
-  Ok((update_id, self.finish_actions([Send(stream, bytes, false)])))
+  Ok((update_id, self.finish_actions([SendChunk(stream, bytes)])))
 }
 
 ///|
@@ -283,7 +285,7 @@ pub fn ClientSession::accept_namespace_subscription(
   self : ClientSession,
   stream : Int64,
   application_namespaces : Array[@protocol.TrackNamespace],
-) -> Result[Array[ClientSessionAction], ClientSessionError] {
+) -> Result[Array[SessionAction], ClientSessionError] {
   match self.ensure_open() {
     Ok(_) => ()
     Err(error) => return Err(error)
@@ -313,8 +315,8 @@ pub fn ClientSession::accept_namespace_subscription(
       self.note_request_local_fin(stream)
       return Ok(
         self.finish_actions([
-          Send(stream, response, true),
-          Notify(
+          SendFin(stream, response),
+          EmitNotice(
             NamespaceSubscriptionRejected(inbound.request_id, stream, error),
           ),
         ]),
@@ -333,9 +335,9 @@ pub fn ClientSession::accept_namespace_subscription(
   for ns in application_namespaces {
     append_unique_namespace(self.application_namespaces, ns)
   }
-  let actions : Array[ClientSessionAction] = [
-    Send(stream, bytes, false),
-    Notify(NamespaceSubscriptionEstablished(inbound.request_id, stream)),
+  let actions : Array[SessionAction] = [
+    SendChunk(stream, bytes),
+    EmitNotice(NamespaceSubscriptionEstablished(inbound.request_id, stream)),
   ]
   let known : Array[@protocol.TrackNamespace] = []
   for (_, publication) in self.namespace_requests {
@@ -369,7 +371,7 @@ pub fn ClientSession::accept_namespace_subscription_update(
   stream : Int64,
   update_id : UInt64,
   response_message : @protocol.RequestOkMessage,
-) -> Result[Array[ClientSessionAction], ClientSessionError] {
+) -> Result[Array[SessionAction], ClientSessionError] {
   match self.ensure_open() {
     Ok(_) => ()
     Err(error) => return Err(error)
@@ -403,9 +405,9 @@ pub fn ClientSession::accept_namespace_subscription_update(
   }
   ignore(inbound.pending_updates.remove(0))
   inbound.prefix = pending.prefix
-  let actions : Array[ClientSessionAction] = [
-    Send(stream, response, false),
-    Notify(
+  let actions : Array[SessionAction] = [
+    SendChunk(stream, response),
+    EmitNotice(
       NamespaceSubscriptionUpdateAccepted(
         inbound.request_id,
         update_id,
@@ -414,7 +416,7 @@ pub fn ClientSession::accept_namespace_subscription_update(
     ),
   ]
   for ns in inbound.active_namespaces {
-    actions.push(Notify(NamespaceNoLongerAvailable(inbound.request_id, ns)))
+    actions.push(EmitNotice(NamespaceNoLongerAvailable(inbound.request_id, ns)))
   }
   inbound.active_namespaces = []
   let known : Array[@protocol.TrackNamespace] = []
@@ -449,7 +451,7 @@ pub fn ClientSession::reject_namespace_subscription_update(
   stream : Int64,
   update_id : UInt64,
   error : @protocol.RequestErrorMessage,
-) -> Result[Array[ClientSessionAction], ClientSessionError] {
+) -> Result[Array[SessionAction], ClientSessionError] {
   match self.ensure_open() {
     Ok(_) => ()
     Err(value) => return Err(value)
@@ -477,15 +479,15 @@ pub fn ClientSession::reject_namespace_subscription_update(
   inbound.lifetime.peer_send_closed = true
   inbound.lifetime.cancelled = true
   inbound.lifetime.end_notified = true
-  let actions : Array[ClientSessionAction] = [Send(stream, response, true)]
+  let actions : Array[SessionAction] = [SendFin(stream, response)]
   actions.push(StopReceiving(stream, 1UL))
   for ns in inbound.active_namespaces {
-    actions.push(Notify(NamespaceNoLongerAvailable(inbound.request_id, ns)))
+    actions.push(EmitNotice(NamespaceNoLongerAvailable(inbound.request_id, ns)))
   }
   inbound.active_namespaces = []
   for rejected_id in rejected {
     actions.push(
-      Notify(
+      EmitNotice(
         NamespaceSubscriptionUpdateRejected(
           inbound.request_id,
           rejected_id,
@@ -494,7 +496,9 @@ pub fn ClientSession::reject_namespace_subscription_update(
       ),
     )
   }
-  actions.push(Notify(NamespaceSubscriptionEnded(inbound.request_id, stream)))
+  actions.push(
+    EmitNotice(NamespaceSubscriptionEnded(inbound.request_id, stream)),
+  )
   Ok(self.finish_actions(actions))
 }
 
@@ -504,7 +508,7 @@ pub fn ClientSession::reject_namespace_subscription(
   self : ClientSession,
   stream : Int64,
   error : @protocol.RequestErrorMessage,
-) -> Result[Array[ClientSessionAction], ClientSessionError] {
+) -> Result[Array[SessionAction], ClientSessionError] {
   match self.ensure_open() {
     Ok(_) => ()
     Err(error) => return Err(error)
@@ -524,8 +528,10 @@ pub fn ClientSession::reject_namespace_subscription(
   self.note_request_local_fin(stream)
   Ok(
     self.finish_actions([
-      Send(stream, bytes, true),
-      Notify(NamespaceSubscriptionRejected(inbound.request_id, stream, error)),
+      SendFin(stream, bytes),
+      EmitNotice(
+        NamespaceSubscriptionRejected(inbound.request_id, stream, error),
+      ),
     ]),
   )
 }
@@ -535,7 +541,7 @@ pub fn ClientSession::reject_namespace_subscription(
 pub fn ClientSession::publish_application_namespace(
   self : ClientSession,
   ns : @protocol.TrackNamespace,
-) -> Result[Array[ClientSessionAction], ClientSessionError] {
+) -> Result[Array[SessionAction], ClientSessionError] {
   match self.ensure_open() {
     Ok(_) => ()
     Err(error) => return Err(error)
@@ -552,7 +558,7 @@ pub fn ClientSession::publish_application_namespace(
 pub fn ClientSession::withdraw_application_namespace(
   self : ClientSession,
   ns : @protocol.TrackNamespace,
-) -> Result[Array[ClientSessionAction], ClientSessionError] {
+) -> Result[Array[SessionAction], ClientSessionError] {
   match self.ensure_open() {
     Ok(_) => ()
     Err(error) => return Err(error)
@@ -617,7 +623,7 @@ fn ClientSession::send_namespace_available(
   self : ClientSession,
   stream : Int64,
   ns : @protocol.TrackNamespace,
-) -> Result[Array[ClientSessionAction], ClientSessionError] {
+) -> Result[Array[SessionAction], ClientSessionError] {
   let request_id = self.inbound_namespace_subscriptions.get(stream).unwrap().request_id
   let inbound = self.inbound_namespace_subscriptions.get(stream).unwrap()
   if inbound.state != Active || !namespace_has_prefix(ns, inbound.prefix) {
@@ -634,7 +640,7 @@ fn ClientSession::send_namespace_available(
     Err(error) => return Err(Encoding(error))
   }
   inbound.active_namespaces.push(ns)
-  Ok([Send(stream, bytes, false), Notify(NamespaceDiscovered(request_id, ns))])
+  Ok([SendChunk(stream, bytes), EmitNotice(NamespaceDiscovered(request_id, ns))])
 }
 
 ///|
@@ -642,7 +648,7 @@ fn ClientSession::send_namespace_done(
   self : ClientSession,
   stream : Int64,
   ns : @protocol.TrackNamespace,
-) -> Result[Array[ClientSessionAction], ClientSessionError] {
+) -> Result[Array[SessionAction], ClientSessionError] {
   let inbound = self.inbound_namespace_subscriptions.get(stream).unwrap()
   let index = match namespace_array_index(inbound.active_namespaces, ns) {
     Some(value) => value
@@ -658,8 +664,8 @@ fn ClientSession::send_namespace_done(
   }
   ignore(inbound.active_namespaces.remove(index))
   Ok([
-    Send(stream, bytes, false),
-    Notify(NamespaceNoLongerAvailable(inbound.request_id, ns)),
+    SendChunk(stream, bytes),
+    EmitNotice(NamespaceNoLongerAvailable(inbound.request_id, ns)),
   ])
 }
 
@@ -667,8 +673,8 @@ fn ClientSession::send_namespace_done(
 fn ClientSession::broadcast_namespace_available(
   self : ClientSession,
   ns : @protocol.TrackNamespace,
-) -> Result[Array[ClientSessionAction], ClientSessionError] {
-  let actions : Array[ClientSessionAction] = []
+) -> Result[Array[SessionAction], ClientSessionError] {
+  let actions : Array[SessionAction] = []
   for (stream, _) in self.inbound_namespace_subscriptions {
     match self.send_namespace_available(stream, ns) {
       Ok(values) =>
@@ -685,8 +691,8 @@ fn ClientSession::broadcast_namespace_available(
 fn ClientSession::broadcast_namespace_done(
   self : ClientSession,
   ns : @protocol.TrackNamespace,
-) -> Result[Array[ClientSessionAction], ClientSessionError] {
-  let actions : Array[ClientSessionAction] = []
+) -> Result[Array[SessionAction], ClientSessionError] {
+  let actions : Array[SessionAction] = []
   for (stream, _) in self.inbound_namespace_subscriptions {
     match self.send_namespace_done(stream, ns) {
       Ok(values) =>
@@ -705,7 +711,7 @@ fn ClientSession::receive_namespace_subscription_response(
   request_id : UInt64,
   stream : Int64,
   bytes : Bytes,
-) -> Result[Array[ClientSessionAction], ClientSessionError] {
+) -> Result[Array[SessionAction], ClientSessionError] {
   let request = self.namespace_subscriptions.get(request_id).unwrap()
   if request.lifetime.cancelled || request.lifetime.peer_send_closed {
     return Ok([])
@@ -731,22 +737,22 @@ fn ClientSession::receive_namespace_subscription_response(
       let actions = match (request.established, message) {
         (false, @protocol.RequestOk(_)) => {
           request.established = true
-          [Notify(NamespaceSubscriptionEstablished(request_id, stream))]
+          [EmitNotice(NamespaceSubscriptionEstablished(request_id, stream))]
         }
         (false, @protocol.RequestError(error)) => {
           request.rejected = true
           request.lifetime.local_send_closed = true
           [
-            Notify(NamespaceSubscriptionRejected(request_id, stream, error)),
-            Send(stream, b"", true),
+            EmitNotice(NamespaceSubscriptionRejected(request_id, stream, error)),
+            SendFin(stream, b""),
           ]
         }
         (true, @protocol.RequestOk(response)) if request.pending_update
           is Some(pending) => {
           request.pending_update = None
           request.prefix = pending.prefix
-          let changed : Array[ClientSessionAction] = [
-            Notify(
+          let changed : Array[SessionAction] = [
+            EmitNotice(
               NamespaceSubscriptionUpdateAccepted(
                 request_id,
                 pending.request_id,
@@ -755,7 +761,7 @@ fn ClientSession::receive_namespace_subscription_response(
             ),
           ]
           for ns in request.active_namespaces {
-            changed.push(Notify(NamespaceNoLongerAvailable(request_id, ns)))
+            changed.push(EmitNotice(NamespaceNoLongerAvailable(request_id, ns)))
           }
           request.active_namespaces = []
           changed
@@ -765,7 +771,7 @@ fn ClientSession::receive_namespace_subscription_response(
           request.pending_update = None
           self.end_namespace_subscription(stream, Cancel(1UL)) +
           [
-            Notify(
+            EmitNotice(
               NamespaceSubscriptionUpdateRejected(
                 request_id,
                 pending.request_id,
@@ -784,7 +790,7 @@ fn ClientSession::receive_namespace_subscription_response(
             return Err(UnexpectedMessage)
           }
           request.active_namespaces.push(ns)
-          [Notify(NamespaceDiscovered(request_id, ns))]
+          [EmitNotice(NamespaceDiscovered(request_id, ns))]
         }
         (true, @protocol.NamespaceDone(suffix)) => {
           let ns = match
@@ -798,7 +804,7 @@ fn ClientSession::receive_namespace_subscription_response(
             None => return Err(UnexpectedMessage)
           }
           ignore(request.active_namespaces.remove(index))
-          [Notify(NamespaceNoLongerAvailable(request_id, ns))]
+          [EmitNotice(NamespaceNoLongerAvailable(request_id, ns))]
         }
         (true, @protocol.GoAwayRequest(goaway)) =>
           self.receive_request_goaway(stream, goaway)
@@ -824,7 +830,7 @@ fn ClientSession::end_namespace_subscription(
   self : ClientSession,
   stream : Int64,
   event : RequestLifetimeEvent,
-) -> Array[ClientSessionAction] {
+) -> Array[SessionAction] {
   let request_id = match self.namespace_subscription_streams.get(stream) {
     Some(value) => value
     None => return []
@@ -846,7 +852,7 @@ fn ClientSession::end_namespace_subscription(
   }
   request.response_buffer = b""
   request.pending_update = None
-  let actions : Array[ClientSessionAction] = []
+  let actions : Array[SessionAction] = []
   let code = request.lifetime.cancel_error_code.unwrap_or(0UL)
   if effects.abort_send {
     actions.push(AbortSend(stream, code))
@@ -856,14 +862,14 @@ fn ClientSession::end_namespace_subscription(
   }
   if fin_end && !request.lifetime.local_send_closed {
     request.lifetime.local_send_closed = true
-    actions.push(Send(stream, b"", true))
+    actions.push(SendFin(stream, b""))
   }
   if effects.notify_end || fin_end {
     for ns in request.active_namespaces {
-      actions.push(Notify(NamespaceNoLongerAvailable(request_id, ns)))
+      actions.push(EmitNotice(NamespaceNoLongerAvailable(request_id, ns)))
     }
     request.active_namespaces = []
-    actions.push(Notify(NamespaceSubscriptionEnded(request_id, stream)))
+    actions.push(EmitNotice(NamespaceSubscriptionEnded(request_id, stream)))
   }
   actions
 }
@@ -874,7 +880,7 @@ fn ClientSession::end_namespace_subscription(
 fn ClientSession::cancel_namespace_subscription(
   self : ClientSession,
   request_id : UInt64,
-) -> Result[Array[ClientSessionAction], ClientSessionError] {
+) -> Result[Array[SessionAction], ClientSessionError] {
   let request = self.namespace_subscriptions.get(request_id).unwrap()
   if request.lifetime.cancelled {
     return Ok([])
@@ -885,16 +891,16 @@ fn ClientSession::cancel_namespace_subscription(
   request.lifetime.end_notified = true
   request.response_buffer = b""
   request.pending_update = None
-  let actions : Array[ClientSessionAction] = []
+  let actions : Array[SessionAction] = []
   match request.stream {
     Some(stream) => {
-      actions.push(Send(stream, b"", true))
+      actions.push(SendFin(stream, b""))
       actions.push(StopReceiving(stream, 1UL))
       for ns in request.active_namespaces {
-        actions.push(Notify(NamespaceNoLongerAvailable(request_id, ns)))
+        actions.push(EmitNotice(NamespaceNoLongerAvailable(request_id, ns)))
       }
       request.active_namespaces = []
-      actions.push(Notify(NamespaceSubscriptionEnded(request_id, stream)))
+      actions.push(EmitNotice(NamespaceSubscriptionEnded(request_id, stream)))
     }
     None => ()
   }
@@ -906,7 +912,7 @@ fn ClientSession::end_inbound_namespace_subscription(
   self : ClientSession,
   stream : Int64,
   event : RequestLifetimeEvent,
-) -> Array[ClientSessionAction] {
+) -> Array[SessionAction] {
   let inbound = match self.inbound_namespace_subscriptions.get(stream) {
     Some(value) => value
     None => return []
@@ -927,7 +933,7 @@ fn ClientSession::end_inbound_namespace_subscription(
   }
   inbound.state = Ended
   inbound.pending_updates = []
-  let actions : Array[ClientSessionAction] = []
+  let actions : Array[SessionAction] = []
   let code = inbound.lifetime.cancel_error_code.unwrap_or(0UL)
   if effects.abort_send {
     actions.push(AbortSend(stream, code))
@@ -937,14 +943,18 @@ fn ClientSession::end_inbound_namespace_subscription(
   }
   if fin_end && !inbound.lifetime.local_send_closed {
     inbound.lifetime.local_send_closed = true
-    actions.push(Send(stream, b"", true))
+    actions.push(SendFin(stream, b""))
   }
   if effects.notify_end || fin_end {
     for ns in inbound.active_namespaces {
-      actions.push(Notify(NamespaceNoLongerAvailable(inbound.request_id, ns)))
+      actions.push(
+        EmitNotice(NamespaceNoLongerAvailable(inbound.request_id, ns)),
+      )
     }
     inbound.active_namespaces = []
-    actions.push(Notify(NamespaceSubscriptionEnded(inbound.request_id, stream)))
+    actions.push(
+      EmitNotice(NamespaceSubscriptionEnded(inbound.request_id, stream)),
+    )
   }
   actions
 }
@@ -953,7 +963,7 @@ fn ClientSession::end_inbound_namespace_subscription(
 fn ClientSession::finish_namespace_subscription_stream(
   self : ClientSession,
   stream : Int64,
-) -> Result[Array[ClientSessionAction], ClientSessionError]? {
+) -> Result[Array[SessionAction], ClientSessionError]? {
   if self.inbound_namespace_subscriptions.get(stream) is Some(_) {
     return Some(Ok(self.end_inbound_namespace_subscription(stream, PeerFin)))
   }
@@ -978,7 +988,7 @@ fn ClientSession::reset_namespace_subscription_stream(
   self : ClientSession,
   stream : Int64,
   error_code : UInt64,
-) -> Result[Array[ClientSessionAction], ClientSessionError]? {
+) -> Result[Array[SessionAction], ClientSessionError]? {
   if self.inbound_namespace_subscriptions.get(stream) is Some(_) {
     return Some(
       Ok(self.end_inbound_namespace_subscription(stream, PeerReset(error_code))),

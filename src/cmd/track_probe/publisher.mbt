@@ -31,8 +31,8 @@ fn start_probe_group(
   driver : SessionActionDriver,
   state : PublisherProbeState,
   group_index : Int32,
-) -> Array[@session.ClientSessionNotice] raise {
-  let notices : Array[@session.ClientSessionNotice] = []
+) -> Array[@session.SessionNotice] raise {
+  let notices : Array[@session.SessionNotice] = []
   let group_id = group_index.to_uint64()
   let header : @protocol.SubgroupHeader = {
     track_alias: 1,
@@ -142,15 +142,7 @@ fn probe_datagrams(group_count : UInt64) -> Array[@protocol.ObjectDatagram] {
 fn update_enables_forwarding(
   parameters : Array[@protocol.MessageParameter],
 ) -> Bool {
-  for parameter in parameters {
-    if parameter.kind == 0x10 {
-      match parameter.value {
-        @protocol.Byte(value) => return value != 0
-        _ => ()
-      }
-    }
-  }
-  true
+  @protocol.forward_requested(parameters)
 }
 
 ///|
@@ -237,7 +229,7 @@ fn serve_publisher_fetch(
 fn handle_publisher_notices(
   client : @transport.Client,
   session : @session.ClientSession,
-  notices : Array[@session.ClientSessionNotice],
+  notices : Array[@session.SessionNotice],
   driver : SessionActionDriver,
   state : PublisherProbeState,
 ) -> Unit raise {
@@ -297,7 +289,7 @@ fn handle_publisher_notices(
           "request GOAWAY received (request \{request_id}, stream \{stream}, URI \{uri.length()} bytes, timeout \{timeout_ms} ms)",
         )
       @session.SessionEnded(end) => fail("session ended: \{end.to_repr()}")
-      @session.ObjectStreamFinished(stream) =>
+      @session.ObjectStreamSendFinished(stream) =>
         match state.object_stream_groups.get(stream) {
           Some(group_id) => {
             guard state.finished_object_streams.get(stream) is None else {
@@ -449,7 +441,7 @@ fn run_publisher(
         let (notices, _) = drive_session_result(
           client,
           session,
-          receive_session_event(session, @session.StreamFinished(stream)),
+          receive_session_event(session, @session.InboundStreamFinished(stream)),
           driver,
         )
         handle_publisher_notices(client, session, notices, driver, state)
@@ -486,8 +478,8 @@ fn run_publisher(
           receive_session_event(
             session,
             @session.DatagramSendCapabilityChanged(
-              capability.enabled,
-              capability.max_length,
+              enabled=capability.enabled,
+              max_length=capability.max_length,
             ),
           ),
           driver,
@@ -554,12 +546,12 @@ fn run_publisher(
       state.datagrams &&
       state.datagram_send_count == 0UL {
       for datagram in probe_datagrams(state.group_count) {
-        let (notices, _) = drive_session_result(
-          client,
-          session,
-          session.send_object_datagram(state.publish_stream, datagram),
-          driver,
-        )
+        let result = match
+          session.send_object_datagram(state.publish_stream, datagram) {
+          Ok((_, actions)) => Ok(actions)
+          Err(error) => Err(error)
+        }
+        let (notices, _) = drive_session_result(client, session, result, driver)
         handle_publisher_notices(client, session, notices, driver, state)
         state.datagram_send_count = state.datagram_send_count + 1UL
       }

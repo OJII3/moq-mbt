@@ -1,6 +1,10 @@
 ///|
 /// Decode one complete Draft 18 control message. Bytes after the returned
 /// consumed count belong to the next control message on the same stream.
+///
+/// This entry point assumes `AnyStream`. Use `decode_control_with_context`
+/// when the stream position is known: `REQUEST_OK` parameter scope and
+/// `GOAWAY` layout differ between the control stream and request streams.
 pub fn decode_control(input : Bytes) -> DecodeResult[ControlMessage] {
   decode_control_with_context(input, AnyStream)
 }
@@ -9,6 +13,11 @@ pub fn decode_control(input : Bytes) -> DecodeResult[ControlMessage] {
 /// Decode one control message using its stream and response context. Use this
 /// entry point for GOAWAY and REQUEST_OK so their context-specific fields are
 /// checked instead of inferred from the payload.
+///
+/// Context is required when the same message type has a different shape
+/// depending on where it appears. `RequestStreamFor(context)` tells the decoder
+/// which request type a REQUEST_OK answers; `FetchRequestStream` selects the
+/// FETCH update parameter scope.
 pub fn decode_control_with_context(
   input : Bytes,
   context : ControlStreamContext,

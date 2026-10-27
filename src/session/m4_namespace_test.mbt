@@ -25,22 +25,20 @@ test "namespace subscription enumerates previously published application namespa
   )
 
   assert_eq(publisher.accept_namespace_subscription(40, []).unwrap(), [
-    @session.Send(
+    @session.SendChunk(
       40,
       @protocol.encode_request_ok_for(
         { parameters: [], properties: b"", },
         @protocol.Namespace,
       ).unwrap(),
-      false,
     ),
-    @session.Notify(@session.NamespaceSubscriptionEstablished(1UL, 40)),
-    @session.Send(
+    @session.EmitNotice(@session.NamespaceSubscriptionEstablished(1UL, 40)),
+    @session.SendChunk(
       40,
       @protocol.encode_namespace({
         track_namespace: test_namespace([b"child"]),
       }).unwrap(),
-      false,
     ),
-    @session.Notify(@session.NamespaceDiscovered(1UL, ns)),
+    @session.EmitNotice(@session.NamespaceDiscovered(1UL, ns)),
   ])
 }

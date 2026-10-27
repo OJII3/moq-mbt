@@ -16,14 +16,13 @@ test "local PUBLISH_NAMESPACE accepts and withdraws independently of tracks" {
   assert_eq(
     publisher.receive(@session.StreamOpened(@session.Request(request_id), 30)),
     Ok([
-      @session.Send(
+      @session.SendChunk(
         30,
         @protocol.encode_publish_namespace({
           request_id,
           track_namespace: namespace_request(),
           parameters: [],
         }).unwrap(),
-        false,
       ),
     ]),
   )
@@ -33,14 +32,16 @@ test "local PUBLISH_NAMESPACE accepts and withdraws independently of tracks" {
   ).unwrap()
   assert_eq(
     publisher.receive(@session.StreamData(30, accepted)),
-    Ok([@session.Notify(@session.NamespacePublicationAccepted(request_id, 30))]),
+    Ok([
+      @session.EmitNotice(@session.NamespacePublicationAccepted(request_id, 30)),
+    ]),
   )
   assert_eq(
     publisher.cancel_request(request_id),
     Ok([
       @session.AbortSend(30, 1UL),
       @session.StopReceiving(30, 1UL),
-      @session.Notify(@session.NamespaceWithdrawn(request_id, 30)),
+      @session.EmitNotice(@session.NamespaceWithdrawn(request_id, 30)),
     ]),
   )
   assert_eq(publisher.receive(@session.StreamData(30, accepted)), Ok([]))
@@ -68,7 +69,7 @@ test "peer PUBLISH_NAMESPACE requires explicit application acceptance and can be
       ),
     ),
     Ok([
-      @session.Notify(
+      @session.EmitNotice(
         @session.NamespacePublicationRequested(1UL, 40, namespace_request(), []),
       ),
     ]),
@@ -76,15 +77,14 @@ test "peer PUBLISH_NAMESPACE requires explicit application acceptance and can be
   assert_eq(
     subscriber.accept_namespace_publication(40),
     Ok([
-      @session.Send(
+      @session.SendChunk(
         40,
         @protocol.encode_request_ok_for(
           { parameters: [], properties: b"", },
           @protocol.Namespace,
         ).unwrap(),
-        false,
       ),
-      @session.Notify(@session.NamespacePublicationAccepted(1UL, 40)),
+      @session.EmitNotice(@session.NamespacePublicationAccepted(1UL, 40)),
     ]),
   )
   assert_eq(
@@ -92,7 +92,7 @@ test "peer PUBLISH_NAMESPACE requires explicit application acceptance and can be
     Ok([
       @session.AbortSend(40, 1UL),
       @session.StopReceiving(40, 1UL),
-      @session.Notify(@session.NamespaceAcceptanceRevoked(1UL, 40)),
+      @session.EmitNotice(@session.NamespaceAcceptanceRevoked(1UL, 40)),
     ]),
   )
 }
@@ -127,8 +127,8 @@ test "peer PUBLISH_NAMESPACE can be rejected with REQUEST_ERROR and FIN" {
   assert_eq(
     subscriber.reject_namespace_publication(40, error),
     Ok([
-      @session.Send(40, @protocol.encode_request_error(error).unwrap(), true),
-      @session.Notify(@session.NamespacePublicationRejected(1UL, 40, error)),
+      @session.SendFin(40, @protocol.encode_request_error(error).unwrap()),
+      @session.EmitNotice(@session.NamespacePublicationRejected(1UL, 40, error)),
     ]),
   )
 }
@@ -167,7 +167,7 @@ test "namespace request updates are surfaced before and after acceptance" {
       ),
     ),
     Ok([
-      @session.Notify(
+      @session.EmitNotice(
         @session.NamespaceUpdateRequested(1UL, 3UL, 40, first_update.parameters),
       ),
     ]),
@@ -186,7 +186,7 @@ test "namespace request updates are surfaced before and after acceptance" {
       ),
     ),
     Ok([
-      @session.Notify(
+      @session.EmitNotice(
         @session.NamespaceUpdateRequested(
           1UL,
           5UL,
@@ -207,34 +207,31 @@ test "namespace request updates are surfaced before and after acceptance" {
   assert_eq(
     subscriber.accept_namespace_publication(40),
     Ok([
-      @session.Send(
+      @session.SendChunk(
         40,
         @protocol.encode_request_ok_for(update_ok, @protocol.Namespace).unwrap(),
-        false,
       ),
-      @session.Notify(@session.NamespacePublicationAccepted(1UL, 40)),
+      @session.EmitNotice(@session.NamespacePublicationAccepted(1UL, 40)),
     ]),
   )
   assert_eq(
     subscriber.accept_namespace_update(40, 3UL, update_ok),
     Ok([
-      @session.Send(
+      @session.SendChunk(
         40,
         @protocol.encode_request_ok_for(update_ok, @protocol.RequestUpdate).unwrap(),
-        false,
       ),
-      @session.Notify(@session.NamespaceUpdateAccepted(1UL, 3UL, update_ok)),
+      @session.EmitNotice(@session.NamespaceUpdateAccepted(1UL, 3UL, update_ok)),
     ]),
   )
   assert_eq(
     subscriber.accept_namespace_update(40, 5UL, update_ok),
     Ok([
-      @session.Send(
+      @session.SendChunk(
         40,
         @protocol.encode_request_ok_for(update_ok, @protocol.RequestUpdate).unwrap(),
-        false,
       ),
-      @session.Notify(@session.NamespaceUpdateAccepted(1UL, 5UL, update_ok)),
+      @session.EmitNotice(@session.NamespaceUpdateAccepted(1UL, 5UL, update_ok)),
     ]),
   )
 
@@ -252,7 +249,7 @@ test "namespace request updates are surfaced before and after acceptance" {
       ),
     ),
     Ok([
-      @session.Notify(
+      @session.EmitNotice(
         @session.NamespaceUpdateRequested(
           1UL,
           7UL,
@@ -275,10 +272,10 @@ test "namespace request updates are surfaced before and after acceptance" {
   assert_eq(
     subscriber.reject_namespace_update(40, 7UL, error),
     Ok([
-      @session.Send(40, @protocol.encode_request_error(error).unwrap(), true),
-      @session.Notify(@session.NamespaceUpdateRejected(1UL, 7UL, error)),
+      @session.SendFin(40, @protocol.encode_request_error(error).unwrap()),
+      @session.EmitNotice(@session.NamespaceUpdateRejected(1UL, 7UL, error)),
       @session.StopReceiving(40, 1UL),
-      @session.Notify(@session.NamespaceAcceptanceRevoked(1UL, 40)),
+      @session.EmitNotice(@session.NamespaceAcceptanceRevoked(1UL, 40)),
     ]),
   )
 }
@@ -319,13 +316,12 @@ test "outgoing namespace update is matched to its REQUEST_OK response" {
     .unwrap()
   assert_eq(update_id, 2UL)
   assert_eq(actions, [
-    @session.Send(
+    @session.SendChunk(
       30,
       @protocol.encode_request_update_for(
         { request_id: update_id, parameters: token, },
         @protocol.RequestStreamFor(@protocol.Namespace),
       ).unwrap(),
-      false,
     ),
   ])
   let update_ok = @protocol.encode_request_ok_for(
@@ -335,7 +331,7 @@ test "outgoing namespace update is matched to its REQUEST_OK response" {
   assert_eq(
     publisher.receive(@session.StreamData(30, update_ok)),
     Ok([
-      @session.Notify(
+      @session.EmitNotice(
         @session.NamespaceUpdateAccepted(request_id, update_id, {
           parameters: [],
           properties: b"",
@@ -363,7 +359,7 @@ test "invalid first response to PUBLISH_NAMESPACE closes the session" {
     publisher.receive(@session.StreamData(30, invalid)),
     Ok([
       @session.CloseConnection(3UL, b""),
-      @session.Notify(@session.SessionEnded(@session.Local(3UL, b""))),
+      @session.EmitNotice(@session.SessionEnded(@session.Local(3UL, b""))),
     ]),
   )
   assert_eq(publisher.state(), @session.Closed)
@@ -384,13 +380,15 @@ test "duplicate initial PUBLISH_NAMESPACE response is a protocol violation" {
   ).unwrap()
   assert_eq(
     publisher.receive(@session.StreamData(30, accepted)),
-    Ok([@session.Notify(@session.NamespacePublicationAccepted(request_id, 30))]),
+    Ok([
+      @session.EmitNotice(@session.NamespacePublicationAccepted(request_id, 30)),
+    ]),
   )
   assert_eq(
     publisher.receive(@session.StreamData(30, accepted)),
     Ok([
       @session.CloseConnection(3UL, b""),
-      @session.Notify(@session.SessionEnded(@session.Local(3UL, b""))),
+      @session.EmitNotice(@session.SessionEnded(@session.Local(3UL, b""))),
     ]),
   )
 }
@@ -413,7 +411,7 @@ test "PUBLISH_NAMESPACE reset and cancellation crossed events notify only once" 
     publisher.receive(@session.StreamReset(30, 7UL)),
     Ok([
       @session.AbortSend(30, 7UL),
-      @session.Notify(@session.NamespaceAcceptanceRevoked(request_id, 30)),
+      @session.EmitNotice(@session.NamespaceAcceptanceRevoked(request_id, 30)),
     ]),
   )
   assert_eq(publisher.cancel_request(request_id), Ok([]))
@@ -432,10 +430,10 @@ test "FIN before the initial namespace response is a protocol violation" {
     publisher.receive(@session.StreamOpened(@session.Request(request_id), 30)),
   )
   assert_eq(
-    publisher.receive(@session.StreamFinished(30)),
+    publisher.receive(@session.InboundStreamFinished(30)),
     Ok([
       @session.CloseConnection(3UL, b""),
-      @session.Notify(@session.SessionEnded(@session.Local(3UL, b""))),
+      @session.EmitNotice(@session.SessionEnded(@session.Local(3UL, b""))),
     ]),
   )
 }
@@ -519,7 +517,9 @@ test "request GOAWAY timeout terminates a namespace request through its lifetime
   assert_eq(
     publisher.receive(@session.StreamData(30, goaway)),
     Ok([
-      @session.Notify(@session.RequestGoAwayReceived(request_id, 30, b"", 5UL)),
+      @session.EmitNotice(
+        @session.RequestGoAwayReceived(request_id, 30, b"", 5UL),
+      ),
     ]),
   )
   assert_eq(
@@ -527,7 +527,7 @@ test "request GOAWAY timeout terminates a namespace request through its lifetime
     Ok([
       @session.AbortSend(30, 4UL),
       @session.StopReceiving(30, 4UL),
-      @session.Notify(@session.NamespaceWithdrawn(request_id, 30)),
+      @session.EmitNotice(@session.NamespaceWithdrawn(request_id, 30)),
     ]),
   )
 }
@@ -568,7 +568,7 @@ test "PUBLISH_NAMESPACE must be the only initial request on its bidi" {
     Ok([
       @session.AbortSend(40, 3UL),
       @session.StopReceiving(40, 3UL),
-      @session.Notify(@session.NamespaceAcceptanceRevoked(1UL, 40)),
+      @session.EmitNotice(@session.NamespaceAcceptanceRevoked(1UL, 40)),
     ]),
   )
 }
@@ -601,7 +601,7 @@ test "GOAWAY cancels an opening namespace request before its delayed stream open
       @session.StreamData(11, client_goaway_control(0UL, 0UL, b"")),
     ),
     Ok([
-      @session.Notify(
+      @session.EmitNotice(
         @session.ControlMessageReceived(
           @protocol.GoAwayControl({
             uri: b"",
@@ -610,7 +610,7 @@ test "GOAWAY cancels an opening namespace request before its delayed stream open
           }),
         ),
       ),
-      @session.Notify(@session.ControlGoAwayReceived(b"", 0UL, 0UL)),
+      @session.EmitNotice(@session.ControlGoAwayReceived(b"", 0UL, 0UL)),
     ]),
   )
   assert_eq(
@@ -657,10 +657,10 @@ test "GOAWAY rejects a namespace REQUEST_UPDATE and closes its bidi" {
       @session.StreamData(40, @protocol.encode_request_update(update).unwrap()),
     ),
     Ok([
-      @session.Send(40, @protocol.encode_request_error(error).unwrap(), true),
-      @session.Notify(@session.NamespaceUpdateRejected(1UL, 3UL, error)),
+      @session.SendFin(40, @protocol.encode_request_error(error).unwrap()),
+      @session.EmitNotice(@session.NamespaceUpdateRejected(1UL, 3UL, error)),
       @session.StopReceiving(40, 4UL),
-      @session.Notify(@session.NamespaceAcceptanceRevoked(1UL, 40)),
+      @session.EmitNotice(@session.NamespaceAcceptanceRevoked(1UL, 40)),
     ]),
   )
 }
@@ -679,7 +679,7 @@ test "GOAWAY cannot be the initial PUBLISH_NAMESPACE response" {
     publisher.receive(@session.StreamData(30, goaway)),
     Ok([
       @session.CloseConnection(3UL, b""),
-      @session.Notify(@session.SessionEnded(@session.Local(3UL, b""))),
+      @session.EmitNotice(@session.SessionEnded(@session.Local(3UL, b""))),
     ]),
   )
 }
@@ -714,10 +714,10 @@ test "FIN during a namespace REQUEST_UPDATE response is a protocol violation" {
     Ok([]),
   )
   assert_eq(
-    publisher.receive(@session.StreamFinished(30)),
+    publisher.receive(@session.InboundStreamFinished(30)),
     Ok([
       @session.CloseConnection(3UL, b""),
-      @session.Notify(@session.SessionEnded(@session.Local(3UL, b""))),
+      @session.EmitNotice(@session.SessionEnded(@session.Local(3UL, b""))),
     ]),
   )
 }

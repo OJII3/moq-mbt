@@ -86,11 +86,19 @@ pub(all) enum RequestOkContext {
 } derive(Debug, Eq)
 
 ///|
+
+///|
+/// Where a control message was read from, and which request a response answers.
+/// Context matters for REQUEST_OK parameter scope and for GOAWAY fields that
+/// are only present on request streams.
 pub(all) enum ControlStreamContext {
+  /// Context is unknown; context-specific validation is skipped.
   AnyStream
   ControlStream
   RequestStream
+  /// A response on a request stream; identifies the request type.
   RequestStreamFor(RequestOkContext)
+  /// A FETCH request stream, whose REQUEST_UPDATE uses the FETCH scope.
   FetchRequestStream
 } derive(Debug, Eq)
 

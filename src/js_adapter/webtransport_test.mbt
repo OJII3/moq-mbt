@@ -451,7 +451,7 @@ async fn webtransport_session_driver_reports_close() -> Unit {
   while !peer_ended {
     match driver.next_notice().wait() {
       Some(@session.SessionEnded(@session.Peer(37UL))) => peer_ended = true
-      Some(@session.SendFinished(_, _)) => ()
+      Some(@session.StreamSendFinished(_, _)) => ()
       Some(_) => fail("peer close did not produce the expected session end")
       None => fail("session ended without a SessionEnded notice")
     }
@@ -485,7 +485,7 @@ async fn webtransport_session_driver_reports_close() -> Unit {
     match failed_driver.next_notice().wait() {
       Some(@session.SessionEnded(@session.Transport(-1L))) =>
         failure_ended = true
-      Some(@session.SendFinished(_, _)) => ()
+      Some(@session.StreamSendFinished(_, _)) => ()
       Some(_) =>
         fail("transport failure did not produce the expected session end")
       None => fail("transport failure ended without a SessionEnded notice")

@@ -245,7 +245,7 @@ fn SessionActionDriver::has_pending_sends(
 fn take_driver_events(
   driver : SessionActionDriver,
 ) -> (
-  Array[@session.ClientSessionNotice],
+  Array[@session.SessionNotice],
   Array[(@session.ClientStreamPurpose, Int64)],
 ) {
   match driver.inner {
@@ -258,10 +258,10 @@ fn take_driver_events(
 fn drive_session_actions(
   client : @transport.Client,
   session : @session.ClientSession,
-  initial : Array[@session.ClientSessionAction],
+  initial : Array[@session.SessionAction],
   driver : SessionActionDriver,
 ) -> (
-  Array[@session.ClientSessionNotice],
+  Array[@session.SessionNotice],
   Array[(@session.ClientStreamPurpose, Int64)],
 ) raise {
   let inner = driver.ensure(client, session)
@@ -277,13 +277,10 @@ fn drive_session_actions(
 fn drive_session_result(
   client : @transport.Client,
   session : @session.ClientSession,
-  result : Result[
-    Array[@session.ClientSessionAction],
-    @session.ClientSessionError,
-  ],
+  result : Result[Array[@session.SessionAction], @session.ClientSessionError],
   driver : SessionActionDriver,
 ) -> (
-  Array[@session.ClientSessionNotice],
+  Array[@session.SessionNotice],
   Array[(@session.ClientStreamPurpose, Int64)],
 ) raise {
   match result {
@@ -295,8 +292,8 @@ fn drive_session_result(
 ///|
 fn receive_session_event(
   session : @session.ClientSession,
-  event : @session.ClientSessionEvent,
-) -> Result[Array[@session.ClientSessionAction], @session.ClientSessionError] {
+  event : @session.SessionEvent,
+) -> Result[Array[@session.SessionAction], @session.ClientSessionError] {
   match session.receive(@session.Clock(@env.now())) {
     Err(error) => Err(error)
     Ok(clock_actions) =>
@@ -310,7 +307,7 @@ fn receive_session_event(
 ///|
 fn receive_session_clock(
   session : @session.ClientSession,
-) -> Result[Array[@session.ClientSessionAction], @session.ClientSessionError] {
+) -> Result[Array[@session.SessionAction], @session.ClientSessionError] {
   session.receive(@session.Clock(@env.now()))
 }
 
@@ -338,8 +335,8 @@ fn setup_client(
   ignore(
     session.receive(
       @session.DatagramSendCapabilityChanged(
-        capability.enabled,
-        capability.max_length,
+        enabled=capability.enabled,
+        max_length=capability.max_length,
       ),
     ),
   )
@@ -425,8 +422,8 @@ fn setup_client(
           receive_session_event(
             session,
             @session.DatagramSendCapabilityChanged(
-              capability.enabled,
-              capability.max_length,
+              enabled=capability.enabled,
+              max_length=capability.max_length,
             ),
           ),
           driver,

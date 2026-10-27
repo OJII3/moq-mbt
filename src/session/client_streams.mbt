@@ -6,7 +6,7 @@ fn ClientSession::receive_stream_data(
   self : ClientSession,
   stream : Int64,
   bytes : Bytes,
-) -> Result[Array[ClientSessionAction], ClientSessionError] {
+) -> Result[Array[SessionAction], ClientSessionError] {
   match self.inbound_unclassified_buffers.get(stream) {
     Some(previous) => {
       if bytes.length() > 1024 * 1024 - previous.length() {
@@ -94,14 +94,14 @@ fn ClientSession::stream_opened(
   self : ClientSession,
   purpose : ClientStreamPurpose,
   stream : Int64,
-) -> Result[Array[ClientSessionAction], ClientSessionError] {
+) -> Result[Array[SessionAction], ClientSessionError] {
   match purpose {
     Control => {
       if !self.started || self.outbound_control_stream is Some(_) {
         return Err(UnexpectedMessage)
       }
       self.outbound_control_stream = Some(stream)
-      Ok([Send(stream, self.handshake.outbound_setup(), false)])
+      Ok([SendChunk(stream, self.handshake.outbound_setup())])
     }
     Request(request_id) => {
       if self.request_streams.get(stream) is Some(_) ||
@@ -129,7 +129,7 @@ fn ClientSession::stream_opened(
             Ok(value) => value
             Err(error) => return Err(Encoding(error))
           }
-          return Ok([Send(stream, bytes, false)])
+          return Ok([SendChunk(stream, bytes)])
         }
         Some(_) => return Err(DuplicateStream)
         None => ()
@@ -175,7 +175,7 @@ fn ClientSession::stream_opened(
         Ok(value) => value
         Err(error) => return Err(Encoding(error))
       }
-      Ok([Send(stream, bytes, false)])
+      Ok([SendChunk(stream, bytes)])
     }
     Object(token) => {
       let pending = match self.pending_object_streams.get(token) {
@@ -231,20 +231,20 @@ fn ClientSession::stream_opened(
         abort_sent: false,
         pending_send_count: 1UL,
       }
-      let actions : Array[ClientSessionAction] = [
-        Send(stream, @protocol.encode_subgroup_header(pending.header), false),
+      let actions : Array[SessionAction] = [
+        SendChunk(stream, @protocol.encode_subgroup_header(pending.header)),
       ]
       for frame in pending.frames {
         match encode_outgoing_object(outgoing, frame) {
           Ok(bytes) => {
-            actions.push(Send(stream, bytes, false))
+            actions.push(SendChunk(stream, bytes))
             outgoing.pending_send_count = outgoing.pending_send_count + 1UL
           }
           Err(_) => return Err(Track(InvalidControlMessage))
         }
       }
       if pending.finish_requested {
-        actions.push(Send(stream, b"", true))
+        actions.push(SendFin(stream, b""))
         outgoing.pending_send_count = outgoing.pending_send_count + 1UL
       }
       self.outgoing_object_streams[stream] = outgoing
@@ -259,7 +259,7 @@ fn ClientSession::stream_opened(
 fn ClientSession::stream_finished(
   self : ClientSession,
   stream : Int64,
-) -> Result[Array[ClientSessionAction], ClientSessionError] {
+) -> Result[Array[SessionAction], ClientSessionError] {
   if self.peer_control_stream == Some(stream) ||
     self.inbound_stream_kinds.get(stream) is Some(Control) {
     return Err(Handshake(self.handshake.control_closed()))
@@ -318,12 +318,12 @@ fn ClientSession::stream_finished(
       request.object_drain.note_stream_closed()
       self.incoming_object_streams.remove(stream)
       self.inbound_stream_kinds.remove(stream)
-      let actions : Array[ClientSessionAction] = []
+      let actions : Array[SessionAction] = []
       if group_finished {
-        actions.push(Notify(GroupFinished(request_id, group_id)))
+        actions.push(EmitNotice(GroupFinished(request_id, group_id)))
       }
       match self.take_ready_publish_done(request_id) {
-        Some(done) => actions.push(Notify(PublishDone(request_id, done)))
+        Some(done) => actions.push(EmitNotice(PublishDone(request_id, done)))
         None => ()
       }
       Ok(actions)
@@ -349,7 +349,7 @@ fn ClientSession::stream_reset(
   self : ClientSession,
   stream : Int64,
   error_code : UInt64,
-) -> Result[Array[ClientSessionAction], ClientSessionError] {
+) -> Result[Array[SessionAction], ClientSessionError] {
   if self.peer_control_stream == Some(stream) ||
     self.inbound_stream_kinds.get(stream) is Some(Control) {
     return Err(Handshake(self.handshake.control_closed()))
@@ -384,11 +384,11 @@ fn ClientSession::stream_reset(
       request.object_drain.note_stream_closed()
       self.incoming_object_streams.remove(stream)
       self.inbound_stream_kinds.remove(stream)
-      let actions : Array[ClientSessionAction] = [
-        Notify(ObjectStreamReset(request_id, stream)),
+      let actions : Array[SessionAction] = [
+        EmitNotice(ObjectStreamReset(request_id, stream)),
       ]
       match self.take_ready_publish_done(request_id) {
-        Some(done) => actions.push(Notify(PublishDone(request_id, done)))
+        Some(done) => actions.push(EmitNotice(PublishDone(request_id, done)))
         None => ()
       }
       Ok(actions)
@@ -411,14 +411,14 @@ fn ClientSession::stream_reset(
 fn ClientSession::send_complete(
   self : ClientSession,
   stream : Int64,
-  canceled : Bool,
-) -> Result[Array[ClientSessionAction], ClientSessionError] {
+  completion : SendCompletion,
+) -> Result[Array[SessionAction], ClientSessionError] {
   match self.outgoing_object_streams.get(stream) {
-    Some(outgoing) if canceled => {
+    Some(outgoing) if completion == Reset => {
       let subscription_stream = outgoing.subscription_stream
       self.close_outgoing_object_stream(stream)
       Ok(
-        [Notify(SendFinished(stream, true))] +
+        [EmitNotice(StreamSendFinished(stream, Reset))] +
         self.finish_failed_subscription(subscription_stream),
       )
     }
@@ -431,23 +431,23 @@ fn ClientSession::send_complete(
         self.close_outgoing_object_stream(stream)
         Ok(
           [
-            Notify(SendFinished(stream, false)),
-            Notify(ObjectStreamFinished(stream)),
+            EmitNotice(StreamSendFinished(stream, Sent)),
+            EmitNotice(ObjectStreamSendFinished(stream)),
           ] +
           self.finish_failed_subscription(subscription_stream),
         )
       } else {
-        Ok([Notify(SendFinished(stream, false))])
+        Ok([EmitNotice(StreamSendFinished(stream, Sent))])
       }
     }
     None =>
       match self.outgoing_fetch_streams.get(stream) {
-        Some(outgoing) if canceled => {
+        Some(outgoing) if completion == Reset => {
           let fetch = self.fetches.get(outgoing.request_id).unwrap()
           Ok(
             self.terminate_fetch(
               fetch,
-              [Notify(SendFinished(stream, true))],
+              [EmitNotice(StreamSendFinished(stream, Reset))],
               None,
               RemoveFetchData,
             ),
@@ -462,23 +462,23 @@ fn ClientSession::send_complete(
             Ok(
               self.terminate_fetch(
                 fetch,
-                [Notify(SendFinished(stream, false))],
+                [EmitNotice(StreamSendFinished(stream, Sent))],
                 None,
                 RemoveFetchData,
               ),
             )
           } else {
-            Ok([Notify(SendFinished(stream, false))])
+            Ok([EmitNotice(StreamSendFinished(stream, Sent))])
           }
         }
         None =>
-          match self.namespace_send_complete(stream, canceled) {
+          match self.namespace_send_complete(stream, completion) {
             Some(actions) => Ok(actions)
             None =>
               match self.request_streams.get(stream) {
                 Some(request_id) if self.requests.get(request_id).unwrap().lifetime.cancelled =>
                   Ok([])
-                _ => Ok([Notify(SendFinished(stream, canceled))])
+                _ => Ok([EmitNotice(StreamSendFinished(stream, completion))])
               }
           }
       }

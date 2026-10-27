@@ -6,6 +6,38 @@ pub(all) struct TrackName {
 } derive(Debug, Eq)
 
 ///|
+/// Build a track name with a single namespace field, for the common
+/// `namespace/track` shape.
+pub fn TrackName::new(namespace_field : String, name : String) -> TrackName {
+  {
+    namespace_fields: [@utf8.encode(namespace_field)],
+    name: @utf8.encode(name),
+  }
+}
+
+///|
+/// Build a track name from UTF-8 strings when the namespace has several fields.
+pub fn TrackName::from_namespace_fields(
+  namespace_fields : Array[String],
+  name : String,
+) -> TrackName {
+  {
+    namespace_fields: namespace_fields.map(fn(field) { @utf8.encode(field) }),
+    name: @utf8.encode(name),
+  }
+}
+
+///|
+/// Render the track name as `namespace/field/.../track` for logs and display.
+/// Byte fields that are not valid UTF-8 are decoded lossily; use the struct
+/// fields when exact bytes matter.
+pub fn TrackName::to_string(self : TrackName) -> String {
+  let parts = self.namespace_fields.map(fn(field) { @utf8.decode_lossy(field) })
+  parts.push(@utf8.decode_lossy(self.name))
+  parts.join("/")
+}
+
+///|
 /// A namespace is an opaque tuple of non-empty byte fields.
 pub(all) struct TrackNamespace {
   fields : Array[Bytes]
@@ -34,6 +66,30 @@ pub(all) struct MessageParameter {
   kind : UInt64
   value : ParameterValue
 } derive(Debug, Eq)
+
+///|
+let forward_parameter_kind : UInt64 = 0x10
+
+///|
+/// Whether a subscription asks the publisher to forward Objects. The FORWARD
+/// parameter defaults to true when it is absent.
+pub fn forward_requested(parameters : Array[MessageParameter]) -> Bool {
+  for parameter in parameters {
+    if parameter.kind == forward_parameter_kind {
+      match parameter.value {
+        Byte(value) => return value != 0
+        _ => return false
+      }
+    }
+  }
+  true
+}
+
+///|
+/// Build the FORWARD parameter used by SUBSCRIBE and REQUEST_UPDATE.
+pub fn forward_parameter(enabled : Bool) -> MessageParameter {
+  { kind: forward_parameter_kind, value: Byte(if enabled { 1 } else { 0 }), }
+}
 
 ///|
 fn encode_track_name(track : TrackName) -> Result[Bytes, CodecError] {

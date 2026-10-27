@@ -21,11 +21,11 @@
 
 アダプターはセッションの送信アクションを QUIC / WebTransport の操作に変換し、トランスポートの受信イベントをセッションへ渡す。ストリーム参照はセッション内では不透明な値として扱い、実際のストリーム ID との対応はアダプターが管理する。
 
-送信アクションの実行は `driver` の `SessionDriver` に集約する。アダプターは `SessionTransport` の primitive 操作だけを実装し、`ClientSessionAction` の variant ごとの分岐や queue を持たない。`SessionDriver` はアクションを受理されるまで保持し、`Retry` では同じアクションを再試行する。ストリームごとのアクション順を維持し、あるストリームの拒否が無関係なストリームの送信を止めない。queue 上限（open / send / datagram）は `SessionDriverConfig` としてアダプターから注入し、driver や adapter に固定値を埋め込まない。
+送信アクションの実行は `driver` の `SessionDriver` に集約する。アダプターは `SessionTransport` の primitive 操作だけを実装し、`SessionAction` の variant ごとの分岐や queue を持たない。`SessionDriver` はアクションを受理されるまで保持し、`Retry` では同じアクションを再試行する。ストリームごとのアクション順を維持し、あるストリームの拒否が無関係なストリームの送信を止めない。queue 上限（open / send / datagram）は `SessionDriverConfig` としてアダプターから注入し、driver や adapter に固定値を埋め込まない。
 
-driver は `Accepted` の完了を `StreamOpened`、`SendComplete`、`StreamReset`、`TransportFailed` などのセッションイベントに変換して session へ戻す。開設や送信の致命的失敗は `TransportFailed` として渡し、アクションを黙って破棄しない。アクションの受理はトランスポートへの投入を意味し、ピアでのアプリケーション処理完了は別途通知で追跡する。
+driver は `Accepted` の完了を `StreamOpened`、`SendCompleted`、`StreamReset`、`TransportFailed` などのセッションイベントに変換して session へ戻す。`SendCompleted` は `Sent` または `Reset` を取り、bool の意味を呼び出し側に推測させない。開設や送信の致命的失敗は `TransportFailed` として渡し、アクションを黙って破棄しない。アクションの受理はトランスポートへの投入を意味し、ピアでのアプリケーション処理完了は別途通知で追跡する。
 
-`AbortSend` を受けた driver は、そのストリームに残っている未送信アクションを破棄する。session は `AbortSend` を返した時点でそのストリームの保留送信数を閉じるため、GOAWAY の drain は abort した Object stream を待たない。abort 後に遅れて届いた `SendComplete` は無視してよい。この契約により、アプリケーションが `SendComplete` を注入して drain を補う必要はない。
+`AbortSend` を受けた driver は、そのストリームに残っている未送信アクションを破棄する。session は `AbortSend` を返した時点でそのストリームの保留送信数を閉じるため、GOAWAY の drain は abort した Object stream を待たない。abort 後に遅れて届いた `SendCompleted` は無視してよい。この契約により、アプリケーションが `SendCompleted` を注入して drain を補う必要はない。
 
 受信側のバッファ上限、データのコピーまたは保持期間も API ごとに明示する。
 
@@ -40,6 +40,8 @@ Subgroup の reader / writer と送信完了待ちの状態は private なスト
 track 名の逆引きは session が所有する。`track_for_request`、`subscription_track`、`track_alias_for_request` を公開し、`PublishAccepted`、`SubscriptionEnded`、`ObjectReceived`、`ObjectDatagramReceived` の notice には track を載せ、`PublishAccepted` は alias も返す。アプリケーションは track 名だけを目的とした対応表を持たない。
 
 Object の送信も session 側の状態を使う。`send_object_datagram_for_track` は publisher 側の track から forwarding 中の subscription を列挙し、subscription ごとの Track Alias に詰め替えて datagram を返す。`ObjectGroupWriter` は `open_object_group` が返す token ベースの thin な handle で、Object ID の採番、stream 開設待ちのキュー、`rotate`、FIN 待ち、abort を session の状態だけで説明する。128 objects ごとの rotation のような方針はアプリケーション側に残す。
+
+Object Datagram の送信は token で追跡する。`send_object_datagram` は `(token, actions)` を返し、`send_object_datagram_for_track` は fan-out した datagram ごとの token を返す。session は投入時に `DatagramQueued(token)`、transport がローカル書き込みに失敗した時に `DatagramLocalWriteFailed(token, status)` を通知する。`DatagramQueued` はローカル transport への投入であり、ピアへの到達や QUIC ACK を意味しない。送信可能な最大サイズは `max_datagram_length()` で問い合わせる。
 
 ## Request stream lifetime
 

@@ -40,15 +40,7 @@ fn merge_subscription_parameters(
 
 ///|
 fn subscription_forward(parameters : Array[@protocol.MessageParameter]) -> Bool {
-  for parameter in parameters {
-    if parameter.kind == 0x10 {
-      match parameter.value {
-        @protocol.Byte(value) => return value != 0
-        _ => ()
-      }
-    }
-  }
-  true
+  @protocol.forward_requested(parameters)
 }
 
 ///|
@@ -56,7 +48,7 @@ fn ClientSession::receive_peer_subscription_update(
   self : ClientSession,
   stream : Int64,
   message : @protocol.RequestUpdateMessage,
-) -> Result[Array[ClientSessionAction], ClientSessionError] {
+) -> Result[Array[SessionAction], ClientSessionError] {
   if (message.request_id & 1UL) != 1UL {
     return Err(InvalidRequestId)
   }
@@ -116,11 +108,11 @@ fn ClientSession::receive_peer_subscription_update(
       stream_count: subscription.opened_stream_count,
       reason: b"",
     })
-    let actions : Array[ClientSessionAction] = []
+    let actions : Array[SessionAction] = []
     for update_id in rejected_updates {
-      actions.push(Send(stream, bytes, false))
+      actions.push(SendChunk(stream, bytes))
       actions.push(
-        Notify(SubscriptionUpdateRejected(request_id, update_id, error)),
+        EmitNotice(SubscriptionUpdateRejected(request_id, update_id, error)),
       )
     }
     for action in self.stop_subscription_object_sends(stream, 0UL) {
@@ -146,7 +138,7 @@ fn ClientSession::receive_peer_subscription_update(
     filter_updated: subscription_filter_parameter(message.parameters) is Some(_),
   })
   Ok([
-    Notify(
+    EmitNotice(
       SubscriptionUpdateRequested(
         request_id,
         message.request_id,
@@ -165,7 +157,7 @@ pub fn ClientSession::update_subscription(
   self : ClientSession,
   request_id : UInt64,
   parameters : Array[@protocol.MessageParameter],
-) -> Result[(UInt64, Array[ClientSessionAction]), ClientSessionError] {
+) -> Result[(UInt64, Array[SessionAction]), ClientSessionError] {
   match self.ensure_new_request_allowed() {
     Ok(_) => ()
     Err(error) => return Err(error)
@@ -207,7 +199,7 @@ pub fn ClientSession::update_subscription(
     ),
     filter_updated: subscription_filter_parameter(parameters) is Some(_),
   })
-  Ok((update_id, self.finish_actions([Send(stream, bytes, false)])))
+  Ok((update_id, self.finish_actions([SendChunk(stream, bytes)])))
 }
 
 ///|
@@ -217,7 +209,7 @@ pub fn ClientSession::accept_subscription_update(
   stream : Int64,
   update_id : UInt64,
   response : @protocol.RequestOkMessage,
-) -> Result[Array[ClientSessionAction], ClientSessionError] {
+) -> Result[Array[SessionAction], ClientSessionError] {
   match self.ensure_open() {
     Ok(_) => ()
     Err(error) => return Err(error)
@@ -298,9 +290,7 @@ pub fn ClientSession::accept_subscription_update(
       response_largest,
     )
   }
-  let actions : Array[ClientSessionAction] = [
-    Send(stream, response_bytes, false),
-  ]
+  let actions : Array[SessionAction] = [SendChunk(stream, response_bytes)]
   if was_forwarding && !forwarding {
     for action in self.stop_subscription_object_sends(stream, 0UL) {
       actions.push(action)
@@ -311,7 +301,7 @@ pub fn ClientSession::accept_subscription_update(
     self.finish_actions(
       actions +
       [
-        Notify(
+        EmitNotice(
           SubscriptionUpdateApplied(
             request_id,
             update_id,
@@ -332,7 +322,7 @@ pub fn ClientSession::reject_subscription_update(
   stream : Int64,
   update_id : UInt64,
   error : @protocol.RequestErrorMessage,
-) -> Result[Array[ClientSessionAction], ClientSessionError] {
+) -> Result[Array[SessionAction], ClientSessionError] {
   match self.ensure_open() {
     Ok(_) => ()
     Err(error) => return Err(error)
@@ -367,7 +357,7 @@ pub fn ClientSession::reject_subscription_update(
     reason: b"",
   }
   subscription.pending_failure = Some(failure)
-  let actions : Array[ClientSessionAction] = [Send(stream, error_bytes, false)] +
+  let actions : Array[SessionAction] = [SendChunk(stream, error_bytes)] +
     self.fail_pending_joining_fetches(
       subscription.request_id,
       request_error_invalid_joining_request_id,
@@ -386,7 +376,7 @@ fn ClientSession::stop_subscription_object_sends(
   self : ClientSession,
   subscription_stream : Int64,
   error_code : UInt64,
-) -> Array[ClientSessionAction] {
+) -> Array[SessionAction] {
   for (_, pending) in self.pending_object_streams {
     if pending.subscription_stream == subscription_stream {
       pending.cancelled_error_code = Some(error_code)
@@ -398,7 +388,7 @@ fn ClientSession::stop_subscription_object_sends(
       streams.push(stream)
     }
   }
-  let actions : Array[ClientSessionAction] = []
+  let actions : Array[SessionAction] = []
   for stream in streams {
     match self.outgoing_object_streams.get(stream) {
       Some(outgoing) if !outgoing.abort_sent => {
@@ -415,7 +405,7 @@ fn ClientSession::stop_subscription_object_sends(
 fn ClientSession::finish_failed_subscription(
   self : ClientSession,
   stream : Int64,
-) -> Array[ClientSessionAction] {
+) -> Array[SessionAction] {
   let subscription = match self.published_subscriptions.get(stream) {
     Some(value) => value
     None => return []
@@ -440,7 +430,7 @@ fn ClientSession::finish_failed_subscription(
   }
   self.note_request_local_fin(stream)
   [
-    Send(stream, bytes, true),
-    Notify(PublishDone(subscription.request_id, done)),
+    SendFin(stream, bytes),
+    EmitNotice(PublishDone(subscription.request_id, done)),
   ]
 }

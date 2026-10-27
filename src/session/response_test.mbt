@@ -29,12 +29,12 @@ test "ClientSession buffers interleaved fragmented PUBLISH and SUBSCRIBE respons
     )
     assert_eq(
       session.receive(@session.StreamData(30, subscribe_ok[split:].to_owned())),
-      Ok([@session.Notify(@session.SubscribeEstablished(2, 2))]),
+      Ok([@session.EmitNotice(@session.SubscribeEstablished(2, 2))]),
     )
     assert_eq(
       session.receive(@session.StreamData(20, publish_ok[split:].to_owned())),
       Ok([
-        @session.Notify(
+        @session.EmitNotice(
           @session.PublishAccepted(
             0,
             { namespace_fields: [b"demo"], name: b"video", },
@@ -70,7 +70,7 @@ test "ClientSession rejects a second initial response after either request is ac
       Ok([
         @session.AbortSend(20, 3),
         @session.StopReceiving(20, 3),
-        @session.Notify(
+        @session.EmitNotice(
           @session.SubscriptionEnded(0, 20, {
             namespace_fields: [b"demo"],
             name: b"video",
@@ -86,7 +86,7 @@ test "ClientSession rejects a second initial response after either request is ac
       Ok([
         @session.AbortSend(30, 3),
         @session.StopReceiving(30, 3),
-        @session.Notify(
+        @session.EmitNotice(
           @session.SubscriptionEnded(0, 30, {
             namespace_fields: [b"demo"],
             name: b"video",
@@ -127,15 +127,15 @@ test "ClientSession routes fragmented request rejections by request kind" {
   assert_eq(
     session.receive(@session.StreamData(20, wire[last:].to_owned())),
     Ok([
-      @session.Send(20, b"", true),
-      @session.Notify(@session.PublishRejected(0, error)),
+      @session.SendFin(20, b""),
+      @session.EmitNotice(@session.PublishRejected(0, error)),
     ]),
   )
   assert_eq(
     session.receive(@session.StreamData(30, wire[last:].to_owned())),
     Ok([
-      @session.Send(30, b"", true),
-      @session.Notify(@session.SubscribeRejected(2, error)),
+      @session.SendFin(30, b""),
+      @session.EmitNotice(@session.SubscribeRejected(2, error)),
     ]),
   )
 }

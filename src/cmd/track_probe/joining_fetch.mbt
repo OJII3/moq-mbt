@@ -19,7 +19,7 @@ priv struct JoiningFetchState {
 fn JoiningFetchState::observe_publisher(
   self : JoiningFetchState,
   peer : LifecyclePeer,
-  notices : Array[@session.ClientSessionNotice],
+  notices : Array[@session.SessionNotice],
 ) -> Unit raise {
   for notice in notices {
     match notice {
@@ -91,7 +91,7 @@ fn JoiningFetchState::observe_publisher(
 ///|
 fn JoiningFetchState::observe_subscriber(
   self : JoiningFetchState,
-  notices : Array[@session.ClientSessionNotice],
+  notices : Array[@session.SessionNotice],
 ) -> Unit raise {
   for notice in notices {
     match notice {

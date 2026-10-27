@@ -235,7 +235,7 @@ fn ClientSession::receive_subgroup(
   self : ClientSession,
   stream : Int64,
   bytes : Bytes,
-) -> Result[Array[ClientSessionAction], ClientSessionError] {
+) -> Result[Array[SessionAction], ClientSessionError] {
   if self.ignored_object_streams.get(stream) is Some(_) {
     return Ok([])
   }
@@ -310,7 +310,7 @@ fn ClientSession::receive_subgroup(
   } else {
     let request = self.requests.get(request_id).unwrap()
     if request.can_receive_object_data() {
-      Ok([Notify(ObjectReceived(request_id, request.track, header, frames))])
+      Ok([EmitNotice(ObjectReceived(request_id, request.track, header, frames))])
     } else {
       Ok([])
     }
@@ -322,7 +322,7 @@ fn ClientSession::receive_subgroup(
 fn ClientSession::receive_object_datagram(
   self : ClientSession,
   bytes : Bytes,
-) -> Result[Array[ClientSessionAction], ClientSessionError] {
+) -> Result[Array[SessionAction], ClientSessionError] {
   let datagram = match @protocol.decode_datagram(bytes) {
     @protocol.Complete(@protocol.Object(value), consumed) =>
       if consumed == bytes.length() {
@@ -346,7 +346,7 @@ fn ClientSession::receive_object_datagram(
   if !request.can_receive_object_data() {
     return Ok([])
   }
-  Ok([Notify(ObjectDatagramReceived(request_id, request.track, datagram))])
+  Ok([EmitNotice(ObjectDatagramReceived(request_id, request.track, datagram))])
 }
 
 ///|
@@ -356,7 +356,7 @@ pub fn ClientSession::open_object_stream(
   self : ClientSession,
   subscription_stream : Int64,
   header : @protocol.SubgroupHeader,
-) -> Result[Array[ClientSessionAction], ClientSessionError] {
+) -> Result[Array[SessionAction], ClientSessionError] {
   match self.ensure_open() {
     Ok(_) => ()
     Err(error) => return Err(error)
@@ -408,7 +408,7 @@ pub fn ClientSession::send_object(
   self : ClientSession,
   stream : Int64,
   frame : @protocol.SubgroupFrame,
-) -> Result[Array[ClientSessionAction], ClientSessionError] {
+) -> Result[Array[SessionAction], ClientSessionError] {
   match self.ensure_open() {
     Ok(_) => ()
     Err(error) => return Err(error)
@@ -445,16 +445,18 @@ pub fn ClientSession::send_object(
     frame.object_id,
   )
   outgoing.pending_send_count = outgoing.pending_send_count + 1UL
-  Ok(self.finish_actions([Send(stream, bytes, false)]))
+  Ok(self.finish_actions([SendChunk(stream, bytes)]))
 }
 
 ///|
-/// Send one Object Datagram for an active local or peer subscription.
+/// Send one Object Datagram for an active local or peer subscription. Returns
+/// the token identifying this send; `DatagramQueued` and
+/// `DatagramLocalWriteFailed` notices refer to the same token.
 pub fn ClientSession::send_object_datagram(
   self : ClientSession,
   subscription_stream : Int64,
   datagram : @protocol.ObjectDatagram,
-) -> Result[Array[ClientSessionAction], ClientSessionError] {
+) -> Result[(UInt64, Array[SessionAction]), ClientSessionError] {
   match self.ensure_open() {
     Ok(_) => ()
     Err(error) => return Err(error)
@@ -509,19 +511,30 @@ pub fn ClientSession::send_object_datagram(
     datagram.group_id,
     datagram.object_id,
   )
-  Ok(self.finish_actions([SendDatagram(bytes)]))
+  let token = self.next_datagram_token
+  self.next_datagram_token = token + 1UL
+  Ok(
+    (
+      token,
+      self.finish_actions([
+        SendDatagram(token, bytes),
+        EmitNotice(DatagramQueued(token)),
+      ]),
+    ),
+  )
 }
 
 ///|
 /// Send one Object Datagram to every active forwarding subscription of a
 /// published track. The Track Alias is rewritten for each subscription; a
 /// subscription that does not forward or whose filter excludes the Object is
-/// skipped. Returns `Ok([])` when every subscription is skipped.
+/// skipped. Returns the tokens for the Datagrams that were queued; the token
+/// list is empty when every subscription is skipped.
 pub fn ClientSession::send_object_datagram_for_track(
   self : ClientSession,
   track : @protocol.TrackName,
   datagram : @protocol.ObjectDatagram,
-) -> Result[Array[ClientSessionAction], ClientSessionError] {
+) -> Result[(Array[UInt64], Array[SessionAction]), ClientSessionError] {
   match self.ensure_open() {
     Ok(_) => ()
     Err(error) => return Err(error)
@@ -555,7 +568,8 @@ pub fn ClientSession::send_object_datagram_for_track(
   if probe.length() > self.max_datagram_length {
     return Err(DatagramTooLarge(probe.length(), self.max_datagram_length))
   }
-  let actions : Array[ClientSessionAction] = []
+  let tokens : Array[UInt64] = []
+  let actions : Array[SessionAction] = []
   for (subscription_stream, subscription) in self.published_subscriptions {
     // The local PUBLISH request also has a published_subscriptions entry; it
     // is the publisher's own state, not a peer subscription.
@@ -586,14 +600,18 @@ pub fn ClientSession::send_object_datagram_for_track(
     if bytes.length() > self.max_datagram_length {
       return Err(DatagramTooLarge(bytes.length(), self.max_datagram_length))
     }
-    actions.push(SendDatagram(bytes))
+    let token = self.next_datagram_token
+    self.next_datagram_token = token + 1UL
+    tokens.push(token)
+    actions.push(SendDatagram(token, bytes))
+    actions.push(EmitNotice(DatagramQueued(token)))
   }
   self.note_published_location(
     publisher_request_id,
     datagram.group_id,
     datagram.object_id,
   )
-  Ok(self.finish_actions(actions))
+  Ok((tokens, self.finish_actions(actions)))
 }
 
 ///|
@@ -648,7 +666,7 @@ fn ClientSession::note_published_location(
 pub fn ClientSession::finish_object_stream(
   self : ClientSession,
   stream : Int64,
-) -> Result[Array[ClientSessionAction], ClientSessionError] {
+) -> Result[Array[SessionAction], ClientSessionError] {
   match self.ensure_open() {
     Ok(_) => ()
     Err(error) => return Err(error)
@@ -662,7 +680,7 @@ pub fn ClientSession::finish_object_stream(
   }
   outgoing.finishing = true
   outgoing.pending_send_count = outgoing.pending_send_count + 1UL
-  Ok(self.finish_actions([Send(stream, b"", true)]))
+  Ok(self.finish_actions([SendFin(stream, b"")]))
 }
 
 ///|
@@ -672,7 +690,7 @@ pub fn ClientSession::publish_done(
   subscription_stream : Int64,
   code : UInt64,
   reason : Bytes,
-) -> Result[Array[ClientSessionAction], ClientSessionError] {
+) -> Result[Array[SessionAction], ClientSessionError] {
   match self.ensure_open() {
     Ok(_) => ()
     Err(error) => return Err(error)
@@ -730,8 +748,8 @@ pub fn ClientSession::publish_done(
   self.note_request_local_fin(subscription_stream)
   Ok(
     self.finish_actions([
-      Send(subscription_stream, bytes, true),
-      Notify(PublishDone(request_id, message)),
+      SendFin(subscription_stream, bytes),
+      EmitNotice(PublishDone(request_id, message)),
     ]),
   )
 }

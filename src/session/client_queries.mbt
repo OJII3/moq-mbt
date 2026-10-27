@@ -47,3 +47,11 @@ pub fn ClientSession::track_alias_for_request(
     None => None
   }
 }
+
+///|
+/// The largest encoded Object Datagram the transport currently accepts, or 0
+/// when Datagram sending is unavailable. The size includes MoQ framing, not
+/// only the application payload.
+pub fn ClientSession::max_datagram_length(self : ClientSession) -> Int32 {
+  self.max_datagram_length
+}

@@ -37,7 +37,7 @@ fn publisher_announced() -> @session.ClientSession raise {
   assert_eq(
     publisher.receive(@session.StreamData(20, b"\x07\x00\x01\x00")),
     Ok([
-      @session.Notify(
+      @session.EmitNotice(
         @session.PublishAccepted(
           0,
           { namespace_fields: [b"demo"], name: b"video", },
@@ -69,14 +69,16 @@ fn publisher_started() -> @session.ClientSession raise {
       ),
     ),
     Ok([
-      @session.Notify(@session.SubscriptionRequested(1, 40, publisher_track())),
+      @session.EmitNotice(
+        @session.SubscriptionRequested(1, 40, publisher_track()),
+      ),
     ]),
   )
   assert_eq(
     publisher.accept_subscription(40),
     Ok([
-      @session.Send(40, b"\x04\x00\x02\x01\x00", false),
-      @session.Notify(@session.SubscriptionAccepted(1, 40, 1)),
+      @session.SendChunk(40, b"\x04\x00\x02\x01\x00"),
+      @session.EmitNotice(@session.SubscriptionAccepted(1, 40, 1)),
     ]),
   )
   publisher
@@ -110,20 +112,22 @@ fn publisher_finish(
 ) -> Unit raise {
   assert_eq(
     publisher.finish_object_stream(stream),
-    Ok([@session.Send(stream, b"", true)]),
+    Ok([@session.SendFin(stream, b"")]),
   )
   // Header, Objects, then FIN each produce a send completion.
   for _ in 0..<(object_count + 1) {
     assert_eq(
-      publisher.receive(@session.SendComplete(stream, false)),
-      Ok([@session.Notify(@session.SendFinished(stream, false))]),
+      publisher.receive(@session.SendCompleted(stream, @session.Sent)),
+      Ok([
+        @session.EmitNotice(@session.StreamSendFinished(stream, @session.Sent)),
+      ]),
     )
   }
   assert_eq(
-    publisher.receive(@session.SendComplete(stream, false)),
+    publisher.receive(@session.SendCompleted(stream, @session.Sent)),
     Ok([
-      @session.Notify(@session.SendFinished(stream, false)),
-      @session.Notify(@session.ObjectStreamFinished(stream)),
+      @session.EmitNotice(@session.StreamSendFinished(stream, @session.Sent)),
+      @session.EmitNotice(@session.ObjectStreamSendFinished(stream)),
     ]),
   )
 }
@@ -134,8 +138,10 @@ fn publisher_done_message(
   stream : Int64,
 ) -> @protocol.PublishDoneMessage raise {
   let bytes = match publisher.publish_done(stream, 3, b"").unwrap() {
-    [@session.Send(_, bytes, true), @session.Notify(@session.PublishDone(_, _))] =>
-      bytes
+    [
+      @session.SendFin(_, bytes),
+      @session.EmitNotice(@session.PublishDone(_, _)),
+    ] => bytes
     _ => fail("expected PUBLISH_DONE and FIN")
   }
   match @protocol.decode_control(bytes) {
@@ -174,7 +180,7 @@ test "publisher encodes one header and increasing object deltas" {
     assert_eq(
       publisher.receive(@session.StreamData(40, subscribe[split:].to_owned())),
       Ok([
-        @session.Notify(
+        @session.EmitNotice(
           @session.SubscriptionRequested(1, 40, publisher_track()),
         ),
       ]),
@@ -236,8 +242,8 @@ test "publisher counts empty and parallel streams per subscription" {
   )
   publisher_finish(publisher, 60, 2)
   assert_eq(
-    publisher.receive(@session.SendComplete(61, true)),
-    Ok([@session.Notify(@session.SendFinished(61, true))]),
+    publisher.receive(@session.SendCompleted(61, @session.Reset)),
+    Ok([@session.EmitNotice(@session.StreamSendFinished(61, @session.Reset))]),
   )
   publisher_finish(publisher, 62, 0)
   assert_eq(publisher_done_message(publisher, 40), {
@@ -302,7 +308,7 @@ test "publisher keeps EndOfGroup status separate from header End of Group" {
   assert_eq(
     subscriber.receive(@session.StreamData(80, wire)),
     Ok([
-      @session.Notify(
+      @session.EmitNotice(
         @session.ObjectReceived(
           0,
           { namespace_fields: [b"demo"], name: b"video", },
@@ -313,7 +319,7 @@ test "publisher keeps EndOfGroup status separate from header End of Group" {
     ]),
   )
   publisher_finish(publisher, 80, 1)
-  assert_eq(subscriber.receive(@session.StreamFinished(80)), Ok([]))
+  assert_eq(subscriber.receive(@session.InboundStreamFinished(80)), Ok([]))
 }
 
 ///|

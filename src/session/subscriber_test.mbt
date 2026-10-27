@@ -42,7 +42,7 @@ fn subscriber_started() -> @session.ClientSession raise {
   let subscriber = subscriber_pending()
   assert_eq(
     subscriber.receive(@session.StreamData(30, b"\x04\x00\x02\x01\x00")),
-    Ok([@session.Notify(@session.SubscribeEstablished(0, 1))]),
+    Ok([@session.EmitNotice(@session.SubscribeEstablished(0, 1))]),
   )
   subscriber
 }
@@ -62,12 +62,12 @@ fn subscriber_start_stream(
 
 ///|
 fn collect_frames(
-  actions : Array[@session.ClientSessionAction],
+  actions : Array[@session.SessionAction],
 ) -> Array[@protocol.SubgroupFrame] {
   let frames : Array[@protocol.SubgroupFrame] = []
   for action in actions {
     match action {
-      @session.Notify(
+      @session.EmitNotice(
         @session.ObjectReceived(
           _,
           { namespace_fields: [b"demo"], name: b"video", },
@@ -94,7 +94,7 @@ test "subscriber decodes multiple objects from one stream chunk" {
   assert_eq(
     subscriber.receive(@session.StreamData(9, wire)),
     Ok([
-      @session.Notify(
+      @session.EmitNotice(
         @session.ObjectReceived(
           0,
           { namespace_fields: [b"demo"], name: b"video", },
@@ -147,7 +147,7 @@ test "subscriber isolates interleaved subgroup streams" {
   assert_eq(
     subscriber.receive(@session.StreamData(21, wire_a[:split_a].to_owned())),
     Ok([
-      @session.Notify(
+      @session.EmitNotice(
         @session.ObjectReceived(
           0,
           { namespace_fields: [b"demo"], name: b"video", },
@@ -164,7 +164,7 @@ test "subscriber isolates interleaved subgroup streams" {
   assert_eq(
     subscriber.receive(@session.StreamData(21, wire_a[split_a:].to_owned())),
     Ok([
-      @session.Notify(
+      @session.EmitNotice(
         @session.ObjectReceived(
           0,
           { namespace_fields: [b"demo"], name: b"video", },
@@ -177,7 +177,7 @@ test "subscriber isolates interleaved subgroup streams" {
   assert_eq(
     subscriber.receive(@session.StreamData(23, wire_b[split_b:].to_owned())),
     Ok([
-      @session.Notify(
+      @session.EmitNotice(
         @session.ObjectReceived(
           0,
           { namespace_fields: [b"demo"], name: b"video", },
@@ -224,15 +224,15 @@ test "subscriber distinguishes FIN, reset, and incomplete frames" {
   subscriber_start_stream(subscriber, 40)
   assert_eq(subscriber.receive(@session.StreamData(40, header_bytes)), Ok([]))
   assert_eq(
-    subscriber.receive(@session.StreamFinished(40)),
-    Ok([@session.Notify(@session.GroupFinished(0, 1))]),
+    subscriber.receive(@session.InboundStreamFinished(40)),
+    Ok([@session.EmitNotice(@session.GroupFinished(0, 1))]),
   )
-  assert_eq(subscriber.receive(@session.StreamFinished(40)), Ok([]))
+  assert_eq(subscriber.receive(@session.InboundStreamFinished(40)), Ok([]))
   subscriber_start_stream(subscriber, 41)
   assert_eq(
     subscriber.receive(@session.StreamData(41, header_bytes + b"\x00\x01x")),
     Ok([
-      @session.Notify(
+      @session.EmitNotice(
         @session.ObjectReceived(
           0,
           { namespace_fields: [b"demo"], name: b"video", },
@@ -244,19 +244,19 @@ test "subscriber distinguishes FIN, reset, and incomplete frames" {
   )
   assert_eq(
     subscriber.receive(@session.StreamReset(41, 1)),
-    Ok([@session.Notify(@session.ObjectStreamReset(0, 41))]),
+    Ok([@session.EmitNotice(@session.ObjectStreamReset(0, 41))]),
   )
-  assert_eq(subscriber.receive(@session.StreamFinished(41)), Ok([]))
+  assert_eq(subscriber.receive(@session.InboundStreamFinished(41)), Ok([]))
   subscriber_start_stream(subscriber, 42)
   assert_eq(
     subscriber.receive(@session.StreamData(42, header_bytes[:1].to_owned())),
     Ok([]),
   )
   assert_eq(
-    subscriber.receive(@session.StreamFinished(42)),
+    subscriber.receive(@session.InboundStreamFinished(42)),
     Ok([
       @session.CloseConnection(3, b""),
-      @session.Notify(@session.SessionEnded(@session.Local(3, b""))),
+      @session.EmitNotice(@session.SessionEnded(@session.Local(3, b""))),
     ]),
   )
   let malformed_subscriber = subscriber_started()
@@ -268,7 +268,7 @@ test "subscriber distinguishes FIN, reset, and incomplete frames" {
     Ok([]),
   )
   assert_eq(
-    malformed_subscriber.receive(@session.StreamFinished(43)),
+    malformed_subscriber.receive(@session.InboundStreamFinished(43)),
     Ok([@session.StopReceiving(43, 3)]),
   )
 }
@@ -288,7 +288,7 @@ test "EndOfGroup object status does not imply header End of Group" {
   assert_eq(
     subscriber.receive(@session.StreamData(44, wire)),
     Ok([
-      @session.Notify(
+      @session.EmitNotice(
         @session.ObjectReceived(
           0,
           { namespace_fields: [b"demo"], name: b"video", },
@@ -298,7 +298,7 @@ test "EndOfGroup object status does not imply header End of Group" {
       ),
     ]),
   )
-  assert_eq(subscriber.receive(@session.StreamFinished(44)), Ok([]))
+  assert_eq(subscriber.receive(@session.InboundStreamFinished(44)), Ok([]))
 }
 
 ///|
@@ -317,8 +317,8 @@ test "subscriber accepts concatenated SUBSCRIBE_OK and PUBLISH_DONE while object
       ),
     ),
     Ok([
-      @session.Notify(@session.SubscribeEstablished(0, 1)),
-      @session.Send(30, b"", true),
+      @session.EmitNotice(@session.SubscribeEstablished(0, 1)),
+      @session.SendFin(30, b""),
     ]),
   )
   let header = subscriber_header(1, true)
@@ -332,7 +332,7 @@ test "subscriber accepts concatenated SUBSCRIBE_OK and PUBLISH_DONE while object
       ),
     ),
     Ok([
-      @session.Notify(
+      @session.EmitNotice(
         @session.ObjectReceived(
           0,
           { namespace_fields: [b"demo"], name: b"video", },
@@ -343,10 +343,10 @@ test "subscriber accepts concatenated SUBSCRIBE_OK and PUBLISH_DONE while object
     ]),
   )
   assert_eq(
-    subscriber.receive(@session.StreamFinished(44)),
+    subscriber.receive(@session.InboundStreamFinished(44)),
     Ok([
-      @session.Notify(@session.GroupFinished(0, 1)),
-      @session.Notify(@session.PublishDone(0, done)),
+      @session.EmitNotice(@session.GroupFinished(0, 1)),
+      @session.EmitNotice(@session.PublishDone(0, done)),
     ]),
   )
 }
@@ -387,11 +387,11 @@ test "subscriber resets incomplete subgroup headers without counting an unbound 
     subscriber.receive(
       @session.StreamData(30, @protocol.encode_publish_done(done).unwrap()),
     ),
-    Ok([@session.Send(30, b"", true)]),
+    Ok([@session.SendFin(30, b"")]),
   )
   assert_eq(
-    subscriber.receive(@session.StreamFinished(41)),
-    Ok([@session.Notify(@session.PublishDone(0, done))]),
+    subscriber.receive(@session.InboundStreamFinished(41)),
+    Ok([@session.EmitNotice(@session.PublishDone(0, done))]),
   )
 }
 
@@ -410,7 +410,7 @@ test "subscriber can reset an incomplete object stream after FIN validation fail
     Ok([]),
   )
   assert_eq(
-    subscriber.receive(@session.StreamFinished(40)),
+    subscriber.receive(@session.InboundStreamFinished(40)),
     Ok([@session.StopReceiving(40, 3)]),
   )
   assert_eq(subscriber.receive(@session.StreamReset(40, 1)), Ok([]))
@@ -424,8 +424,8 @@ test "subscriber can reset an incomplete object stream after FIN validation fail
       @session.StreamData(30, @protocol.encode_publish_done(done).unwrap()),
     ),
     Ok([
-      @session.Send(30, b"", true),
-      @session.Notify(@session.PublishDone(0, done)),
+      @session.SendFin(30, b""),
+      @session.EmitNotice(@session.PublishDone(0, done)),
     ]),
   )
 }

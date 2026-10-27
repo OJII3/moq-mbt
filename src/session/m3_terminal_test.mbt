@@ -8,9 +8,9 @@ test "SUBSCRIBE PUBLISH_DONE closes its request direction once while objects dra
   }).unwrap()
   assert_eq(
     subscriber.receive(@session.StreamData(30, done)),
-    Ok([@session.Send(30, b"", true)]),
+    Ok([@session.SendFin(30, b"")]),
   )
-  assert_eq(subscriber.receive(@session.StreamFinished(30)), Ok([]))
+  assert_eq(subscriber.receive(@session.InboundStreamFinished(30)), Ok([]))
   assert_eq(
     subscriber.receive(
       @session.InboundStreamStarted(40, @session.Unidirectional),
@@ -36,7 +36,7 @@ test "SUBSCRIBE PUBLISH_DONE closes its request direction once while objects dra
       ),
     ),
     Ok([
-      @session.Notify(
+      @session.EmitNotice(
         @session.ObjectReceived(
           0UL,
           { namespace_fields: [b"demo"], name: b"video", },
@@ -47,10 +47,10 @@ test "SUBSCRIBE PUBLISH_DONE closes its request direction once while objects dra
     ]),
   )
   assert_eq(
-    subscriber.receive(@session.StreamFinished(40)),
+    subscriber.receive(@session.InboundStreamFinished(40)),
     Ok([
-      @session.Notify(@session.GroupFinished(0UL, 0UL)),
-      @session.Notify(
+      @session.EmitNotice(@session.GroupFinished(0UL, 0UL)),
+      @session.EmitNotice(
         @session.PublishDone(0UL, { code: 0UL, stream_count: 1UL, reason: b"", }),
       ),
     ]),
@@ -69,9 +69,9 @@ test "PUBLISH_DONE received before malformed Object FIN reports once after strea
     subscriber.receive(
       @session.StreamData(30, @protocol.encode_publish_done(done).unwrap()),
     ),
-    Ok([@session.Send(30, b"", true)]),
+    Ok([@session.SendFin(30, b"")]),
   )
-  assert_eq(subscriber.receive(@session.StreamFinished(30)), Ok([]))
+  assert_eq(subscriber.receive(@session.InboundStreamFinished(30)), Ok([]))
   assert_eq(
     subscriber.receive(
       @session.InboundStreamStarted(40, @session.Unidirectional),
@@ -89,9 +89,9 @@ test "PUBLISH_DONE received before malformed Object FIN reports once after strea
     Ok([]),
   )
   assert_eq(
-    subscriber.receive(@session.StreamFinished(40)),
+    subscriber.receive(@session.InboundStreamFinished(40)),
     Ok([
-      @session.Notify(@session.PublishDone(0UL, done)),
+      @session.EmitNotice(@session.PublishDone(0UL, done)),
       @session.StopReceiving(40, 3UL),
     ]),
   )
@@ -112,11 +112,11 @@ test "initial REQUEST_ERROR closes the request direction once" {
       @session.StreamData(30, @protocol.encode_request_error(error).unwrap()),
     ),
     Ok([
-      @session.Send(30, b"", true),
-      @session.Notify(@session.SubscribeRejected(0UL, error)),
+      @session.SendFin(30, b""),
+      @session.EmitNotice(@session.SubscribeRejected(0UL, error)),
     ]),
   )
-  assert_eq(subscriber.receive(@session.StreamFinished(30)), Ok([]))
+  assert_eq(subscriber.receive(@session.InboundStreamFinished(30)), Ok([]))
   assert_eq(subscriber.cancel_request(0UL), Ok([]))
 }
 
@@ -140,7 +140,7 @@ test "NEW_GROUP_REQUEST requires DYNAMIC_GROUPS in SUBSCRIBE_OK properties" {
     }).unwrap()
     ignore(subscriber.receive(@session.StreamData(30, response)).unwrap())
     match subscriber.update_subscription(0UL, new_group) {
-      Ok((_, [@session.Send(30, _, false)])) if supported => ()
+      Ok((_, [@session.SendChunk(30, _)])) if supported => ()
       Err(@session.Encoding(@protocol.InvalidParameterValue(0x32UL))) if !supported =>
         ()
       _ => fail("NEW_GROUP_REQUEST did not follow DYNAMIC_GROUPS support")
@@ -158,7 +158,7 @@ test "NEW_GROUP_REQUEST requires DYNAMIC_GROUPS in SUBSCRIBE_OK properties" {
       subscriber.receive(@session.StreamData(30, response)),
       Ok([
         @session.CloseConnection(3UL, b""),
-        @session.Notify(@session.SessionEnded(@session.Local(3UL, b""))),
+        @session.EmitNotice(@session.SessionEnded(@session.Local(3UL, b""))),
       ]),
     )
   }
@@ -169,7 +169,7 @@ test "SUBSCRIBE update FIN still accepts SUBSCRIBE_OK, late Objects, and PUBLISH
   let subscriber = subscriber_pending()
   assert_eq(
     subscriber.finish_subscription_updates(0UL),
-    Ok([@session.Send(30, b"", true)]),
+    Ok([@session.SendFin(30, b"")]),
   )
   assert_eq(subscriber.finish_subscription_updates(0UL), Ok([]))
   let subscribe_ok = @protocol.encode_subscribe_ok({
@@ -179,7 +179,7 @@ test "SUBSCRIBE update FIN still accepts SUBSCRIBE_OK, late Objects, and PUBLISH
   }).unwrap()
   assert_eq(
     subscriber.receive(@session.StreamData(30, subscribe_ok)),
-    Ok([@session.Notify(@session.SubscribeEstablished(0UL, 1UL))]),
+    Ok([@session.EmitNotice(@session.SubscribeEstablished(0UL, 1UL))]),
   )
   assert_eq(
     subscriber.update_subscription(0UL, []),
@@ -196,7 +196,7 @@ test "SUBSCRIBE update FIN still accepts SUBSCRIBE_OK, late Objects, and PUBLISH
     ),
     Ok([]),
   )
-  assert_eq(subscriber.receive(@session.StreamFinished(30)), Ok([]))
+  assert_eq(subscriber.receive(@session.InboundStreamFinished(30)), Ok([]))
   let header = subscriber_header(0UL, true)
   assert_eq(
     subscriber.receive(
@@ -219,7 +219,7 @@ test "SUBSCRIBE update FIN still accepts SUBSCRIBE_OK, late Objects, and PUBLISH
       ),
     ),
     Ok([
-      @session.Notify(
+      @session.EmitNotice(
         @session.ObjectReceived(
           0UL,
           { namespace_fields: [b"demo"], name: b"video", },
@@ -230,10 +230,10 @@ test "SUBSCRIBE update FIN still accepts SUBSCRIBE_OK, late Objects, and PUBLISH
     ]),
   )
   assert_eq(
-    subscriber.receive(@session.StreamFinished(40)),
+    subscriber.receive(@session.InboundStreamFinished(40)),
     Ok([
-      @session.Notify(@session.GroupFinished(0UL, 0UL)),
-      @session.Notify(@session.PublishDone(0UL, done)),
+      @session.EmitNotice(@session.GroupFinished(0UL, 0UL)),
+      @session.EmitNotice(@session.PublishDone(0UL, done)),
     ]),
   )
 }

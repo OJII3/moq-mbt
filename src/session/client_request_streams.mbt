@@ -72,7 +72,7 @@ fn ClientSession::request_stream_id(
 fn ClientSession::finish_request_stream(
   self : ClientSession,
   stream : Int64,
-) -> Result[Array[ClientSessionAction], ClientSessionError]? {
+) -> Result[Array[SessionAction], ClientSessionError]? {
   match self.finish_namespace_stream(stream) {
     Some(result) => return Some(result)
     None => ()
@@ -102,7 +102,7 @@ fn ClientSession::reset_request_stream(
   self : ClientSession,
   stream : Int64,
   error_code : UInt64,
-) -> Result[Array[ClientSessionAction], ClientSessionError]? {
+) -> Result[Array[SessionAction], ClientSessionError]? {
   match self.reset_namespace_stream(stream, error_code) {
     Some(result) => return Some(result)
     None => ()
