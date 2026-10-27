@@ -153,9 +153,9 @@ fn driver_config(
   datagrams : Int32,
 ) -> SessionDriverConfig {
   {
-    max_pending_opens: opens,
-    max_pending_sends: sends,
-    max_pending_datagrams: datagrams,
+    max_in_flight_opens: opens,
+    max_in_flight_sends: sends,
+    max_in_flight_datagrams: datagrams,
   }
 }
 
@@ -228,7 +228,7 @@ test "driver drops queued sends for an aborted stream" {
 }
 
 ///|
-test "driver holds actions above the configured send limit" {
+test "driver respects the configured in-flight send limit" {
   let transport = FakeTransport::new()
   let driver = SessionDriver::new(
     transport,

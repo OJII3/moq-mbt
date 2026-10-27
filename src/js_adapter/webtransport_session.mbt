@@ -127,10 +127,14 @@ pub struct WebTransportSessionDriver {
 }
 
 ///|
-/// Queue limits for browser backpressure. They are passed to the portable
-/// driver rather than hardcoded in its pump.
+/// In-flight limits for browser backpressure. The driver's unaccepted action
+/// queue is not bounded by these values.
 fn WebTransportSessionDriver::config() -> @driver.SessionDriverConfig {
-  { max_pending_opens: 8, max_pending_sends: 128, max_pending_datagrams: 32, }
+  {
+    max_in_flight_opens: 8,
+    max_in_flight_sends: 128,
+    max_in_flight_datagrams: 32,
+  }
 }
 
 ///|

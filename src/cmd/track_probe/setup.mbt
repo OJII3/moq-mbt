@@ -199,9 +199,9 @@ fn SessionActionDriver::ensure(
     None => {
       let transport = ProbeTransport::new(client)
       let inner = @driver.SessionDriver::new(transport, session, {
-        max_pending_opens: 8,
-        max_pending_sends: 128,
-        max_pending_datagrams: 32,
+        max_in_flight_opens: 8,
+        max_in_flight_sends: 128,
+        max_in_flight_datagrams: 32,
       })
       self.transport = Some(transport)
       self.inner = Some(inner)

@@ -12,9 +12,9 @@ let session = @session.ClientSession::new(
 ).unwrap()
 let transport = @test_support.ScriptedTransport::new()
 let driver = @driver.SessionDriver::new(transport, session, {
-  max_pending_opens: 1,
-  max_pending_sends: 1,
-  max_pending_datagrams: 1,
+  max_in_flight_opens: 1,
+  max_in_flight_sends: 1,
+  max_in_flight_datagrams: 1,
 })
 
 // Exercise public session operations and dispatch their returned actions.
