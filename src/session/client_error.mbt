@@ -2,8 +2,7 @@
 /// A user-facing description of the error, including available cause details.
 pub fn ClientSessionError::message(self : ClientSessionError) -> String {
   match self {
-    Handshake(InvalidSetup(error)) =>
-      "Peer SETUP is malformed (\{error.to_repr()})"
+    Handshake(InvalidSetup(_)) => "Peer SETUP is malformed"
     Handshake(DuplicateControlStream) =>
       "Peer opened more than one control stream"
     Handshake(ControlStreamClosed) => "The control stream was closed"
@@ -16,12 +15,14 @@ pub fn ClientSessionError::message(self : ClientSessionError) -> String {
     Track(DuplicateSubscription) => "Subscription already exists"
     Track(InvalidRequestId) => "Track request ID is invalid"
     Track(AliasMismatch) => "Track alias does not match the request"
-    Track(UnexpectedMessage) => "Track message is unexpected in the current state"
+    Track(UnexpectedMessage) =>
+      "Track message is unexpected in the current state"
     Track(BufferLimitExceeded) => "Track receive buffer limit exceeded"
-    Track(IncompleteObjectStream) => "Object stream ended before it was complete"
+    Track(IncompleteObjectStream) =>
+      "Object stream ended before it was complete"
     Track(ObjectIdNotIncreasing) => "Object IDs must be strictly increasing"
     Track(ObjectStreamsStillOpen) => "Object streams are still open"
-    Encoding(error) => "Cannot encode a protocol message (\{error.to_repr()})"
+    Encoding(_) => "Cannot encode a protocol message"
     HandshakeNotComplete => "The session handshake has not completed"
     InvalidRequestId => "Request ID is invalid for this operation"
     DuplicateRequestId => "Request ID has already been used"
@@ -37,9 +38,11 @@ pub fn ClientSessionError::message(self : ClientSessionError) -> String {
       "Subscription is not in a state that allows this operation"
     RequestUpdatePending => "A request update is already pending"
     PrefixOverlap => "Namespace prefix overlaps another active subscription"
-    UnexpectedMessage => "Message or operation is unexpected in the current state"
+    UnexpectedMessage =>
+      "Message or operation is unexpected in the current state"
     BufferLimitExceeded => "Session receive buffer limit exceeded"
-    DatagramSendUnavailable => "Datagram sending is unavailable on this transport"
+    DatagramSendUnavailable =>
+      "Datagram sending is unavailable on this transport"
     DatagramTooLarge(length, limit) =>
       "Encoded datagram is \{length} bytes, exceeding the transport limit of \{limit} bytes"
   }
@@ -49,6 +52,9 @@ pub fn ClientSessionError::message(self : ClientSessionError) -> String {
 pub impl Show for ClientSessionError with fn output(self, logger) {
   logger.write_string(self.message())
 }
+
+///|
+pub extend ClientSessionError with Show::{output}
 
 ///|
 pub extend ClientSessionError with Show::{to_string}

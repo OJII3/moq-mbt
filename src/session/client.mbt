@@ -227,6 +227,7 @@ pub struct ClientSession {
   priv mut started : Bool
   priv mut ready : Bool
   priv mut state : ClientSessionState
+  priv mut desired_subscriptions : Array[DesiredSubscription]
   priv mut outbound_control_stream : Int64?
   priv mut next_request_id : UInt64
   priv mut next_object_token : UInt64
@@ -284,6 +285,17 @@ pub fn ClientSession::new(
   version : Version,
   setup : @protocol.Setup,
 ) -> Result[ClientSession, @protocol.CodecError] {
+  ClientSession::new_with_desired_subscriptions(version, setup, [])
+}
+
+///|
+/// Create a session that restores these desired track subscriptions after
+/// SETUP completes. Each restored request receives a fresh request ID.
+pub fn ClientSession::new_with_desired_subscriptions(
+  version : Version,
+  setup : @protocol.Setup,
+  desired_subscriptions : Array[DesiredSubscription],
+) -> Result[ClientSession, @protocol.CodecError] {
   match ClientHandshake::new(version, setup) {
     Err(error) => Err(error)
     Ok(handshake) =>
@@ -292,6 +304,7 @@ pub fn ClientSession::new(
         started: false,
         ready: false,
         state: Active,
+        desired_subscriptions: copy_desired_subscriptions(desired_subscriptions),
         outbound_control_stream: None,
         next_request_id: 0UL,
         next_object_token: 0UL,
@@ -560,15 +573,20 @@ fn ClientSession::receive_control(
       Ok(Ready(setup, trailing)) => {
         self.peer_control_stream = Some(stream)
         self.ready = true
-        let actions = [EmitNotice(HandshakeComplete(setup))]
-        if trailing.is_empty() {
-          Ok(actions)
-        } else {
+        let mut actions = [EmitNotice(HandshakeComplete(setup))]
+        if !trailing.is_empty() {
           match self.decode_control_messages(trailing) {
-            Ok(more) => Ok(actions + more)
-            Err(error) => Err(error)
+            Ok(more) => actions = actions + more
+            Err(error) => return Err(error)
           }
         }
+        if self.state == Active {
+          match self.resubscribe_desired() {
+            Ok(restored) => actions = actions + restored
+            Err(error) => return Err(error)
+          }
+        }
+        Ok(actions)
       }
     }
   } else {

@@ -1,0 +1,48 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "OJII3/moq-mbt/test_support"
+
+import {
+  "OJII3/moq-mbt/driver",
+  "OJII3/moq-mbt/session",
+  "moonbitlang/core/debug",
+}
+
+// Values
+
+// Errors
+
+// Types and methods
+pub struct ScriptedTransport {
+  // private fields
+}
+pub fn ScriptedTransport::abort_send(Self, Int64, UInt64) -> Unit
+pub fn ScriptedTransport::close_connection(Self, UInt64, Bytes) -> Unit
+pub fn ScriptedTransport::complete_datagram(Self, @driver.TransportWriteOutcome) -> Bool
+pub fn ScriptedTransport::complete_open(Self, @driver.TransportOpenOutcome) -> Bool
+pub fn ScriptedTransport::complete_send(Self, Int64, @driver.TransportWriteOutcome) -> Bool
+pub fn ScriptedTransport::new() -> Self
+pub fn ScriptedTransport::open_stream(Self, @session.ClientStreamDirection, @session.ClientStreamPurpose, (@driver.TransportOpenOutcome) -> Unit) -> @driver.TransportAcceptance
+pub fn ScriptedTransport::script_datagram(Self, @driver.TransportAcceptance) -> Unit
+pub fn ScriptedTransport::script_open(Self, @driver.TransportAcceptance) -> Unit
+pub fn ScriptedTransport::script_send(Self, @driver.TransportAcceptance) -> Unit
+pub fn ScriptedTransport::send(Self, Int64, Bytes, Bool, (@driver.TransportWriteOutcome) -> Unit) -> @driver.TransportAcceptance
+pub fn ScriptedTransport::send_datagram(Self, Bytes, (@driver.TransportWriteOutcome) -> Unit) -> @driver.TransportAcceptance
+pub fn ScriptedTransport::stop_receiving(Self, Int64, UInt64) -> Unit
+pub fn ScriptedTransport::take_calls(Self) -> Array[TransportCall]
+pub impl @driver.SessionTransport for ScriptedTransport
+
+pub(all) enum TransportCall {
+  OpenStream(@session.ClientStreamDirection, @session.ClientStreamPurpose)
+  Send(Int64, Bytes, Bool)
+  SendDatagram(Bytes)
+  AbortSend(Int64, UInt64)
+  StopReceiving(Int64, UInt64)
+  CloseConnection(UInt64, Bytes)
+} derive(Eq, @debug.Debug)
+pub fn TransportCall::equal(Self, Self) -> Bool
+pub fn TransportCall::not_equal(Self, Self) -> Bool
+pub fn TransportCall::to_repr(Self) -> @debug.Repr
+
+// Type aliases
+
+// Traits

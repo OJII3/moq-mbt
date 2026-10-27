@@ -25,12 +25,36 @@ pub fn browser_connect_with_certificate_hashes(
   setup : @protocol.Setup,
   certificate_hashes : Array[@arraybuffer.Uint8Array],
 ) -> Result[BrowserClient, String] {
+  browser_connect_internal(url, setup, certificate_hashes, [])
+}
+
+///|
+/// Open a WebTransport connection and restore desired track subscriptions
+/// after the new session completes SETUP.
+pub fn browser_connect_with_desired_subscriptions(
+  url : String,
+  setup : @protocol.Setup,
+  desired_subscriptions : Array[@session.DesiredSubscription],
+) -> Result[BrowserClient, String] {
+  browser_connect_internal(url, setup, [], desired_subscriptions)
+}
+
+///|
+fn browser_connect_internal(
+  url : String,
+  setup : @protocol.Setup,
+  certificate_hashes : Array[@arraybuffer.Uint8Array],
+  desired_subscriptions : Array[@session.DesiredSubscription],
+) -> Result[BrowserClient, String] {
   let connection = match
     webtransport_connect_with_certificate_hashes(url, certificate_hashes) {
     Ok(connection) => connection
     Err(message) => return Err(message)
   }
-  match WebTransportSessionDriver::from_setup(connection, setup) {
+  match
+    WebTransportSessionDriver::from_setup_with_desired_subscriptions(
+      connection, setup, desired_subscriptions,
+    ) {
     Ok(driver) => Ok({ connection, driver, })
     Err(error) => {
       ignore(connection.close(0L, "invalid client setup"))
