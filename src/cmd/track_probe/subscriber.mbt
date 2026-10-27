@@ -14,7 +14,7 @@ priv struct SubscriberProbeState {
 
 ///|
 fn handle_subscriber_notices(
-  notices : Array[@session.ClientSessionNotice],
+  notices : Array[@session.SessionNotice],
   state : SubscriberProbeState,
 ) -> Bool raise {
   let mut finished = false
@@ -261,7 +261,7 @@ fn run_subscriber(
         let (notices, _) = drive_session_result(
           client,
           session,
-          receive_session_event(session, @session.StreamFinished(stream)),
+          receive_session_event(session, @session.InboundStreamFinished(stream)),
           driver,
         )
         if handle_subscriber_notices(notices, state) {
@@ -314,8 +314,8 @@ fn run_subscriber(
           receive_session_event(
             session,
             @session.DatagramSendCapabilityChanged(
-              capability.enabled,
-              capability.max_length,
+              enabled=capability.enabled,
+              max_length=capability.max_length,
             ),
           ),
           driver,

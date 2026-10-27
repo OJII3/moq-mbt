@@ -51,10 +51,10 @@ fn new_client_fetch(
 fn ClientSession::terminate_fetch(
   self : ClientSession,
   fetch : ClientFetch,
-  actions : Array[ClientSessionAction],
-  notification : ClientSessionAction?,
+  actions : Array[SessionAction],
+  notification : SessionAction?,
   data_disposition : FetchDataDisposition,
-) -> Array[ClientSessionAction] {
+) -> Array[SessionAction] {
   fetch.state = FetchTerminal
   let should_notify = !fetch.terminal_notified
   fetch.terminal_notified = true
@@ -93,7 +93,7 @@ pub fn ClientSession::fetch_relative(
   subscription_request_id : UInt64,
   groups_back : UInt64,
   parameters : Array[@protocol.MessageParameter],
-) -> Result[(UInt64, Array[ClientSessionAction]), ClientSessionError] {
+) -> Result[(UInt64, Array[SessionAction]), ClientSessionError] {
   self.send_joining_fetch(
     subscription_request_id, groups_back, true, parameters,
   )
@@ -107,7 +107,7 @@ pub fn ClientSession::fetch_absolute(
   subscription_request_id : UInt64,
   start_group : UInt64,
   parameters : Array[@protocol.MessageParameter],
-) -> Result[(UInt64, Array[ClientSessionAction]), ClientSessionError] {
+) -> Result[(UInt64, Array[SessionAction]), ClientSessionError] {
   self.send_joining_fetch(
     subscription_request_id, start_group, false, parameters,
   )
@@ -120,7 +120,7 @@ fn ClientSession::send_joining_fetch(
   joining_start : UInt64,
   relative : Bool,
   parameters : Array[@protocol.MessageParameter],
-) -> Result[(UInt64, Array[ClientSessionAction]), ClientSessionError] {
+) -> Result[(UInt64, Array[SessionAction]), ClientSessionError] {
   match self.ensure_new_request_allowed() {
     Ok(_) => ()
     Err(error) => return Err(error)
@@ -195,7 +195,7 @@ fn ClientSession::receive_joining_fetch(
   joining_start : UInt64,
   relative : Bool,
   parameters : Array[@protocol.MessageParameter],
-) -> Result[Array[ClientSessionAction], ClientSessionError] {
+) -> Result[Array[SessionAction], ClientSessionError] {
   let (subscription_stream, subscription_pending, publisher_request_id) = match
     self.peer_request_ids.get(joining_request_id) {
     Some(value) if self.inbound_subscriptions.get(value) is Some(inbound) &&
@@ -215,8 +215,8 @@ fn ClientSession::receive_joining_fetch(
                 Err(codec_error) => return Err(Encoding(codec_error))
               }
               return Ok([
-                Send(stream, bytes, true),
-                Notify(FetchRejected(request_id, stream, error)),
+                SendFin(stream, bytes),
+                EmitNotice(FetchRejected(request_id, stream, error)),
               ])
             }
           }
@@ -229,8 +229,8 @@ fn ClientSession::receive_joining_fetch(
             Err(codec_error) => return Err(Encoding(codec_error))
           }
           return Ok([
-            Send(stream, bytes, true),
-            Notify(FetchRejected(request_id, stream, error)),
+            SendFin(stream, bytes),
+            EmitNotice(FetchRejected(request_id, stream, error)),
           ])
         }
       }
@@ -243,8 +243,8 @@ fn ClientSession::receive_joining_fetch(
       Err(codec_error) => return Err(Encoding(codec_error))
     }
     return Ok([
-      Send(stream, bytes, true),
-      Notify(FetchRejected(request_id, stream, error)),
+      SendFin(stream, bytes),
+      EmitNotice(FetchRejected(request_id, stream, error)),
     ])
   }
   let publisher = self.requests.get(publisher_request_id).unwrap()
@@ -255,8 +255,8 @@ fn ClientSession::receive_joining_fetch(
       Err(codec_error) => return Err(Encoding(codec_error))
     }
     return Ok([
-      Send(stream, bytes, true),
-      Notify(FetchRejected(request_id, stream, error)),
+      SendFin(stream, bytes),
+      EmitNotice(FetchRejected(request_id, stream, error)),
     ])
   }
   let fetch = new_client_fetch(
@@ -307,7 +307,7 @@ fn ClientSession::resolve_joining_fetch(
   self : ClientSession,
   request_id : UInt64,
   subscription_stream : Int64,
-) -> Array[ClientSessionAction] {
+) -> Array[SessionAction] {
   let fetch = self.fetches.get(request_id).unwrap()
   let subscription = self.published_subscriptions
     .get(subscription_stream)
@@ -318,8 +318,8 @@ fn ClientSession::resolve_joining_fetch(
     let bytes = @protocol.encode_request_error(error).unwrap()
     self.terminate_fetch(
       fetch,
-      [Send(stream, bytes, true)],
-      Some(Notify(FetchRejected(request_id, stream, error))),
+      [SendFin(stream, bytes)],
+      Some(EmitNotice(FetchRejected(request_id, stream, error))),
       RemoveFetchData,
     )
   }
@@ -355,7 +355,7 @@ fn ClientSession::resolve_joining_fetch(
   fetch.end = end
   fetch.pending_deadline = None
   [
-    Notify(
+    EmitNotice(
       FetchRequested(
         request_id,
         stream,
@@ -373,13 +373,13 @@ fn ClientSession::drain_joining_fetches(
   self : ClientSession,
   joining_request_id : UInt64,
   subscription_stream : Int64,
-) -> Array[ClientSessionAction] {
+) -> Array[SessionAction] {
   let waiting = match self.pending_joining_fetches.get(joining_request_id) {
     Some(values) => values
     None => return []
   }
   let remaining : Array[UInt64] = []
-  let actions : Array[ClientSessionAction] = []
+  let actions : Array[SessionAction] = []
   for request_id in waiting {
     let fetch = match self.fetches.get(request_id) {
       Some(value) if value.state == FetchPending => value
@@ -407,13 +407,13 @@ fn ClientSession::fail_pending_joining_fetches(
   self : ClientSession,
   joining_request_id : UInt64,
   code : UInt64,
-) -> Array[ClientSessionAction] {
+) -> Array[SessionAction] {
   let waiting = match self.pending_joining_fetches.get(joining_request_id) {
     Some(values) => values
     None => return []
   }
   self.pending_joining_fetches.remove(joining_request_id)
-  let actions : Array[ClientSessionAction] = []
+  let actions : Array[SessionAction] = []
   for request_id in waiting {
     match self.fetches.get(request_id) {
       Some(fetch) if fetch.state == FetchPending => {
@@ -423,8 +423,8 @@ fn ClientSession::fail_pending_joining_fetches(
         for
           action in self.terminate_fetch(
             fetch,
-            [Send(stream, bytes, true)],
-            Some(Notify(FetchRejected(request_id, stream, error))),
+            [SendFin(stream, bytes)],
+            Some(EmitNotice(FetchRejected(request_id, stream, error))),
             RemoveFetchData,
           ) {
           actions.push(action)
@@ -464,7 +464,7 @@ fn ClientSession::remove_pending_joining_fetch(
 ///|
 fn ClientSession::expire_pending_joining_fetches(
   self : ClientSession,
-) -> Array[ClientSessionAction] {
+) -> Array[SessionAction] {
   let expired : Array[UInt64] = []
   for (request_id, fetch) in self.fetches {
     match fetch.pending_deadline {
@@ -473,7 +473,7 @@ fn ClientSession::expire_pending_joining_fetches(
       _ => ()
     }
   }
-  let actions : Array[ClientSessionAction] = []
+  let actions : Array[SessionAction] = []
   for request_id in expired {
     let fetch = self.fetches.get(request_id).unwrap()
     let stream = fetch.stream.unwrap()
@@ -483,8 +483,8 @@ fn ClientSession::expire_pending_joining_fetches(
     for
       action in self.terminate_fetch(
         fetch,
-        [Send(stream, bytes, true)],
-        Some(Notify(FetchRejected(request_id, stream, error))),
+        [SendFin(stream, bytes)],
+        Some(EmitNotice(FetchRejected(request_id, stream, error))),
         RemoveFetchData,
       ) {
       actions.push(action)

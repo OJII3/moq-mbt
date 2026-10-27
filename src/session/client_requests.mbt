@@ -208,7 +208,7 @@ fn ClientSession::receive_request(
   self : ClientSession,
   stream : Int64,
   bytes : Bytes,
-) -> Result[Array[ClientSessionAction], ClientSessionError] {
+) -> Result[Array[SessionAction], ClientSessionError] {
   match self.request_stream_route(stream) {
     NamespaceSubscriptionResponse(request_id) =>
       self.receive_namespace_subscription_response(request_id, stream, bytes)
@@ -255,7 +255,7 @@ fn ClientSession::receive_response(
   request_id : UInt64,
   stream : Int64,
   bytes : Bytes,
-) -> Result[Array[ClientSessionAction], ClientSessionError] {
+) -> Result[Array[SessionAction], ClientSessionError] {
   let request = self.requests.get(request_id).unwrap()
   if request.lifetime.cancelled {
     if request.kind == Subscribing && request.track_alias is None {
@@ -313,7 +313,7 @@ fn ClientSession::receive_response(
             },
           }
           [
-            Notify(
+            EmitNotice(
               PublishAccepted(
                 request_id,
                 request.track,
@@ -350,12 +350,12 @@ fn ClientSession::receive_response(
             None => None
           }
           request.mark_accepted()
-          [Notify(SubscribeEstablished(request_id, response.track_alias))]
+          [EmitNotice(SubscribeEstablished(request_id, response.track_alias))]
         }
         (Publishing, @protocol.RequestError(error)) if !request.is_accepted() => {
           request.mark_terminal()
           self.request_local_fin_actions(stream) +
-          [Notify(PublishRejected(request_id, error))] +
+          [EmitNotice(PublishRejected(request_id, error))] +
           self.fail_pending_joining_fetches(
             request_id, request_error_invalid_joining_request_id,
           )
@@ -363,7 +363,7 @@ fn ClientSession::receive_response(
         (Subscribing, @protocol.RequestError(error)) if !request.is_accepted() => {
           request.mark_terminal()
           self.request_local_fin_actions(stream) +
-          [Notify(SubscribeRejected(request_id, error))]
+          [EmitNotice(SubscribeRejected(request_id, error))]
         }
         (Publishing, @protocol.RequestUpdate(update)) if request.is_accepted() =>
           match self.receive_peer_subscription_update(stream, update) {
@@ -385,7 +385,7 @@ fn ClientSession::receive_response(
           }
           request.pending_local_update = None
           [
-            Notify(
+            EmitNotice(
               SubscriptionUpdateAccepted(
                 request_id,
                 pending.request_id,
@@ -399,7 +399,7 @@ fn ClientSession::receive_response(
           request.pending_local_update = None
           request.update_failed = true
           [
-            Notify(
+            EmitNotice(
               SubscriptionUpdateRejected(request_id, pending.request_id, error),
             ),
           ]
@@ -460,7 +460,7 @@ fn ClientSession::receive_publish_done(
   self : ClientSession,
   request_id : UInt64,
   message : @protocol.PublishDoneMessage,
-) -> Result[Array[ClientSessionAction], ClientSessionError] {
+) -> Result[Array[SessionAction], ClientSessionError] {
   let request = self.requests.get(request_id).unwrap()
   if !request.is_accepted() ||
     request.is_terminal() ||
@@ -477,7 +477,7 @@ fn ClientSession::receive_publish_done(
     None => []
   }
   match self.take_ready_publish_done(request_id) {
-    Some(done) => Ok(fin_actions + [Notify(PublishDone(request_id, done))])
+    Some(done) => Ok(fin_actions + [EmitNotice(PublishDone(request_id, done))])
     None => Ok(fin_actions)
   }
 }
@@ -487,7 +487,7 @@ fn ClientSession::receive_publish_done(
 fn ClientSession::request_local_fin_actions(
   self : ClientSession,
   stream : Int64,
-) -> Array[ClientSessionAction] {
+) -> Array[SessionAction] {
   if self.namespace_request_streams.get(stream) is Some(_) {
     let request = self.namespace_requests
       .get(self.namespace_request_streams.get(stream).unwrap())
@@ -496,7 +496,7 @@ fn ClientSession::request_local_fin_actions(
       return []
     }
     self.note_request_local_fin(stream)
-    return [Send(stream, b"", true)]
+    return [SendFin(stream, b"")]
   }
   let request_id = match self.request_streams.get(stream) {
     Some(value) => value
@@ -507,7 +507,7 @@ fn ClientSession::request_local_fin_actions(
     return []
   }
   self.note_request_local_fin(stream)
-  [Send(stream, b"", true)]
+  [SendFin(stream, b"")]
 }
 
 ///|
@@ -625,7 +625,7 @@ pub fn ClientSession::publish_track(
   self : ClientSession,
   track : @protocol.TrackName,
   track_alias : UInt64,
-) -> Result[(UInt64, Array[ClientSessionAction]), ClientSessionError] {
+) -> Result[(UInt64, Array[SessionAction]), ClientSessionError] {
   match self.ensure_new_request_allowed() {
     Ok(_) => ()
     Err(error) => return Err(error)
@@ -674,7 +674,7 @@ pub fn ClientSession::publish_track(
 pub fn ClientSession::subscribe_track(
   self : ClientSession,
   track : @protocol.TrackName,
-) -> Result[(UInt64, Array[ClientSessionAction]), ClientSessionError] {
+) -> Result[(UInt64, Array[SessionAction]), ClientSessionError] {
   self.subscribe_track_with_parameters(track, [])
 }
 
@@ -684,7 +684,7 @@ pub fn ClientSession::subscribe_track_with_parameters(
   self : ClientSession,
   track : @protocol.TrackName,
   parameters : Array[@protocol.MessageParameter],
-) -> Result[(UInt64, Array[ClientSessionAction]), ClientSessionError] {
+) -> Result[(UInt64, Array[SessionAction]), ClientSessionError] {
   match self.ensure_new_request_allowed() {
     Ok(_) => ()
     Err(error) => return Err(error)
@@ -727,7 +727,7 @@ pub fn ClientSession::subscribe_track_with_parameters(
 pub fn ClientSession::finish_subscription_updates(
   self : ClientSession,
   request_id : UInt64,
-) -> Result[Array[ClientSessionAction], ClientSessionError] {
+) -> Result[Array[SessionAction], ClientSessionError] {
   match self.ensure_open() {
     Ok(_) => ()
     Err(error) => return Err(error)
@@ -760,7 +760,7 @@ pub fn ClientSession::finish_subscription_updates(
 pub fn ClientSession::cancel_request(
   self : ClientSession,
   request_id : UInt64,
-) -> Result[Array[ClientSessionAction], ClientSessionError] {
+) -> Result[Array[SessionAction], ClientSessionError] {
   match self.ensure_open() {
     Ok(_) => ()
     Err(error) => return Err(error)
@@ -831,7 +831,7 @@ fn ClientSession::end_request_stream(
   self : ClientSession,
   stream : Int64,
   event : RequestLifetimeEvent,
-) -> Array[ClientSessionAction] {
+) -> Array[SessionAction] {
   self.request_goaway_deadlines.remove(stream)
   match self.fetch_streams.get(stream) {
     Some(request_id) => {
@@ -841,7 +841,7 @@ fn ClientSession::end_request_stream(
         return []
       }
       let code = fetch.lifetime.cancel_error_code.unwrap()
-      let actions : Array[ClientSessionAction] = []
+      let actions : Array[SessionAction] = []
       if effects.abort_send {
         actions.push(AbortSend(stream, code))
       }
@@ -851,7 +851,7 @@ fn ClientSession::end_request_stream(
       return self.terminate_fetch(
         fetch,
         actions,
-        Some(Notify(FetchCancelled(request_id, code))),
+        Some(EmitNotice(FetchCancelled(request_id, code))),
         if fetch.locally_initiated {
           StopFetchData(code)
         } else {
@@ -899,7 +899,7 @@ fn ClientSession::end_request_stream(
   request.pending_local_update = None
   request.object_drain.cancel()
 
-  let actions : Array[ClientSessionAction] = if request.kind == Publishing {
+  let actions : Array[SessionAction] = if request.kind == Publishing {
     self.fail_pending_joining_fetches(
       request_id, request_error_invalid_joining_request_id,
     )
@@ -939,7 +939,9 @@ fn ClientSession::end_request_stream(
     }
   }
   if effects.notify_end {
-    actions.push(Notify(SubscriptionEnded(request_id, stream, request.track)))
+    actions.push(
+      EmitNotice(SubscriptionEnded(request_id, stream, request.track)),
+    )
   }
   actions
 }
@@ -949,7 +951,7 @@ fn ClientSession::cancel_outgoing_object_streams(
   self : ClientSession,
   subscription_stream : Int64,
   error_code : UInt64,
-) -> Array[ClientSessionAction] {
+) -> Array[SessionAction] {
   match self.published_subscriptions.get(subscription_stream) {
     Some(subscription) => {
       subscription.pending_updates = []
@@ -968,7 +970,7 @@ fn ClientSession::cancel_outgoing_object_streams(
       object_streams.push(object_stream)
     }
   }
-  let actions : Array[ClientSessionAction] = []
+  let actions : Array[SessionAction] = []
   for object_stream in object_streams {
     match self.outgoing_object_streams.get(object_stream) {
       Some(outgoing) if !outgoing.abort_sent => {
@@ -999,14 +1001,14 @@ fn ClientSession::cancel_incoming_object_streams(
   self : ClientSession,
   request_id : UInt64,
   error_code : UInt64,
-) -> Array[ClientSessionAction] {
+) -> Array[SessionAction] {
   let object_streams : Array[Int64] = []
   for (object_stream, state) in self.incoming_object_streams {
     if state.request_id == Some(request_id) {
       object_streams.push(object_stream)
     }
   }
-  let actions : Array[ClientSessionAction] = []
+  let actions : Array[SessionAction] = []
   for object_stream in object_streams {
     self.incoming_object_streams.remove(object_stream)
     self.ignored_object_streams[object_stream] = {

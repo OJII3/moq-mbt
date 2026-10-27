@@ -93,7 +93,7 @@ fn lifecycle_request_stream(
 fn lifecycle_poll(
   peer : LifecyclePeer,
   timeout_ms : Int32,
-) -> Array[@session.ClientSessionNotice] raise {
+) -> Array[@session.SessionNotice] raise {
   match peer.client.next_event(timeout_ms) {
     Connected => []
     StreamStarted(stream, direction) => {
@@ -133,7 +133,10 @@ fn lifecycle_poll(
       let (notices, _) = drive_session_result(
         peer.client,
         peer.session,
-        receive_session_event(peer.session, @session.StreamFinished(stream)),
+        receive_session_event(
+          peer.session,
+          @session.InboundStreamFinished(stream),
+        ),
         peer.driver,
       )
       notices
@@ -178,8 +181,8 @@ fn lifecycle_poll(
         receive_session_event(
           peer.session,
           @session.DatagramSendCapabilityChanged(
-            capability.enabled,
-            capability.max_length,
+            enabled=capability.enabled,
+            max_length=capability.max_length,
           ),
         ),
         peer.driver,
@@ -233,7 +236,7 @@ fn lifecycle_poll(
 fn LifecycleState::observe_publisher(
   self : LifecycleState,
   peer : LifecyclePeer,
-  notices : Array[@session.ClientSessionNotice],
+  notices : Array[@session.SessionNotice],
 ) -> Unit raise {
   for notice in notices {
     match notice {
@@ -260,7 +263,7 @@ fn LifecycleState::observe_publisher(
           }
         }
       }
-      @session.ObjectStreamFinished(stream) =>
+      @session.ObjectStreamSendFinished(stream) =>
         match self.object_stream_requests.get(stream) {
           Some(request_id) if request_id == self.publish_a =>
             self.finished_a_streams = self.finished_a_streams + 1UL
@@ -268,9 +271,11 @@ fn LifecycleState::observe_publisher(
             self.finished_b_streams = self.finished_b_streams + 1UL
           _ => fail("unknown lifecycle object stream finished")
         }
-      @session.SendFinished(stream, canceled) if self.done_b_sent &&
+      @session.StreamSendFinished(stream, completion) if self.done_b_sent &&
         stream == self.publish_stream_b => {
-        guard !canceled else { fail("track B PUBLISH_DONE send was canceled") }
+        guard completion == @session.Sent else {
+          fail("track B PUBLISH_DONE send was canceled")
+        }
         if !peer.driver.has_pending_sends(stream) {
           self.done_b_send_completed = true
         }
@@ -316,7 +321,7 @@ fn wait_lifecycle_publishes(
 ///|
 fn LifecycleState::observe_subscriber(
   self : LifecycleState,
-  notices : Array[@session.ClientSessionNotice],
+  notices : Array[@session.SessionNotice],
 ) -> Unit raise {
   for notice in notices {
     match notice {
@@ -602,9 +607,7 @@ pub fn run_lifecycle(
   println("SUBSCRIBE tracks A and B accepted")
 
   let (update_off, update_off_actions) = subscriber_session
-    .update_subscription(subscribe_a, [
-      { kind: 0x10UL, value: @protocol.Byte(0), },
-    ])
+    .update_subscription(subscribe_a, [@protocol.forward_parameter(false)])
     .unwrap()
   state.update_off = Some(update_off)
   let (update_off_notices, _) = drive_session_result(
@@ -628,9 +631,7 @@ pub fn run_lifecycle(
   wait_lifecycle_stage(publisher, subscriber, state, TrackBGroup0)
 
   let (update_on, update_on_actions) = subscriber_session
-    .update_subscription(subscribe_a, [
-      { kind: 0x10UL, value: @protocol.Byte(1), },
-    ])
+    .update_subscription(subscribe_a, [@protocol.forward_parameter(true)])
     .unwrap()
   state.update_on = Some(update_on)
   let (update_on_notices, _) = drive_session_result(

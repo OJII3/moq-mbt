@@ -14,14 +14,14 @@ fn writer_group_open(
 
 ///|
 fn writer_object_ids(
-  actions : Array[@session.ClientSessionAction],
+  actions : Array[@session.SessionAction],
 ) -> (UInt64, Array[UInt64]) raise {
   let mut decoder : @protocol.SubgroupDecoder? = None
   let mut group_id = 0UL
   let ids : Array[UInt64] = []
   for action in actions {
     match action {
-      @session.Send(_, bytes, false) if !bytes.is_empty() =>
+      @session.SendChunk(_, bytes) if !bytes.is_empty() =>
         match decoder {
           None =>
             match @protocol.decode_subgroup_header(bytes) {
@@ -76,7 +76,7 @@ test "object group writer queues objects and FIN until the stream opens" {
   assert_eq(group_id, 0UL)
   assert_eq(ids, [0UL, 1UL])
   match actions[3] {
-    @session.Send(50, bytes, true) => assert_true(bytes.is_empty())
+    @session.SendFin(50, bytes) => assert_true(bytes.is_empty())
     _ => fail("expected FIN after queued Objects")
   }
 }
@@ -87,7 +87,7 @@ test "object group writer sends immediately after the stream opens" {
   let (group, token) = writer_group_open(publisher, 4UL)
   ignore(publisher.receive(@session.StreamOpened(@session.Object(token), 50)))
   match group.send(b"payload") {
-    Ok([@session.Send(50, bytes, false)]) => {
+    Ok([@session.SendChunk(50, bytes)]) => {
       assert_true(!bytes.is_empty())
       assert_true(group.send(b"next") is Ok(_))
     }
@@ -119,7 +119,7 @@ test "object group writer rotates to the next group" {
   let rotate = group.rotate().unwrap()
   let next_token = match rotate {
     [
-      @session.Send(50, _, true),
+      @session.SendFin(50, _),
       @session.OpenStream(@session.Unidirectional, @session.Object(token)),
     ] => token
     _ => fail("expected FIN and the next OpenStream")
@@ -155,7 +155,7 @@ test "object group writer aborts an open stream without FIN" {
     group.abort(6UL),
     Ok([
       @session.AbortSend(50, 6UL),
-      @session.Notify(@session.SendFinished(50, true)),
+      @session.EmitNotice(@session.StreamSendFinished(50, @session.Reset)),
     ]),
   )
   assert_eq(group.send(b"late"), Err(@session.UnexpectedMessage))
@@ -167,16 +167,23 @@ test "send_object_datagram_for_track fans out to every subscription" {
   let track = publisher_track()
   cancellation_accept_peer_subscription(publisher, 1UL, 40, track, 1UL)
   cancellation_accept_peer_subscription(publisher, 3UL, 42, track, 1UL)
-  let actions = publisher
+  let (tokens, actions) = publisher
     .send_object_datagram_for_track(
       track,
       update_datagram(1UL, 0UL, b"payload"),
     )
     .unwrap()
-  assert_eq(actions.length(), 2)
-  for action in actions {
+  assert_eq(tokens.length(), 2)
+  let sent = actions.filter(fn(action) {
     match action {
-      @session.SendDatagram(bytes) =>
+      @session.SendDatagram(_, _) => true
+      _ => false
+    }
+  })
+  assert_eq(sent.length(), 2)
+  for action in sent {
+    match action {
+      @session.SendDatagram(_, bytes) =>
         match @protocol.decode_datagram(bytes) {
           @protocol.Complete(@protocol.Object(datagram), _) => {
             assert_eq(datagram.track_alias, 1UL)

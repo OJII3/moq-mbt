@@ -115,8 +115,8 @@ impl @driver.SessionTransport for WebTransportTransport with fn close_connection
 pub struct WebTransportSessionDriver {
   connection : WebTransportConnection
   priv driver : @driver.SessionDriver[WebTransportTransport]
-  notices : Array[@session.ClientSessionNotice]
-  notice_waiters : Array[(@session.ClientSessionNotice?) -> Unit]
+  notices : Array[@session.SessionNotice]
+  notice_waiters : Array[(@session.SessionNotice?) -> Unit]
   opened_streams : Array[(@session.ClientStreamPurpose, Int64)]
   opened_stream_waiters : Array[
     ((@session.ClientStreamPurpose, Int64)?) -> Unit,
@@ -190,8 +190,8 @@ pub fn WebTransportSessionDriver::start(
   let capability = self.connection.datagram_capability()
   self.driver.receive(
     @session.DatagramSendCapabilityChanged(
-      capability.enabled,
-      capability.max_length,
+      enabled=capability.enabled,
+      max_length=capability.max_length,
     ),
   )
   match self.driver.failure() {
@@ -232,7 +232,7 @@ pub fn WebTransportSessionDriver::start(
 /// Apply actions returned by a public ClientSession operation.
 pub fn WebTransportSessionDriver::dispatch(
   self : WebTransportSessionDriver,
-  actions : Array[@session.ClientSessionAction],
+  actions : Array[@session.SessionAction],
 ) -> Unit {
   self.driver.dispatch(actions)
   self.flush()
@@ -251,7 +251,7 @@ pub fn WebTransportSessionDriver::session(
 /// until a notice arrives or the driver ends.
 pub fn WebTransportSessionDriver::next_notice(
   self : WebTransportSessionDriver,
-) -> @js.Promise[@session.ClientSessionNotice?] {
+) -> @js.Promise[@session.SessionNotice?] {
   self.flush()
   if self.notices.length() > 0 {
     let notice = self.notices[0]
@@ -316,7 +316,7 @@ fn WebTransportSessionDriver::notify_opened_stream(
 ///|
 fn WebTransportSessionDriver::receive_event(
   self : WebTransportSessionDriver,
-  event : @session.ClientSessionEvent,
+  event : @session.SessionEvent,
 ) -> Unit {
   if !self.active {
     return
@@ -332,7 +332,7 @@ fn WebTransportSessionDriver::receive_event(
 ///|
 fn WebTransportSessionDriver::enqueue_notice(
   self : WebTransportSessionDriver,
-  notice : @session.ClientSessionNotice,
+  notice : @session.SessionNotice,
 ) -> Unit {
   if self.notice_waiters.length() > 0 {
     let waiter = self.notice_waiters[0]
@@ -370,7 +370,7 @@ fn WebTransportSessionDriver::read_stream_events(
         Data(stream, bytes) =>
           self.receive_event(@session.StreamData(stream, bytes))
         StreamFinished(stream) =>
-          self.receive_event(@session.StreamFinished(stream))
+          self.receive_event(@session.InboundStreamFinished(stream))
         StreamReset(stream, failure) =>
           match failure.stream_error_code {
             Some(code) =>
@@ -421,7 +421,9 @@ fn WebTransportSessionDriver::read_datagrams(
         DatagramsClosed => {
           continue_reading = false
           self.datagram_read_ended = true
-          self.receive_event(@session.DatagramSendCapabilityChanged(false, 0))
+          self.receive_event(
+            @session.DatagramSendCapabilityChanged(enabled=false, max_length=0),
+          )
         }
       }
       if continue_reading {
@@ -440,8 +442,8 @@ fn WebTransportSessionDriver::refresh_datagram_capability(
     let capability = self.connection.datagram_capability()
     self.receive_event(
       @session.DatagramSendCapabilityChanged(
-        capability.enabled,
-        capability.max_length,
+        enabled=capability.enabled,
+        max_length=capability.max_length,
       ),
     )
   }

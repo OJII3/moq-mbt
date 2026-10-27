@@ -35,7 +35,7 @@ priv struct NamespaceProbeState {
 ///|
 fn NamespaceProbeState::observe(
   self : NamespaceProbeState,
-  notices : Array[@session.ClientSessionNotice],
+  notices : Array[@session.SessionNotice],
   publisher : Bool,
 ) -> Unit raise {
   for notice in notices {

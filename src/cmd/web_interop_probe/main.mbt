@@ -238,7 +238,7 @@ async fn publish_group(
   let mut finished = false
   while !finished {
     match client.next_notice().wait() {
-      Some(@session.ObjectStreamFinished(stream)) if stream == object_stream =>
+      Some(@session.ObjectStreamSendFinished(stream)) if stream == object_stream =>
         finished = true
       Some(@session.SessionEnded(end)) => {
         ffi_set_status("failed: session ended \{end.to_repr()}")
@@ -340,7 +340,7 @@ async fn run_publisher(
         let mut done_sent = false
         while !done_sent {
           match client.next_notice().wait() {
-            Some(@session.SendFinished(sent_stream, false)) if sent_stream ==
+            Some(@session.StreamSendFinished(sent_stream, @session.Sent)) if sent_stream ==
               stream => done_sent = true
             Some(@session.SessionEnded(end)) => {
               ffi_set_status("failed: session ended \{end.to_repr()}")

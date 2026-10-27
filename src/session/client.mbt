@@ -27,29 +27,37 @@ pub(all) enum ClientSessionEnd {
 } derive(Debug, Eq)
 
 ///|
-/// `SendComplete` means the backend's send operation has completed. The
+/// How a local stream send ended.
+pub(all) enum SendCompletion {
+  Sent
+  Reset
+} derive(Debug, Eq)
+
+///|
+/// `SendCompleted` means the backend's send operation has completed. The
 /// completion point is backend-specific: Web Streams can report local write
 /// and FIN completion, while a QUIC backend may report a stronger signal.
 /// The common session contract does not promise peer receipt or QUIC ACK.
 /// `Clock` values are monotonic milliseconds supplied by the adapter.
-pub(all) enum ClientSessionEvent {
+pub(all) enum SessionEvent {
   InboundStreamStarted(Int64, ClientStreamDirection)
   StreamData(Int64, Bytes)
   DatagramReceived(Bytes)
-  DatagramSendCapabilityChanged(Bool, Int32)
+  DatagramSendCapabilityChanged(enabled~ : Bool, max_length~ : Int32)
   StreamOpened(ClientStreamPurpose, Int64)
-  StreamFinished(Int64)
+  InboundStreamFinished(Int64)
   StreamReset(Int64, UInt64)
   SendStopped(Int64, UInt64)
-  SendComplete(Int64, Bool)
-  DatagramSendComplete
+  SendCompleted(Int64, SendCompletion)
+  DatagramSendComplete(UInt64)
+  DatagramSendFailed(UInt64, Int64)
   Clock(UInt64)
   PeerClosed(UInt64)
   TransportFailed(Int64)
 } derive(Debug, Eq)
 
 ///|
-pub(all) enum ClientSessionNotice {
+pub(all) enum SessionNotice {
   HandshakeComplete(@protocol.Setup)
   ControlMessageReceived(@protocol.ControlMessage)
   PublishAccepted(UInt64, @protocol.TrackName, UInt64)
@@ -144,24 +152,27 @@ pub(all) enum ClientSessionNotice {
   )
   ObjectDatagramReceived(UInt64, @protocol.TrackName, @protocol.ObjectDatagram)
   ObjectStreamReset(UInt64, Int64)
-  ObjectStreamFinished(Int64)
+  ObjectStreamSendFinished(Int64)
   GroupFinished(UInt64, UInt64)
   PublishDone(UInt64, @protocol.PublishDoneMessage)
-  SendFinished(Int64, Bool)
+  StreamSendFinished(Int64, SendCompletion)
+  DatagramQueued(UInt64)
+  DatagramLocalWriteFailed(UInt64, Int64)
   ControlGoAwayReceived(Bytes, UInt64, UInt64)
   RequestGoAwayReceived(UInt64, Int64, Bytes, UInt64)
   SessionEnded(ClientSessionEnd)
 } derive(Debug, Eq)
 
 ///|
-pub(all) enum ClientSessionAction {
+pub(all) enum SessionAction {
   OpenStream(ClientStreamDirection, ClientStreamPurpose)
-  Send(Int64, Bytes, Bool)
-  SendDatagram(Bytes)
+  SendChunk(Int64, Bytes)
+  SendFin(Int64, Bytes)
+  SendDatagram(UInt64, Bytes)
   AbortSend(Int64, UInt64)
   StopReceiving(Int64, UInt64)
   CloseConnection(UInt64, Bytes)
-  Notify(ClientSessionNotice)
+  EmitNotice(SessionNotice)
 } derive(Debug, Eq)
 
 ///|
@@ -219,6 +230,7 @@ pub struct ClientSession {
   priv mut outbound_control_stream : Int64?
   priv mut next_request_id : UInt64
   priv mut next_object_token : UInt64
+  priv mut next_datagram_token : UInt64
   priv mut peer_control_stream : Int64?
   priv mut control_buffer : Bytes
   priv mut control_goaway_sent : Bool
@@ -231,7 +243,7 @@ pub struct ClientSession {
   priv request_goaway_deadlines : Map[Int64, UInt64]
   priv mut max_peer_request_id : UInt64?
   priv pending_sends : Map[Int64, UInt64]
-  priv mut pending_datagram_sends : UInt64
+  priv pending_datagram_sends : Map[UInt64, Bool]
   priv mut datagram_send_enabled : Bool
   priv mut max_datagram_length : Int32
   priv inbound_stream_kinds : Map[Int64, InboundStreamKind]
@@ -283,6 +295,7 @@ pub fn ClientSession::new(
         outbound_control_stream: None,
         next_request_id: 0UL,
         next_object_token: 0UL,
+        next_datagram_token: 0UL,
         peer_control_stream: None,
         control_buffer: b"",
         control_goaway_sent: false,
@@ -295,7 +308,7 @@ pub fn ClientSession::new(
         request_goaway_deadlines: {},
         max_peer_request_id: None,
         pending_sends: {},
-        pending_datagram_sends: 0UL,
+        pending_datagram_sends: {},
         datagram_send_enabled: false,
         max_datagram_length: 0,
         inbound_stream_kinds: {},
@@ -334,7 +347,7 @@ pub fn ClientSession::new(
 /// Ask the adapter to open the local unidirectional control stream.
 pub fn ClientSession::start(
   self : ClientSession,
-) -> Result[Array[ClientSessionAction], ClientSessionError] {
+) -> Result[Array[SessionAction], ClientSessionError] {
   if self.state == Closed {
     return Err(SessionClosed)
   }
@@ -348,8 +361,8 @@ pub fn ClientSession::start(
 ///|
 pub fn ClientSession::receive(
   self : ClientSession,
-  event : ClientSessionEvent,
-) -> Result[Array[ClientSessionAction], ClientSessionError] {
+  event : SessionEvent,
+) -> Result[Array[SessionAction], ClientSessionError] {
   if self.state == Closed {
     return Ok([])
   }
@@ -374,13 +387,13 @@ pub fn ClientSession::receive(
     }
     StreamData(stream, bytes) => self.receive_stream_data(stream, bytes)
     DatagramReceived(bytes) => self.receive_object_datagram(bytes)
-    DatagramSendCapabilityChanged(enabled, max_length) => {
+    DatagramSendCapabilityChanged(enabled~, max_length~) => {
       self.datagram_send_enabled = enabled
       self.max_datagram_length = max_length
       Ok([])
     }
     StreamOpened(purpose, stream) => self.stream_opened(purpose, stream)
-    StreamFinished(stream) => self.stream_finished(stream)
+    InboundStreamFinished(stream) => self.stream_finished(stream)
     StreamReset(stream, code) => self.stream_reset(stream, code)
     SendStopped(stream, code) =>
       if self.outbound_control_stream == Some(stream) {
@@ -394,7 +407,7 @@ pub fn ClientSession::receive(
               self.terminate_fetch(
                 fetch,
                 [AbortSend(stream, code)],
-                Some(Notify(FetchReset(request_id, stream, code))),
+                Some(EmitNotice(FetchReset(request_id, stream, code))),
                 RemoveFetchData,
               ),
             )
@@ -405,7 +418,10 @@ pub fn ClientSession::receive(
                 let subscription_stream = outgoing.subscription_stream
                 self.close_outgoing_object_stream(stream)
                 Ok(
-                  [AbortSend(stream, code), Notify(SendFinished(stream, true))] +
+                  [
+                    AbortSend(stream, code),
+                    EmitNotice(StreamSendFinished(stream, Reset)),
+                  ] +
                   self.finish_failed_subscription(subscription_stream),
                 )
               }
@@ -413,15 +429,17 @@ pub fn ClientSession::receive(
             }
         }
       }
-    SendComplete(stream, canceled) => {
+    SendCompleted(stream, completion) => {
       self.note_send_complete(stream)
-      self.send_complete(stream, canceled)
+      self.send_complete(stream, completion)
     }
-    DatagramSendComplete => {
-      if self.pending_datagram_sends > 0UL {
-        self.pending_datagram_sends = self.pending_datagram_sends - 1UL
-      }
+    DatagramSendComplete(token) => {
+      self.pending_datagram_sends.remove(token)
       Ok([])
+    }
+    DatagramSendFailed(token, status) => {
+      self.pending_datagram_sends.remove(token)
+      Ok([EmitNotice(DatagramLocalWriteFailed(token, status))])
     }
     Clock(now_ms) => Ok(self.clock(now_ms))
     PeerClosed(code) => Ok(self.end_session(Peer(code), None, b""))
@@ -443,9 +461,9 @@ pub fn ClientSession::receive(
 /// API methods remain errors; adapters only execute the actions returned here.
 fn ClientSession::protocol_error_actions(
   self : ClientSession,
-  event : ClientSessionEvent,
+  event : SessionEvent,
   error : ClientSessionError,
-) -> Array[ClientSessionAction]? {
+) -> Array[SessionAction]? {
   let code = match error {
     InvalidRequestId | DuplicateRequestId => close_invalid_request_id
     Handshake(handshake_error) => handshake_error.close_code()
@@ -465,7 +483,7 @@ fn ClientSession::protocol_error_actions(
   }
   match event {
     StreamData(stream, _)
-    | StreamFinished(stream)
+    | InboundStreamFinished(stream)
     | StreamReset(stream, _)
     | SendStopped(stream, _) => {
       let kind = self.inbound_stream_kinds.get(stream)
@@ -484,7 +502,7 @@ fn ClientSession::protocol_error_actions(
         self.inbound_buffers.remove(stream)
         Some([AbortSend(stream, code), StopReceiving(stream, code)])
       } else if kind is Some(Subgroup) {
-        let actions : Array[ClientSessionAction] = []
+        let actions : Array[SessionAction] = []
         match self.incoming_object_streams.get(stream) {
           Some(state) => {
             match state.request_id {
@@ -493,7 +511,7 @@ fn ClientSession::protocol_error_actions(
                 request.object_drain.note_stream_closed()
                 match self.take_ready_publish_done(request_id) {
                   Some(done) =>
-                    actions.push(Notify(PublishDone(request_id, done)))
+                    actions.push(EmitNotice(PublishDone(request_id, done)))
                   None => ()
                 }
               }
@@ -525,7 +543,7 @@ pub fn ClientSession::close(
   self : ClientSession,
   code : UInt64,
   reason : Bytes,
-) -> Array[ClientSessionAction] {
+) -> Array[SessionAction] {
   self.end_session(Local(code, reason), Some(code), reason)
 }
 
@@ -534,7 +552,7 @@ fn ClientSession::receive_control(
   self : ClientSession,
   stream : Int64,
   bytes : Bytes,
-) -> Result[Array[ClientSessionAction], ClientSessionError] {
+) -> Result[Array[SessionAction], ClientSessionError] {
   if !self.ready {
     match self.handshake.receive(stream, bytes) {
       Err(error) => Err(Handshake(error))
@@ -542,7 +560,7 @@ fn ClientSession::receive_control(
       Ok(Ready(setup, trailing)) => {
         self.peer_control_stream = Some(stream)
         self.ready = true
-        let actions = [Notify(HandshakeComplete(setup))]
+        let actions = [EmitNotice(HandshakeComplete(setup))]
         if trailing.is_empty() {
           Ok(actions)
         } else {
@@ -569,12 +587,12 @@ fn ClientSession::receive_control(
 fn ClientSession::decode_control_messages(
   self : ClientSession,
   first : Bytes,
-) -> Result[Array[ClientSessionAction], ClientSessionError] {
+) -> Result[Array[SessionAction], ClientSessionError] {
   if first.length() > 1024 * 1024 - self.control_buffer.length() {
     return Err(BufferLimitExceeded)
   }
   self.control_buffer = self.control_buffer + first
-  let actions : Array[ClientSessionAction] = []
+  let actions : Array[SessionAction] = []
   while !self.control_buffer.is_empty() {
     match
       @protocol.decode_control_with_context(
@@ -594,12 +612,12 @@ fn ClientSession::decode_control_messages(
               self.control_buffer = b""
               return Ok(actions)
             }
-            actions.push(Notify(ControlMessageReceived(message)))
+            actions.push(EmitNotice(ControlMessageReceived(message)))
             for action in self.receive_control_goaway(goaway) {
               actions.push(action)
             }
           }
-          _ => actions.push(Notify(ControlMessageReceived(message)))
+          _ => actions.push(EmitNotice(ControlMessageReceived(message)))
         }
         if self.state == Closed {
           self.control_buffer = b""
@@ -624,22 +642,28 @@ pub extend ClientStreamPurpose with @moonbitlang/core/debug.Debug::{to_repr}
 pub extend ClientStreamPurpose with Eq::{equal, not_equal}
 
 ///|
-pub extend ClientSessionEvent with @moonbitlang/core/debug.Debug::{to_repr}
+pub extend SendCompletion with @moonbitlang/core/debug.Debug::{to_repr}
 
 ///|
-pub extend ClientSessionEvent with Eq::{equal, not_equal}
+pub extend SendCompletion with Eq::{equal, not_equal}
 
 ///|
-pub extend ClientSessionNotice with @moonbitlang/core/debug.Debug::{to_repr}
+pub extend SessionEvent with @moonbitlang/core/debug.Debug::{to_repr}
 
 ///|
-pub extend ClientSessionNotice with Eq::{equal, not_equal}
+pub extend SessionEvent with Eq::{equal, not_equal}
 
 ///|
-pub extend ClientSessionAction with @moonbitlang/core/debug.Debug::{to_repr}
+pub extend SessionNotice with @moonbitlang/core/debug.Debug::{to_repr}
 
 ///|
-pub extend ClientSessionAction with Eq::{equal, not_equal}
+pub extend SessionNotice with Eq::{equal, not_equal}
+
+///|
+pub extend SessionAction with @moonbitlang/core/debug.Debug::{to_repr}
+
+///|
+pub extend SessionAction with Eq::{equal, not_equal}
 
 ///|
 pub extend ClientSessionError with @moonbitlang/core/debug.Debug::{to_repr}

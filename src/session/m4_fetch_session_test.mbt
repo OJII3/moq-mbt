@@ -124,8 +124,8 @@ test "peer FETCH GROUP_ORDER Byte selects descending object order" {
   assert_eq(
     client.receive(@session.StreamData(30, data)),
     Ok([
-      @session.Notify(@session.FetchObjectReceived(local_id, object)),
-      @session.Notify(
+      @session.EmitNotice(@session.FetchObjectReceived(local_id, object)),
+      @session.EmitNotice(
         @session.FetchObjectReceived(local_id, { ..object, group_id: 1UL, }),
       ),
     ]),
@@ -152,7 +152,7 @@ test "FETCH data stream FIN prevents another stream for the same request" {
   )
   let header = @protocol.encode_fetch_header({ request_id, })
   assert_eq(client.receive(@session.StreamData(30, header)), Ok([]))
-  assert_eq(client.receive(@session.StreamFinished(30)), Ok([]))
+  assert_eq(client.receive(@session.InboundStreamFinished(30)), Ok([]))
 
   ignore(
     client.receive(@session.InboundStreamStarted(32, @session.Unidirectional)),

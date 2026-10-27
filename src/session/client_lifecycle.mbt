@@ -40,20 +40,19 @@ fn ClientSession::ensure_new_request_allowed(
 ///|
 fn ClientSession::finish_actions(
   self : ClientSession,
-  actions : Array[ClientSessionAction],
-) -> Array[ClientSessionAction] {
+  actions : Array[SessionAction],
+) -> Array[SessionAction] {
   for action in actions {
     match action {
-      Send(stream, _, _) => {
+      SendChunk(stream, _) | SendFin(stream, _) => {
         let count = match self.pending_sends.get(stream) {
           Some(value) => value
           None => 0UL
         }
         self.pending_sends[stream] = count + 1UL
       }
-      SendDatagram(_) =>
-        self.pending_datagram_sends = self.pending_datagram_sends + 1UL
-      // An aborted stream will never accept another send. Late SendComplete
+      SendDatagram(token, _) => self.pending_datagram_sends[token] = true
+      // An aborted stream will never accept another send. Late SendCompleted
       // events are ignored by note_send_complete, so release the slot now to
       // let GOAWAY drain finish.
       AbortSend(stream, _) => self.pending_sends.remove(stream)
@@ -91,13 +90,13 @@ fn ClientSession::has_active_requests(self : ClientSession) -> Bool {
 fn ClientSession::has_drain_work(self : ClientSession) -> Bool {
   self.has_active_requests() ||
   self.pending_sends.length() > 0 ||
-  self.pending_datagram_sends > 0UL
+  self.pending_datagram_sends.length() > 0
 }
 
 ///|
 fn ClientSession::maybe_finish_drain(
   self : ClientSession,
-) -> Array[ClientSessionAction] {
+) -> Array[SessionAction] {
   if self.state != Draining || self.has_drain_work() {
     return []
   }
@@ -110,7 +109,7 @@ fn ClientSession::end_session(
   end : ClientSessionEnd,
   close_code : UInt64?,
   reason : Bytes,
-) -> Array[ClientSessionAction] {
+) -> Array[SessionAction] {
   if self.state == Closed {
     return []
   }
@@ -123,12 +122,12 @@ fn ClientSession::end_session(
   self.inbound_fetch_request_ids.clear()
   self.outgoing_fetch_streams.clear()
   self.pending_joining_fetches.clear()
-  let actions : Array[ClientSessionAction] = []
+  let actions : Array[SessionAction] = []
   match close_code {
     Some(code) => actions.push(CloseConnection(code, reason))
     None => ()
   }
-  actions.push(Notify(SessionEnded(end)))
+  actions.push(EmitNotice(SessionEnded(end)))
   actions
 }
 
@@ -136,12 +135,12 @@ fn ClientSession::end_session(
 fn ClientSession::clock(
   self : ClientSession,
   now_ms : UInt64,
-) -> Array[ClientSessionAction] {
+) -> Array[SessionAction] {
   if !self.clock_initialized || now_ms > self.now_ms {
     self.now_ms = now_ms
   }
   self.clock_initialized = true
-  let actions : Array[ClientSessionAction] = self.expire_pending_joining_fetches()
+  let actions : Array[SessionAction] = self.expire_pending_joining_fetches()
   let expired_requests : Array[Int64] = []
   for (stream, deadline) in self.request_goaway_deadlines {
     if self.now_ms >= deadline {
@@ -181,7 +180,7 @@ pub fn ClientSession::state(self : ClientSession) -> ClientSessionState {
 pub fn ClientSession::send_goaway(
   self : ClientSession,
   timeout_ms : UInt64,
-) -> Result[Array[ClientSessionAction], ClientSessionError] {
+) -> Result[Array[SessionAction], ClientSessionError] {
   if self.state == Closed {
     return Err(SessionClosed)
   }
@@ -211,7 +210,7 @@ pub fn ClientSession::send_goaway(
   } else {
     Some(self.now_ms + timeout_ms)
   }
-  Ok(self.finish_actions([Send(stream, bytes, false)]))
+  Ok(self.finish_actions([SendChunk(stream, bytes)]))
 }
 
 ///|
@@ -232,7 +231,7 @@ fn ClientSession::reject_local_request_for_goaway(
   _self : ClientSession,
   request_id : UInt64,
   request : ClientRequest,
-) -> Array[ClientSessionAction] {
+) -> Array[SessionAction] {
   if request.is_accepted() || request.is_terminal() {
     return []
   }
@@ -249,7 +248,7 @@ fn ClientSession::reject_local_request_for_goaway(
     reason: b"",
     redirect: b"",
   }
-  let actions : Array[ClientSessionAction] = []
+  let actions : Array[SessionAction] = []
   match request.stream {
     Some(stream) => {
       if effects.abort_send {
@@ -263,8 +262,9 @@ fn ClientSession::reject_local_request_for_goaway(
   }
   if effects.notify_end || !request.lifetime.end_notified {
     match request.kind {
-      Publishing => actions.push(Notify(PublishRejected(request_id, error)))
-      Subscribing => actions.push(Notify(SubscribeRejected(request_id, error)))
+      Publishing => actions.push(EmitNotice(PublishRejected(request_id, error)))
+      Subscribing =>
+        actions.push(EmitNotice(SubscribeRejected(request_id, error)))
     }
     request.lifetime.end_notified = true
   }
@@ -275,7 +275,7 @@ fn ClientSession::reject_local_request_for_goaway(
 fn ClientSession::receive_control_goaway(
   self : ClientSession,
   message : @protocol.GoAwayControlMessage,
-) -> Array[ClientSessionAction] {
+) -> Array[SessionAction] {
   if self.control_goaway_received {
     return self.end_session(
       Local(close_protocol_violation, b""),
@@ -293,8 +293,8 @@ fn ClientSession::receive_control_goaway(
   self.control_goaway_received = true
   self.peer_goaway_boundary = Some(message.request_id)
   self.state = Draining
-  let actions : Array[ClientSessionAction] = [
-    Notify(
+  let actions : Array[SessionAction] = [
+    EmitNotice(
       ControlGoAwayReceived(message.uri, message.timeout_ms, message.request_id),
     ),
   ]
@@ -329,7 +329,7 @@ fn ClientSession::receive_control_goaway(
           fetch,
           [],
           Some(
-            Notify(
+            EmitNotice(
               FetchFailed(request_id, {
                 code: request_error_going_away,
                 retry_interval: 0UL,
@@ -355,7 +355,7 @@ fn ClientSession::receive_request_goaway(
   self : ClientSession,
   stream : Int64,
   message : @protocol.GoAwayRequestMessage,
-) -> Array[ClientSessionAction] {
+) -> Array[SessionAction] {
   if self.request_goaway_streams.get(stream) is Some(_) {
     return self.end_session(
       Local(close_protocol_violation, b""),
@@ -369,7 +369,7 @@ fn ClientSession::receive_request_goaway(
   }
   let request_id = self.request_stream_id(stream)
   [
-    Notify(
+    EmitNotice(
       RequestGoAwayReceived(request_id, stream, message.uri, message.timeout_ms),
     ),
   ]

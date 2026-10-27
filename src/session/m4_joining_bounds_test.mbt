@@ -53,7 +53,7 @@ test "Joining FETCH accepts group IDs above 2^62" {
   assert_eq(
     publisher.receive(@session.StreamData(42, fetch)),
     Ok([
-      @session.Notify(
+      @session.EmitNotice(
         @session.FetchRequested(
           3UL,
           42,
@@ -88,7 +88,9 @@ test "local Joining FETCH accepts data above the old group limit" {
         @protocol.encode_subscribe_ok(subscribe_ok).unwrap(),
       ),
     ),
-    Ok([@session.Notify(@session.SubscribeEstablished(subscription_id, 7UL))]),
+    Ok([
+      @session.EmitNotice(@session.SubscribeEstablished(subscription_id, 7UL)),
+    ]),
   )
   let (fetch_id, _) = client.fetch_relative(subscription_id, 0UL, []).unwrap()
   ignore(client.receive(@session.StreamOpened(@session.Request(fetch_id), 22)))
@@ -113,6 +115,6 @@ test "local Joining FETCH accepts data above the old group limit" {
     .unwrap()
   assert_eq(
     client.receive(@session.StreamData(data_stream, data)),
-    Ok([@session.Notify(@session.FetchObjectReceived(fetch_id, object))]),
+    Ok([@session.EmitNotice(@session.FetchObjectReceived(fetch_id, object))]),
   )
 }

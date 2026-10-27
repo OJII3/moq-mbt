@@ -15,7 +15,7 @@ test "client control GOAWAY sends an empty URI and rejects late peer requests" {
   assert_eq(
     publisher.receive(@session.StreamOpened(@session.Request(publish_id), 20)),
     Ok([
-      @session.Send(
+      @session.SendChunk(
         20,
         @protocol.encode_publish({
           request_id: publish_id,
@@ -24,13 +24,12 @@ test "client control GOAWAY sends an empty URI and rejects late peer requests" {
           parameters: [],
           properties: b"",
         }).unwrap(),
-        false,
       ),
     ]),
   )
   assert_eq(
-    publisher.receive(@session.SendComplete(20, false)),
-    Ok([@session.Notify(@session.SendFinished(20, false))]),
+    publisher.receive(@session.SendCompleted(20, @session.Sent)),
+    Ok([@session.EmitNotice(@session.StreamSendFinished(20, @session.Sent))]),
   )
   assert_eq(
     publisher.receive(
@@ -40,7 +39,7 @@ test "client control GOAWAY sends an empty URI and rejects late peer requests" {
       ),
     ),
     Ok([
-      @session.Notify(
+      @session.EmitNotice(
         @session.PublishAccepted(
           publish_id,
           { namespace_fields: [b"demo"], name: b"video", },
@@ -60,30 +59,29 @@ test "client control GOAWAY sends an empty URI and rejects late peer requests" {
         @protocol.encode_subscribe({ request_id: 1UL, track, parameters: [], }).unwrap(),
       ),
     ),
-    Ok([@session.Notify(@session.SubscriptionRequested(1UL, 30, track))]),
+    Ok([@session.EmitNotice(@session.SubscriptionRequested(1UL, 30, track))]),
   )
   assert_eq(
     publisher.accept_subscription(30),
     Ok([
-      @session.Send(
+      @session.SendChunk(
         30,
         @protocol.encode_subscribe_ok({
           track_alias: 1UL,
           parameters: [],
           properties: b"",
         }).unwrap(),
-        false,
       ),
-      @session.Notify(@session.SubscriptionAccepted(1UL, 30, 1UL)),
+      @session.EmitNotice(@session.SubscriptionAccepted(1UL, 30, 1UL)),
     ]),
   )
   assert_eq(
-    publisher.receive(@session.SendComplete(30, false)),
-    Ok([@session.Notify(@session.SendFinished(30, false))]),
+    publisher.receive(@session.SendCompleted(30, @session.Sent)),
+    Ok([@session.EmitNotice(@session.StreamSendFinished(30, @session.Sent))]),
   )
   assert_eq(
     publisher.send_goaway(0UL),
-    Ok([@session.Send(10, client_goaway_control(3UL, 0UL, b""), false)]),
+    Ok([@session.SendChunk(10, client_goaway_control(3UL, 0UL, b""))]),
   )
   assert_eq(publisher.state(), @session.Draining)
 
@@ -105,16 +103,12 @@ test "client control GOAWAY sends an empty URI and rejects late peer requests" {
       ),
     ),
     Ok([
-      @session.Send(
-        31,
-        @protocol.encode_request_error(going_away).unwrap(),
-        true,
-      ),
+      @session.SendFin(31, @protocol.encode_request_error(going_away).unwrap()),
     ]),
   )
   assert_eq(
-    publisher.receive(@session.SendComplete(31, false)),
-    Ok([@session.Notify(@session.SendFinished(31, false))]),
+    publisher.receive(@session.SendCompleted(31, @session.Sent)),
+    Ok([@session.EmitNotice(@session.StreamSendFinished(31, @session.Sent))]),
   )
 
   let done : @protocol.PublishDoneMessage = {
@@ -125,8 +119,8 @@ test "client control GOAWAY sends an empty URI and rejects late peer requests" {
   assert_eq(
     publisher.publish_done(30, 3UL, b""),
     Ok([
-      @session.Send(30, @protocol.encode_publish_done(done).unwrap(), true),
-      @session.Notify(@session.PublishDone(1UL, done)),
+      @session.SendFin(30, @protocol.encode_publish_done(done).unwrap()),
+      @session.EmitNotice(@session.PublishDone(1UL, done)),
     ]),
   )
   assert_eq(publisher.state(), @session.Draining)
@@ -135,7 +129,7 @@ test "client control GOAWAY sends an empty URI and rejects late peer requests" {
     Ok([
       @session.AbortSend(20, 1UL),
       @session.StopReceiving(20, 1UL),
-      @session.Notify(
+      @session.EmitNotice(
         @session.SubscriptionEnded(publish_id, 20, {
           namespace_fields: [b"demo"],
           name: b"video",
@@ -144,16 +138,16 @@ test "client control GOAWAY sends an empty URI and rejects late peer requests" {
     ]),
   )
   assert_eq(
-    publisher.receive(@session.SendComplete(30, false)),
-    Ok([@session.Notify(@session.SendFinished(30, false))]),
+    publisher.receive(@session.SendCompleted(30, @session.Sent)),
+    Ok([@session.EmitNotice(@session.StreamSendFinished(30, @session.Sent))]),
   )
   assert_eq(publisher.state(), @session.Draining)
   assert_eq(
-    publisher.receive(@session.SendComplete(10, false)),
+    publisher.receive(@session.SendCompleted(10, @session.Sent)),
     Ok([
-      @session.Notify(@session.SendFinished(10, false)),
+      @session.EmitNotice(@session.StreamSendFinished(10, @session.Sent)),
       @session.CloseConnection(0UL, b""),
-      @session.Notify(@session.SessionEnded(@session.Local(0UL, b""))),
+      @session.EmitNotice(@session.SessionEnded(@session.Local(0UL, b""))),
     ]),
   )
   assert_eq(publisher.state(), @session.Closed)
@@ -167,7 +161,7 @@ test "peer REQUEST_UPDATE after control GOAWAY is rejected and ends that subscri
   assert_eq(
     publisher.receive(@session.StreamOpened(@session.Request(publish_id), 20)),
     Ok([
-      @session.Send(
+      @session.SendChunk(
         20,
         @protocol.encode_publish({
           request_id: publish_id,
@@ -176,11 +170,10 @@ test "peer REQUEST_UPDATE after control GOAWAY is rejected and ends that subscri
           parameters: [],
           properties: b"",
         }).unwrap(),
-        false,
       ),
     ]),
   )
-  ignore(publisher.receive(@session.SendComplete(20, false)))
+  ignore(publisher.receive(@session.SendCompleted(20, @session.Sent)))
   assert_eq(
     publisher.receive(
       @session.StreamData(
@@ -189,7 +182,7 @@ test "peer REQUEST_UPDATE after control GOAWAY is rejected and ends that subscri
       ),
     ),
     Ok([
-      @session.Notify(
+      @session.EmitNotice(
         @session.PublishAccepted(
           publish_id,
           { namespace_fields: [b"demo"], name: b"video", },
@@ -209,13 +202,13 @@ test "peer REQUEST_UPDATE after control GOAWAY is rejected and ends that subscri
         @protocol.encode_subscribe({ request_id: 1UL, track, parameters: [], }).unwrap(),
       ),
     ),
-    Ok([@session.Notify(@session.SubscriptionRequested(1UL, 30, track))]),
+    Ok([@session.EmitNotice(@session.SubscriptionRequested(1UL, 30, track))]),
   )
   ignore(publisher.accept_subscription(30).unwrap())
-  ignore(publisher.receive(@session.SendComplete(30, false)))
+  ignore(publisher.receive(@session.SendCompleted(30, @session.Sent)))
   assert_eq(
     publisher.send_goaway(0UL),
-    Ok([@session.Send(10, client_goaway_control(3UL, 0UL, b""), false)]),
+    Ok([@session.SendChunk(10, client_goaway_control(3UL, 0UL, b""))]),
   )
   let error : @protocol.RequestErrorMessage = {
     code: 6UL,
@@ -236,10 +229,10 @@ test "peer REQUEST_UPDATE after control GOAWAY is rejected and ends that subscri
       ),
     ),
     Ok([
-      @session.Send(30, @protocol.encode_request_error(error).unwrap(), false),
-      @session.Notify(@session.SubscriptionUpdateRejected(1UL, 3UL, error)),
-      @session.Send(30, @protocol.encode_publish_done(done).unwrap(), true),
-      @session.Notify(@session.PublishDone(1UL, done)),
+      @session.SendChunk(30, @protocol.encode_request_error(error).unwrap()),
+      @session.EmitNotice(@session.SubscriptionUpdateRejected(1UL, 3UL, error)),
+      @session.SendFin(30, @protocol.encode_publish_done(done).unwrap()),
+      @session.EmitNotice(@session.PublishDone(1UL, done)),
     ]),
   )
   assert_eq(
@@ -247,7 +240,7 @@ test "peer REQUEST_UPDATE after control GOAWAY is rejected and ends that subscri
     Ok([
       @session.AbortSend(20, 1UL),
       @session.StopReceiving(20, 1UL),
-      @session.Notify(
+      @session.EmitNotice(
         @session.SubscriptionEnded(publish_id, 20, {
           namespace_fields: [b"demo"],
           name: b"video",
@@ -256,20 +249,20 @@ test "peer REQUEST_UPDATE after control GOAWAY is rejected and ends that subscri
     ]),
   )
   assert_eq(
-    publisher.receive(@session.SendComplete(30, false)),
-    Ok([@session.Notify(@session.SendFinished(30, false))]),
+    publisher.receive(@session.SendCompleted(30, @session.Sent)),
+    Ok([@session.EmitNotice(@session.StreamSendFinished(30, @session.Sent))]),
   )
   assert_eq(publisher.state(), @session.Draining)
   assert_eq(
-    publisher.receive(@session.SendComplete(30, false)),
-    Ok([@session.Notify(@session.SendFinished(30, false))]),
+    publisher.receive(@session.SendCompleted(30, @session.Sent)),
+    Ok([@session.EmitNotice(@session.StreamSendFinished(30, @session.Sent))]),
   )
   assert_eq(
-    publisher.receive(@session.SendComplete(10, false)),
+    publisher.receive(@session.SendCompleted(10, @session.Sent)),
     Ok([
-      @session.Notify(@session.SendFinished(10, false)),
+      @session.EmitNotice(@session.StreamSendFinished(10, @session.Sent)),
       @session.CloseConnection(0UL, b""),
-      @session.Notify(@session.SessionEnded(@session.Local(0UL, b""))),
+      @session.EmitNotice(@session.SessionEnded(@session.Local(0UL, b""))),
     ]),
   )
 }
@@ -295,7 +288,7 @@ test "received control GOAWAY rejects pending boundary requests and blocks new r
       @session.StreamData(11, client_goaway_control(2UL, 0UL, b"moqt://next")),
     ),
     Ok([
-      @session.Notify(
+      @session.EmitNotice(
         @session.ControlMessageReceived(
           @protocol.GoAwayControl({
             uri: b"moqt://next",
@@ -304,8 +297,10 @@ test "received control GOAWAY rejects pending boundary requests and blocks new r
           }),
         ),
       ),
-      @session.Notify(@session.ControlGoAwayReceived(b"moqt://next", 0UL, 2UL)),
-      @session.Notify(@session.SubscribeRejected(at_boundary, going_away)),
+      @session.EmitNotice(
+        @session.ControlGoAwayReceived(b"moqt://next", 0UL, 2UL),
+      ),
+      @session.EmitNotice(@session.SubscribeRejected(at_boundary, going_away)),
     ]),
   )
   assert_eq(subscriber.state(), @session.Draining)
@@ -325,7 +320,7 @@ test "received control GOAWAY rejects pending boundary requests and blocks new r
     subscriber.cancel_request(before),
     Ok([
       @session.CloseConnection(0UL, b""),
-      @session.Notify(@session.SessionEnded(@session.Local(0UL, b""))),
+      @session.EmitNotice(@session.SessionEnded(@session.Local(0UL, b""))),
     ]),
   )
   assert_eq(subscriber.state(), @session.Closed)
@@ -340,7 +335,7 @@ test "GOAWAY request ID parity and duplicate control GOAWAY close the session" {
     ),
     Ok([
       @session.CloseConnection(4UL, b""),
-      @session.Notify(@session.SessionEnded(@session.Local(4UL, b""))),
+      @session.EmitNotice(@session.SessionEnded(@session.Local(4UL, b""))),
     ]),
   )
 
@@ -350,7 +345,7 @@ test "GOAWAY request ID parity and duplicate control GOAWAY close the session" {
   assert_eq(
     duplicate.receive(@session.StreamData(11, goaway)),
     Ok([
-      @session.Notify(
+      @session.EmitNotice(
         @session.ControlMessageReceived(
           @protocol.GoAwayControl({
             uri: b"",
@@ -359,14 +354,14 @@ test "GOAWAY request ID parity and duplicate control GOAWAY close the session" {
           }),
         ),
       ),
-      @session.Notify(@session.ControlGoAwayReceived(b"", 0UL, 2UL)),
+      @session.EmitNotice(@session.ControlGoAwayReceived(b"", 0UL, 2UL)),
     ]),
   )
   assert_eq(
     duplicate.receive(@session.StreamData(11, goaway)),
     Ok([
       @session.CloseConnection(3UL, b""),
-      @session.Notify(@session.SessionEnded(@session.Local(3UL, b""))),
+      @session.EmitNotice(@session.SessionEnded(@session.Local(3UL, b""))),
     ]),
   )
 }
@@ -380,20 +375,19 @@ test "request GOAWAY is scoped to its stream and resets after its deadline" {
   assert_eq(
     subscriber.receive(@session.StreamOpened(@session.Request(request_id), 20)),
     Ok([
-      @session.Send(
+      @session.SendChunk(
         20,
         @protocol.encode_subscribe({
           request_id,
           track: client_track(b"video"),
           parameters: [],
         }).unwrap(),
-        false,
       ),
     ]),
   )
   assert_eq(
-    subscriber.receive(@session.SendComplete(20, false)),
-    Ok([@session.Notify(@session.SendFinished(20, false))]),
+    subscriber.receive(@session.SendCompleted(20, @session.Sent)),
+    Ok([@session.EmitNotice(@session.StreamSendFinished(20, @session.Sent))]),
   )
   assert_eq(
     subscriber.receive(
@@ -406,7 +400,7 @@ test "request GOAWAY is scoped to its stream and resets after its deadline" {
         }).unwrap(),
       ),
     ),
-    Ok([@session.Notify(@session.SubscribeEstablished(request_id, 1UL))]),
+    Ok([@session.EmitNotice(@session.SubscribeEstablished(request_id, 1UL))]),
   )
   assert_eq(subscriber.receive(@session.Clock(100UL)), Ok([]))
   let request_goaway : @protocol.GoAwayRequestMessage = {
@@ -417,7 +411,7 @@ test "request GOAWAY is scoped to its stream and resets after its deadline" {
   assert_eq(
     subscriber.receive(@session.StreamData(20, request_goaway_wire)),
     Ok([
-      @session.Notify(
+      @session.EmitNotice(
         @session.RequestGoAwayReceived(request_id, 20, b"moqt://next", 10UL),
       ),
     ]),
@@ -429,7 +423,7 @@ test "request GOAWAY is scoped to its stream and resets after its deadline" {
     Ok([
       @session.AbortSend(20, 4UL),
       @session.StopReceiving(20, 4UL),
-      @session.Notify(
+      @session.EmitNotice(
         @session.SubscriptionEnded(request_id, 20, {
           namespace_fields: [b"demo"],
           name: b"video",
@@ -449,14 +443,13 @@ test "request GOAWAY timeout zero does not reset and duplicate GOAWAY is a viola
   assert_eq(
     subscriber.receive(@session.StreamOpened(@session.Request(request_id), 20)),
     Ok([
-      @session.Send(
+      @session.SendChunk(
         20,
         @protocol.encode_subscribe({
           request_id,
           track: client_track(b"video"),
           parameters: [],
         }).unwrap(),
-        false,
       ),
     ]),
   )
@@ -464,7 +457,9 @@ test "request GOAWAY timeout zero does not reset and duplicate GOAWAY is a viola
   assert_eq(
     subscriber.receive(@session.StreamData(20, goaway)),
     Ok([
-      @session.Notify(@session.RequestGoAwayReceived(request_id, 20, b"", 0UL)),
+      @session.EmitNotice(
+        @session.RequestGoAwayReceived(request_id, 20, b"", 0UL),
+      ),
     ]),
   )
   assert_eq(subscriber.receive(@session.Clock(100000UL)), Ok([]))
@@ -473,7 +468,7 @@ test "request GOAWAY timeout zero does not reset and duplicate GOAWAY is a viola
     subscriber.receive(@session.StreamData(20, goaway)),
     Ok([
       @session.CloseConnection(3UL, b""),
-      @session.Notify(@session.SessionEnded(@session.Local(3UL, b""))),
+      @session.EmitNotice(@session.SessionEnded(@session.Local(3UL, b""))),
     ]),
   )
 }
@@ -489,7 +484,7 @@ test "drain closes after rejecting a local request that has not opened" {
       @session.StreamData(11, client_goaway_control(0UL, 0UL, b"")),
     ),
     Ok([
-      @session.Notify(
+      @session.EmitNotice(
         @session.ControlMessageReceived(
           @protocol.GoAwayControl({
             uri: b"",
@@ -498,8 +493,8 @@ test "drain closes after rejecting a local request that has not opened" {
           }),
         ),
       ),
-      @session.Notify(@session.ControlGoAwayReceived(b"", 0UL, 0UL)),
-      @session.Notify(
+      @session.EmitNotice(@session.ControlGoAwayReceived(b"", 0UL, 0UL)),
+      @session.EmitNotice(
         @session.SubscribeRejected(request_id, {
           code: 6UL,
           retry_interval: 0UL,
@@ -508,7 +503,7 @@ test "drain closes after rejecting a local request that has not opened" {
         }),
       ),
       @session.CloseConnection(0UL, b""),
-      @session.Notify(@session.SessionEnded(@session.Local(0UL, b""))),
+      @session.EmitNotice(@session.SessionEnded(@session.Local(0UL, b""))),
     ]),
   )
   assert_eq(subscriber.state(), @session.Closed)
@@ -526,18 +521,18 @@ test "zero GOAWAY timeout does not expire a request and drain waits for sends" {
     .unwrap()
   assert_eq(
     subscriber.send_goaway(0UL),
-    Ok([@session.Send(10, client_goaway_control(1UL, 0UL, b""), false)]),
+    Ok([@session.SendChunk(10, client_goaway_control(1UL, 0UL, b""))]),
   )
   assert_eq(subscriber.receive(@session.Clock(100000UL)), Ok([]))
   assert_eq(subscriber.state(), @session.Draining)
   assert_eq(subscriber.cancel_request(request_id), Ok([]))
   assert_eq(subscriber.state(), @session.Draining)
   assert_eq(
-    subscriber.receive(@session.SendComplete(10, false)),
+    subscriber.receive(@session.SendCompleted(10, @session.Sent)),
     Ok([
-      @session.Notify(@session.SendFinished(10, false)),
+      @session.EmitNotice(@session.StreamSendFinished(10, @session.Sent)),
       @session.CloseConnection(0UL, b""),
-      @session.Notify(@session.SessionEnded(@session.Local(0UL, b""))),
+      @session.EmitNotice(@session.SessionEnded(@session.Local(0UL, b""))),
     ]),
   )
   assert_eq(subscriber.state(), @session.Closed)
@@ -549,13 +544,13 @@ test "sent control GOAWAY times out while requests remain" {
   let (_, _) = publisher.publish_track(client_track(b"video"), 1UL).unwrap()
   assert_eq(
     publisher.send_goaway(10UL),
-    Ok([@session.Send(10, client_goaway_control(1UL, 10UL, b""), false)]),
+    Ok([@session.SendChunk(10, client_goaway_control(1UL, 10UL, b""))]),
   )
   assert_eq(
     publisher.receive(@session.Clock(10UL)),
     Ok([
       @session.CloseConnection(0x10UL, b""),
-      @session.Notify(@session.SessionEnded(@session.Local(0x10UL, b""))),
+      @session.EmitNotice(@session.SessionEnded(@session.Local(0x10UL, b""))),
     ]),
   )
   assert_eq(publisher.state(), @session.Closed)
@@ -569,16 +564,15 @@ test "existing object delivery continues during session drain" {
   assert_eq(
     subscriber.receive(@session.StreamOpened(@session.Request(request_id), 20)),
     Ok([
-      @session.Send(
+      @session.SendChunk(
         20,
         @protocol.encode_subscribe({ request_id, track, parameters: [], }).unwrap(),
-        false,
       ),
     ]),
   )
   assert_eq(
-    subscriber.receive(@session.SendComplete(20, false)),
-    Ok([@session.Notify(@session.SendFinished(20, false))]),
+    subscriber.receive(@session.SendCompleted(20, @session.Sent)),
+    Ok([@session.EmitNotice(@session.StreamSendFinished(20, @session.Sent))]),
   )
   assert_eq(
     subscriber.receive(
@@ -591,14 +585,14 @@ test "existing object delivery continues during session drain" {
         }).unwrap(),
       ),
     ),
-    Ok([@session.Notify(@session.SubscribeEstablished(request_id, 1UL))]),
+    Ok([@session.EmitNotice(@session.SubscribeEstablished(request_id, 1UL))]),
   )
   assert_eq(
     subscriber.receive(
       @session.StreamData(11, client_goaway_control(2UL, 0UL, b"")),
     ),
     Ok([
-      @session.Notify(
+      @session.EmitNotice(
         @session.ControlMessageReceived(
           @protocol.GoAwayControl({
             uri: b"",
@@ -607,7 +601,7 @@ test "existing object delivery continues during session drain" {
           }),
         ),
       ),
-      @session.Notify(@session.ControlGoAwayReceived(b"", 0UL, 2UL)),
+      @session.EmitNotice(@session.ControlGoAwayReceived(b"", 0UL, 2UL)),
     ]),
   )
   let header = client_subgroup_header(1UL, 9UL)
@@ -626,7 +620,7 @@ test "existing object delivery continues during session drain" {
       ),
     ),
     Ok([
-      @session.Notify(
+      @session.EmitNotice(
         @session.ObjectReceived(
           request_id,
           { namespace_fields: [b"demo"], name: b"video", },
@@ -637,8 +631,8 @@ test "existing object delivery continues during session drain" {
     ]),
   )
   assert_eq(
-    subscriber.receive(@session.StreamFinished(41)),
-    Ok([@session.Notify(@session.GroupFinished(request_id, 9UL))]),
+    subscriber.receive(@session.InboundStreamFinished(41)),
+    Ok([@session.EmitNotice(@session.GroupFinished(request_id, 9UL))]),
   )
   assert_eq(subscriber.state(), @session.Draining)
 }
@@ -648,7 +642,7 @@ test "peer and transport close notifications are one-shot" {
   let peer_closed = client_session_ready()
   assert_eq(
     peer_closed.receive(@session.PeerClosed(7UL)),
-    Ok([@session.Notify(@session.SessionEnded(@session.Peer(7UL)))]),
+    Ok([@session.EmitNotice(@session.SessionEnded(@session.Peer(7UL)))]),
   )
   assert_eq(peer_closed.receive(@session.PeerClosed(7UL)), Ok([]))
   assert_eq(peer_closed.close(0UL, b""), [])
@@ -660,13 +654,13 @@ test "peer and transport close notifications are one-shot" {
   let transport_failed = client_session_ready()
   assert_eq(
     transport_failed.receive(@session.TransportFailed(-1L)),
-    Ok([@session.Notify(@session.SessionEnded(@session.Transport(-1L)))]),
+    Ok([@session.EmitNotice(@session.SessionEnded(@session.Transport(-1L)))]),
   )
 
   let locally_closed = client_session_ready()
   assert_eq(locally_closed.close(9UL, b"done"), [
     @session.CloseConnection(9UL, b"done"),
-    @session.Notify(@session.SessionEnded(@session.Local(9UL, b"done"))),
+    @session.EmitNotice(@session.SessionEnded(@session.Local(9UL, b"done"))),
   ])
   assert_eq(locally_closed.close(10UL, b"ignored"), [])
 }
@@ -676,7 +670,7 @@ test "aborting a request releases its pending sends for drain" {
   let subscriber = subscriber_started()
   assert_eq(
     subscriber.send_goaway(0UL),
-    Ok([@session.Send(10, client_goaway_control(1UL, 0UL, b""), false)]),
+    Ok([@session.SendChunk(10, client_goaway_control(1UL, 0UL, b""))]),
   )
   ignore(subscriber.update_subscription(0UL, [forward_parameter(0)]).unwrap())
   assert_eq(
@@ -684,16 +678,16 @@ test "aborting a request releases its pending sends for drain" {
     Ok([
       @session.AbortSend(30, 1UL),
       @session.StopReceiving(30, 1UL),
-      @session.Notify(@session.SubscriptionEnded(0, 30, subscriber_track())),
+      @session.EmitNotice(@session.SubscriptionEnded(0, 30, subscriber_track())),
     ]),
   )
   assert_eq(subscriber.state(), @session.Draining)
   assert_eq(
-    subscriber.receive(@session.SendComplete(10, false)),
+    subscriber.receive(@session.SendCompleted(10, @session.Sent)),
     Ok([
-      @session.Notify(@session.SendFinished(10, false)),
+      @session.EmitNotice(@session.StreamSendFinished(10, @session.Sent)),
       @session.CloseConnection(0UL, b""),
-      @session.Notify(@session.SessionEnded(@session.Local(0UL, b""))),
+      @session.EmitNotice(@session.SessionEnded(@session.Local(0UL, b""))),
     ]),
   )
   assert_eq(subscriber.state(), @session.Closed)

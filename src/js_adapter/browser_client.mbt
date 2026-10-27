@@ -58,7 +58,7 @@ pub fn BrowserClient::session(self : BrowserClient) -> @session.ClientSession {
 /// Apply actions returned by a session operation.
 pub fn BrowserClient::dispatch(
   self : BrowserClient,
-  actions : Array[@session.ClientSessionAction],
+  actions : Array[@session.SessionAction],
 ) -> Unit {
   self.driver.dispatch(actions)
 }
@@ -67,7 +67,7 @@ pub fn BrowserClient::dispatch(
 /// Wait for the next session notice. Resolves to `None` when the session ends.
 pub fn BrowserClient::next_notice(
   self : BrowserClient,
-) -> @js.Promise[@session.ClientSessionNotice?] {
+) -> @js.Promise[@session.SessionNotice?] {
   self.driver.next_notice()
 }
 

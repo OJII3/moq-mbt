@@ -18,7 +18,7 @@ test "Standalone FETCH accepts data before its response and finishes after FIN" 
   }
   assert_eq(
     client.receive(@session.StreamOpened(@session.Request(request_id), 20)),
-    Ok([@session.Send(20, @protocol.encode_fetch(fetch).unwrap(), false)]),
+    Ok([@session.SendChunk(20, @protocol.encode_fetch(fetch).unwrap())]),
   )
 
   let object : @protocol.FetchObject = {
@@ -48,9 +48,9 @@ test "Standalone FETCH accepts data before its response and finishes after FIN" 
   )
   assert_eq(
     client.receive(@session.StreamData(30, data[2:].to_owned())),
-    Ok([@session.Notify(@session.FetchObjectReceived(request_id, object))]),
+    Ok([@session.EmitNotice(@session.FetchObjectReceived(request_id, object))]),
   )
-  assert_eq(client.receive(@session.StreamFinished(30)), Ok([]))
+  assert_eq(client.receive(@session.InboundStreamFinished(30)), Ok([]))
 
   let response : @protocol.FetchOkMessage = {
     end_of_track: 0,
@@ -63,9 +63,11 @@ test "Standalone FETCH accepts data before its response and finishes after FIN" 
       @session.StreamData(20, @protocol.encode_fetch_ok(response).unwrap()),
     ),
     Ok([
-      @session.Notify(@session.FetchAccepted(request_id, 20)),
-      @session.Notify(@session.FetchResponseAccepted(request_id, 20, response)),
-      @session.Notify(@session.FetchFinished(request_id)),
+      @session.EmitNotice(@session.FetchAccepted(request_id, 20)),
+      @session.EmitNotice(
+        @session.FetchResponseAccepted(request_id, 20, response),
+      ),
+      @session.EmitNotice(@session.FetchFinished(request_id)),
     ]),
   )
 }
@@ -90,7 +92,7 @@ test "peer Standalone FETCH is accepted and served on one data stream" {
       @session.StreamData(20, @protocol.encode_fetch(fetch).unwrap()),
     ),
     Ok([
-      @session.Notify(
+      @session.EmitNotice(
         @session.FetchRequested(1UL, 20, track, start, end_location, []),
       ),
     ]),
@@ -105,18 +107,17 @@ test "peer Standalone FETCH is accepted and served on one data stream" {
   assert_eq(
     server.accept_fetch(1UL, response),
     Ok([
-      @session.Send(20, @protocol.encode_fetch_ok(response).unwrap(), false),
-      @session.Notify(@session.FetchAccepted(1UL, 20)),
+      @session.SendChunk(20, @protocol.encode_fetch_ok(response).unwrap()),
+      @session.EmitNotice(@session.FetchAccepted(1UL, 20)),
       @session.OpenStream(@session.Unidirectional, @session.FetchData(1UL)),
     ]),
   )
   assert_eq(
     server.receive(@session.StreamOpened(@session.FetchData(1UL), 30)),
     Ok([
-      @session.Send(
+      @session.SendChunk(
         30,
         @protocol.encode_fetch_header({ request_id: 1UL, }),
-        false,
       ),
     ]),
   )
@@ -132,16 +133,15 @@ test "peer Standalone FETCH is accepted and served on one data stream" {
   assert_eq(
     server.send_fetch_object(1UL, object),
     Ok([
-      @session.Send(
+      @session.SendChunk(
         30,
         @protocol.FetchDataEncoder::new(@protocol.Ascending)
         .encode(@protocol.FetchDataObject(object))
         .unwrap(),
-        false,
       ),
     ]),
   )
-  assert_eq(server.finish_fetch(1UL), Ok([@session.Send(30, b"", true)]))
+  assert_eq(server.finish_fetch(1UL), Ok([@session.SendFin(30, b"")]))
 }
 
 ///|
@@ -172,7 +172,7 @@ test "local Joining FETCH uses the referenced SUBSCRIBE request ID" {
         @protocol.encode_subscribe_ok(subscribe_ok).unwrap(),
       ),
     ),
-    Ok([@session.Notify(@session.SubscribeEstablished(0UL, 7UL))]),
+    Ok([@session.EmitNotice(@session.SubscribeEstablished(0UL, 7UL))]),
   )
   let (fetch_id, actions) = client.fetch_relative(0UL, 4UL, []).unwrap()
   assert_eq(fetch_id, 2UL)
@@ -186,7 +186,7 @@ test "local Joining FETCH uses the referenced SUBSCRIBE request ID" {
   }
   assert_eq(
     client.receive(@session.StreamOpened(@session.Request(fetch_id), 22)),
-    Ok([@session.Send(22, @protocol.encode_fetch(fetch).unwrap(), false)]),
+    Ok([@session.SendChunk(22, @protocol.encode_fetch(fetch).unwrap())]),
   )
   let (absolute_id, _) = client.fetch_absolute(0UL, 8UL, []).unwrap()
   let absolute_fetch : @protocol.FetchMessage = {
@@ -196,9 +196,7 @@ test "local Joining FETCH uses the referenced SUBSCRIBE request ID" {
   }
   assert_eq(
     client.receive(@session.StreamOpened(@session.Request(absolute_id), 24)),
-    Ok([
-      @session.Send(24, @protocol.encode_fetch(absolute_fetch).unwrap(), false),
-    ]),
+    Ok([@session.SendChunk(24, @protocol.encode_fetch(absolute_fetch).unwrap())]),
   )
   assert_eq(
     client.fetch_absolute(0UL, 13UL, []),
@@ -223,10 +221,9 @@ test "SUBSCRIBE sends its initial filter parameters" {
   assert_eq(
     client.receive(@session.StreamOpened(@session.Request(0UL), 20)),
     Ok([
-      @session.Send(
+      @session.SendChunk(
         20,
         @protocol.encode_subscribe({ request_id, track, parameters, }).unwrap(),
-        false,
       ),
     ]),
   )
@@ -302,17 +299,16 @@ test "pending Joining FETCH resolves against the accepted subscription snapshot"
   assert_eq(
     publisher.accept_subscription(42),
     Ok([
-      @session.Send(
+      @session.SendChunk(
         42,
         @protocol.encode_subscribe_ok({
           track_alias: 7UL,
           parameters: [{ kind: 0x09UL, value: @protocol.Location(12UL, 3UL), }],
           properties: b"",
         }).unwrap(),
-        false,
       ),
-      @session.Notify(@session.SubscriptionAccepted(3UL, 42, 7UL)),
-      @session.Notify(
+      @session.EmitNotice(@session.SubscriptionAccepted(3UL, 42, 7UL)),
+      @session.EmitNotice(
         @session.FetchRequested(
           5UL,
           44,
@@ -335,7 +331,7 @@ test "pending Joining FETCH resolves against the accepted subscription snapshot"
   assert_eq(
     publisher.receive(@session.StreamData(46, absolute_fetch)),
     Ok([
-      @session.Notify(
+      @session.EmitNotice(
         @session.FetchRequested(
           7UL,
           46,
@@ -374,12 +370,11 @@ test "pending Joining FETCH resolves against the accepted subscription snapshot"
   assert_eq(
     publisher.receive(@session.StreamData(48, relative_underflow)),
     Ok([
-      @session.Send(
+      @session.SendFin(
         48,
         @protocol.encode_request_error(invalid_range).unwrap(),
-        true,
       ),
-      @session.Notify(@session.FetchRejected(9UL, 48, invalid_range)),
+      @session.EmitNotice(@session.FetchRejected(9UL, 48, invalid_range)),
     ]),
   )
 
@@ -416,7 +411,7 @@ test "pending Joining FETCH resolves against the accepted subscription snapshot"
   assert_eq(
     publisher.receive(@session.StreamData(52, max_object_joining_fetch)),
     Ok([
-      @session.Notify(
+      @session.EmitNotice(
         @session.FetchRequested(
           13UL,
           52,
@@ -471,8 +466,8 @@ test "pending Joining FETCH times out and reports TIMEOUT" {
   assert_eq(
     publisher.receive(@session.Clock(30000UL)),
     Ok([
-      @session.Send(42, @protocol.encode_request_error(timeout).unwrap(), true),
-      @session.Notify(@session.FetchRejected(3UL, 42, timeout)),
+      @session.SendFin(42, @protocol.encode_request_error(timeout).unwrap()),
+      @session.EmitNotice(@session.FetchRejected(3UL, 42, timeout)),
     ]),
   )
 }
@@ -503,12 +498,11 @@ test "Joining FETCH rejects unknown subscriptions and Forward State zero" {
   assert_eq(
     publisher.receive(@session.StreamData(40, fetch_for(1UL, 99UL))),
     Ok([
-      @session.Send(
+      @session.SendFin(
         40,
         @protocol.encode_request_error(invalid_joining_id).unwrap(),
-        true,
       ),
-      @session.Notify(@session.FetchRejected(1UL, 40, invalid_joining_id)),
+      @session.EmitNotice(@session.FetchRejected(1UL, 40, invalid_joining_id)),
     ]),
   )
 
@@ -540,12 +534,11 @@ test "Joining FETCH rejects unknown subscriptions and Forward State zero" {
   assert_eq(
     publisher.receive(@session.StreamData(44, fetch_for(5UL, 3UL))),
     Ok([
-      @session.Send(
+      @session.SendFin(
         44,
         @protocol.encode_request_error(invalid_range).unwrap(),
-        true,
       ),
-      @session.Notify(@session.FetchRejected(5UL, 44, invalid_range)),
+      @session.EmitNotice(@session.FetchRejected(5UL, 44, invalid_range)),
     ]),
   )
 }
@@ -597,18 +590,16 @@ test "pending Joining FETCH is rejected when its subscription is refused" {
   assert_eq(
     publisher.reject_subscription(40, subscribe_error),
     Ok([
-      @session.Send(
+      @session.SendFin(
         40,
         @protocol.encode_request_error(subscribe_error).unwrap(),
-        true,
       ),
-      @session.Notify(@session.SubscriptionRejected(1UL, 40)),
-      @session.Send(
+      @session.EmitNotice(@session.SubscriptionRejected(1UL, 40)),
+      @session.SendFin(
         42,
         @protocol.encode_request_error(joining_error).unwrap(),
-        true,
       ),
-      @session.Notify(@session.FetchRejected(3UL, 42, joining_error)),
+      @session.EmitNotice(@session.FetchRejected(3UL, 42, joining_error)),
     ]),
   )
   ignore(
@@ -624,12 +615,11 @@ test "pending Joining FETCH is rejected when its subscription is refused" {
       @session.StreamData(44, @protocol.encode_fetch(after_end).unwrap()),
     ),
     Ok([
-      @session.Send(
+      @session.SendFin(
         44,
         @protocol.encode_request_error(joining_error).unwrap(),
-        true,
       ),
-      @session.Notify(@session.FetchRejected(5UL, 44, joining_error)),
+      @session.EmitNotice(@session.FetchRejected(5UL, 44, joining_error)),
     ]),
   )
 }
@@ -675,15 +665,14 @@ test "cancelling a pending subscription releases its Joining FETCH" {
   assert_eq(
     publisher.cancel_request(1UL),
     Ok([
-      @session.Send(
+      @session.SendFin(
         42,
         @protocol.encode_request_error(invalid_joining_id).unwrap(),
-        true,
       ),
-      @session.Notify(@session.FetchRejected(3UL, 42, invalid_joining_id)),
+      @session.EmitNotice(@session.FetchRejected(3UL, 42, invalid_joining_id)),
       @session.AbortSend(40, 1UL),
       @session.StopReceiving(40, 1UL),
-      @session.Notify(@session.SubscriptionEnded(1UL, 40, track)),
+      @session.EmitNotice(@session.SubscriptionEnded(1UL, 40, track)),
     ]),
   )
   assert_eq(publisher.receive(@session.Clock(30000UL)), Ok([]))
@@ -705,7 +694,7 @@ test "PUBLISH request ID is a valid Joining subscription" {
         ).unwrap(),
       ),
     ),
-    Ok([@session.Notify(@session.PublishAccepted(0UL, track, 7UL))]),
+    Ok([@session.EmitNotice(@session.PublishAccepted(0UL, track, 7UL))]),
   )
 
   let header : @protocol.SubgroupHeader = {
@@ -740,7 +729,7 @@ test "PUBLISH request ID is a valid Joining subscription" {
   assert_eq(
     publisher.receive(@session.StreamData(34, joining_fetch)),
     Ok([
-      @session.Notify(
+      @session.EmitNotice(
         @session.FetchRequested(
           1UL,
           34,
@@ -776,7 +765,7 @@ test "empty successful FETCH requires an empty data stream and request errors fa
     ),
     Ok([]),
   )
-  assert_eq(client.receive(@session.StreamFinished(30)), Ok([]))
+  assert_eq(client.receive(@session.InboundStreamFinished(30)), Ok([]))
   let response : @protocol.FetchOkMessage = {
     end_of_track: 1,
     end_location,
@@ -788,10 +777,12 @@ test "empty successful FETCH requires an empty data stream and request errors fa
       @session.StreamData(20, @protocol.encode_fetch_ok(response).unwrap()),
     ),
     Ok([
-      @session.Notify(@session.FetchAccepted(request_id, 20)),
-      @session.Notify(@session.FetchResponseAccepted(request_id, 20, response)),
-      @session.Notify(@session.FetchEndOfTrack(request_id)),
-      @session.Notify(@session.FetchFinished(request_id)),
+      @session.EmitNotice(@session.FetchAccepted(request_id, 20)),
+      @session.EmitNotice(
+        @session.FetchResponseAccepted(request_id, 20, response),
+      ),
+      @session.EmitNotice(@session.FetchEndOfTrack(request_id)),
+      @session.EmitNotice(@session.FetchFinished(request_id)),
     ]),
   )
 
@@ -809,7 +800,7 @@ test "empty successful FETCH requires an empty data stream and request errors fa
     client.receive(
       @session.StreamData(21, @protocol.encode_request_error(error).unwrap()),
     ),
-    Ok([@session.Notify(@session.FetchFailed(failed_id, error))]),
+    Ok([@session.EmitNotice(@session.FetchFailed(failed_id, error))]),
   )
   assert_eq(client.receive(@session.StreamData(21, b"late")), Ok([]))
 }
@@ -864,19 +855,20 @@ test "FETCH priority updates are acknowledged, and rejected updates reset data" 
       ),
     ),
     Ok([
-      @session.Notify(@session.FetchUpdateRequested(1UL, 3UL, 20, [priority])),
+      @session.EmitNotice(
+        @session.FetchUpdateRequested(1UL, 3UL, 20, [priority]),
+      ),
     ]),
   )
   assert_eq(
     server.accept_fetch_update(1UL, 3UL),
     Ok([
-      @session.Send(
+      @session.SendChunk(
         20,
         @protocol.encode_request_ok_for(
           { parameters: [], properties: b"", },
           @protocol.RequestUpdate,
         ).unwrap(),
-        false,
       ),
     ]),
   )
@@ -896,7 +888,9 @@ test "FETCH priority updates are acknowledged, and rejected updates reset data" 
       ),
     ),
     Ok([
-      @session.Notify(@session.FetchUpdateRequested(1UL, 5UL, 20, [priority])),
+      @session.EmitNotice(
+        @session.FetchUpdateRequested(1UL, 5UL, 20, [priority]),
+      ),
     ]),
   )
   let error : @protocol.RequestErrorMessage = {
@@ -908,9 +902,9 @@ test "FETCH priority updates are acknowledged, and rejected updates reset data" 
   assert_eq(
     server.reject_fetch_update(1UL, 5UL, error),
     Ok([
-      @session.Send(20, @protocol.encode_request_error(error).unwrap(), false),
+      @session.SendChunk(20, @protocol.encode_request_error(error).unwrap()),
       @session.AbortSend(30, error.code),
-      @session.Notify(@session.FetchFailed(1UL, error)),
+      @session.EmitNotice(@session.FetchFailed(1UL, error)),
     ]),
   )
 }
@@ -926,7 +920,7 @@ test "cancel before stream-open ignores a late FETCH data header and bytes" {
     .unwrap()
   assert_eq(
     client.cancel_fetch(request_id),
-    Ok([@session.Notify(@session.FetchCancelled(request_id, 1UL))]),
+    Ok([@session.EmitNotice(@session.FetchCancelled(request_id, 1UL))]),
   )
   assert_eq(
     client.receive(@session.StreamOpened(@session.Request(request_id), 20)),
@@ -945,7 +939,7 @@ test "cancel before stream-open ignores a late FETCH data header and bytes" {
     ),
     Ok([]),
   )
-  assert_eq(client.receive(@session.StreamFinished(30)), Ok([]))
+  assert_eq(client.receive(@session.InboundStreamFinished(30)), Ok([]))
   assert_eq(client.cancel_request(request_id), Ok([]))
 }
 
@@ -972,7 +966,7 @@ test "FETCH data reset and GOAWAY each terminate pending requests once" {
   )
   assert_eq(
     client.receive(@session.StreamReset(30, 7UL)),
-    Ok([@session.Notify(@session.FetchReset(reset_id, 30, 7UL))]),
+    Ok([@session.EmitNotice(@session.FetchReset(reset_id, 30, 7UL))]),
   )
   assert_eq(client.receive(@session.StreamReset(30, 7UL)), Ok([]))
 
@@ -985,7 +979,7 @@ test "FETCH data reset and GOAWAY each terminate pending requests once" {
       @session.StreamData(11, client_goaway_control(0UL, 0UL, b"")),
     ),
     Ok([
-      @session.Notify(
+      @session.EmitNotice(
         @session.ControlMessageReceived(
           @protocol.GoAwayControl({
             uri: b"",
@@ -994,10 +988,10 @@ test "FETCH data reset and GOAWAY each terminate pending requests once" {
           }),
         ),
       ),
-      @session.Notify(@session.ControlGoAwayReceived(b"", 0UL, 0UL)),
+      @session.EmitNotice(@session.ControlGoAwayReceived(b"", 0UL, 0UL)),
       @session.AbortSend(21, 4UL),
       @session.StopReceiving(21, 4UL),
-      @session.Notify(
+      @session.EmitNotice(
         @session.FetchFailed(goaway_id, {
           code: 6UL,
           retry_interval: 0UL,
@@ -1058,7 +1052,9 @@ test "concurrent FETCH requests route independent data streams and local updates
         .unwrap(),
       ),
     ),
-    Ok([@session.Notify(@session.FetchObjectReceived(first_id, first_object))]),
+    Ok([
+      @session.EmitNotice(@session.FetchObjectReceived(first_id, first_object)),
+    ]),
   )
   assert_eq(
     client.receive(
@@ -1070,7 +1066,11 @@ test "concurrent FETCH requests route independent data streams and local updates
         .unwrap(),
       ),
     ),
-    Ok([@session.Notify(@session.FetchObjectReceived(second_id, second_object))]),
+    Ok([
+      @session.EmitNotice(
+        @session.FetchObjectReceived(second_id, second_object),
+      ),
+    ]),
   )
   let response : @protocol.FetchOkMessage = {
     end_of_track: 0,
@@ -1103,13 +1103,12 @@ test "concurrent FETCH requests route independent data streams and local updates
       (
         4UL,
         [
-          @session.Send(
+          @session.SendChunk(
             20,
             @protocol.encode_request_update_for(
               { request_id: 4UL, parameters: [authorization, priority], },
               @protocol.FetchRequestStream,
             ).unwrap(),
-            false,
           ),
         ],
       ),
@@ -1126,7 +1125,11 @@ test "concurrent FETCH requests route independent data streams and local updates
         @protocol.encode_request_ok_for(update_ok, @protocol.FetchUpdate).unwrap(),
       ),
     ),
-    Ok([@session.Notify(@session.FetchUpdateAccepted(first_id, 4UL, update_ok))]),
+    Ok([
+      @session.EmitNotice(
+        @session.FetchUpdateAccepted(first_id, 4UL, update_ok),
+      ),
+    ]),
   )
 }
 
@@ -1158,8 +1161,8 @@ test "peer FETCH can be rejected before opening its data stream" {
   assert_eq(
     server.reject_fetch(1UL, error),
     Ok([
-      @session.Send(20, @protocol.encode_request_error(error).unwrap(), true),
-      @session.Notify(@session.FetchRejected(1UL, 20, error)),
+      @session.SendFin(20, @protocol.encode_request_error(error).unwrap()),
+      @session.EmitNotice(@session.FetchRejected(1UL, 20, error)),
     ]),
   )
 }

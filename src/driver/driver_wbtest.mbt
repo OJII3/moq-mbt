@@ -169,8 +169,8 @@ test "driver retries a refused send in order until it is accepted" {
     driver_config(8, 8, 8),
   )
   driver.dispatch([
-    @session.Send(4L, b"first", false),
-    @session.Send(5L, b"other", false),
+    @session.SendChunk(4L, b"first"),
+    @session.SendChunk(5L, b"other"),
   ])
   assert_eq(transport.sends.length(), 2)
   assert_eq(driver.pending_action_count(), 2)
@@ -192,13 +192,13 @@ test "driver keeps per-stream order after a temporary refusal" {
   )
   transport.retry_streams.push(4L)
   driver.dispatch([
-    @session.Send(4L, b"first", false),
-    @session.Send(4L, b"second", false),
+    @session.SendChunk(4L, b"first"),
+    @session.SendChunk(4L, b"second"),
   ])
   // The second action on the refused stream is not attempted out of order.
   assert_eq(transport.sends.length(), 1)
   assert_eq(driver.pending_action_count(), 2)
-  driver.dispatch([@session.Send(5L, b"other", false)])
+  driver.dispatch([@session.SendChunk(5L, b"other")])
   // Stream 4 is still blocked, but stream 5 is accepted independently.
   assert_eq(transport.sends.length(), 3)
   assert_eq(transport.sends[2].0, 5L)
@@ -215,9 +215,9 @@ test "driver drops queued sends for an aborted stream" {
     driver_config(8, 8, 8),
   )
   driver.dispatch([
-    @session.Send(4L, b"queued", false),
+    @session.SendChunk(4L, b"queued"),
     @session.AbortSend(4L, 7UL),
-    @session.Send(5L, b"kept", false),
+    @session.SendChunk(5L, b"kept"),
   ])
   assert_eq(transport.aborts, [(4L, 7UL)])
   assert_eq(driver.pending_action_count(), 1)
@@ -236,8 +236,8 @@ test "driver holds actions above the configured send limit" {
     driver_config(8, 1, 8),
   )
   driver.dispatch([
-    @session.Send(4L, b"first", false),
-    @session.Send(5L, b"second", false),
+    @session.SendChunk(4L, b"first"),
+    @session.SendChunk(5L, b"second"),
   ])
   assert_eq(transport.sends.length(), 1)
   assert_eq(driver.pending_action_count(), 1)
@@ -269,7 +269,7 @@ test "driver turns a fatal transport result into a session end" {
     driver_session(),
     driver_config(8, 8, 8),
   )
-  driver.dispatch([@session.Send(4L, b"payload", false)])
+  driver.dispatch([@session.SendChunk(4L, b"payload")])
   assert_true(driver.failed())
   assert_eq(driver.take_notices(), [
     @session.SessionEnded(@session.Transport(-9L)),
@@ -286,8 +286,8 @@ test "driver retries datagrams independently of sends" {
     driver_config(8, 8, 8),
   )
   driver.dispatch([
-    @session.SendDatagram(b"datagram"),
-    @session.Send(4L, b"payload", false),
+    @session.SendDatagram(0UL, b"datagram"),
+    @session.SendChunk(4L, b"payload"),
   ])
   assert_eq(transport.datagrams.length(), 1)
   assert_eq(transport.sends.length(), 1)
@@ -302,12 +302,30 @@ test "driver caps datagrams independently" {
     driver_session(),
     driver_config(8, 8, 1),
   )
-  driver.dispatch([@session.SendDatagram(b"one"), @session.SendDatagram(b"two")])
+  driver.dispatch([
+    @session.SendDatagram(0UL, b"one"),
+    @session.SendDatagram(1UL, b"two"),
+  ])
   assert_eq(transport.datagrams.length(), 1)
   assert_eq(driver.pending_action_count(), 1)
   transport.datagram_callbacks[0](Written)
   assert_eq(transport.datagrams.length(), 2)
   assert_eq(driver.pending_action_count(), 0)
+}
+
+///|
+test "driver reports datagram write failure without failing the session" {
+  let transport = FakeTransport::new()
+  let driver = SessionDriver::new(
+    transport,
+    driver_session(),
+    driver_config(8, 8, 8),
+  )
+  driver.dispatch([@session.SendDatagram(7UL, b"payload")])
+  assert_eq(transport.datagrams.length(), 1)
+  transport.datagram_callbacks[0](WriteFailed(-4L))
+  assert_false(driver.failed())
+  assert_eq(driver.take_notices(), [@session.DatagramLocalWriteFailed(7UL, -4L)])
 }
 
 ///|
@@ -319,7 +337,7 @@ test "driver releases the in-flight slot of a synchronous send" {
     driver_session(),
     driver_config(8, 8, 8),
   )
-  driver.dispatch([@session.Send(4L, b"payload", false)])
+  driver.dispatch([@session.SendChunk(4L, b"payload")])
   assert_eq(driver.pending_action_count(), 0)
   assert_false(driver.has_pending_sends(4L))
 }
