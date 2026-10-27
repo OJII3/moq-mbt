@@ -28,6 +28,8 @@
 
 driver は `Accepted` の完了を `StreamOpened`、`SendCompleted`、`StreamReset`、`TransportFailed` などのセッションイベントに変換して session へ戻す。`SendCompleted` は `Sent` または `Reset` を取り、bool の意味を呼び出し側に推測させない。開設や送信の致命的失敗は `TransportFailed` として渡し、アクションを黙って破棄しない。アクションの受理はトランスポートへの投入を意味し、ピアでのアプリケーション処理完了は別途通知で追跡する。
 
+`SessionDriver` は単一スレッド専用で、公開メソッドと完了 callback は同じスレッド上で直列に呼び出す。別スレッドで完了する transport は callback を driver 所有スレッドへ戻してから呼び出す。driver 内で callback と pump の共有状態をロックして直列化する仕組みは持たない。
+
 `AbortSend` を受けた driver は、そのストリームに残っている未送信アクションを破棄する。session は `AbortSend` を返した時点でそのストリームの保留送信数を閉じるため、GOAWAY の drain は abort した Object stream を待たない。abort 後に遅れて届いた `SendCompleted` は無視してよい。この契約により、アプリケーションが `SendCompleted` を注入して drain を補う必要はない。
 
 受信側のバッファ上限、データのコピーまたは保持期間も API ごとに明示する。

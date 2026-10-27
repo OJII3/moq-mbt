@@ -261,6 +261,49 @@ test "driver reports an opened stream and forwards its purpose" {
 }
 
 ///|
+test "driver terminates on an asynchronous stream open failure" {
+  let transport = FakeTransport::new()
+  let session = driver_session()
+  let driver = SessionDriver::new(transport, session, driver_config(8, 8, 8))
+  driver.dispatch(session.start().unwrap())
+  transport.complete_open(OpenFailed(-10L))
+  assert_true(driver.failed())
+  assert_eq(driver.take_notices(), [
+    @session.SessionEnded(@session.Transport(-10L)),
+  ])
+}
+
+///|
+test "driver terminates on an asynchronous stream write failure" {
+  let transport = FakeTransport::new()
+  let driver = SessionDriver::new(
+    transport,
+    driver_session(),
+    driver_config(8, 8, 8),
+  )
+  driver.dispatch([@session.SendChunk(4L, b"payload")])
+  transport.complete_send(4L, WriteFailed(-11L))
+  assert_true(driver.failed())
+  assert_eq(driver.take_notices(), [
+    @session.SessionEnded(@session.Transport(-11L)),
+  ])
+}
+
+///|
+test "driver treats a transport failure event as terminal" {
+  let driver = SessionDriver::new(
+    FakeTransport::new(),
+    driver_session(),
+    driver_config(8, 8, 8),
+  )
+  driver.receive(@session.TransportFailed(-12L))
+  assert_true(driver.failed())
+  assert_eq(driver.take_notices(), [
+    @session.SessionEnded(@session.Transport(-12L)),
+  ])
+}
+
+///|
 test "driver turns a fatal transport result into a session end" {
   let transport = FakeTransport::new()
   transport.send_acceptance = Fatal(-9L)
