@@ -134,7 +134,7 @@ async fn run_subscriber(
         subscribed = true
         ffi_set_status("subscribed")
       }
-      Some(@session.ObjectReceived(id, header, frames)) if id == request_id =>
+      Some(@session.ObjectReceived(id, _, header, frames)) if id == request_id =>
         for frame in frames {
           let expected = @utf8.encode(
             "group-\{header.group_id}-object-\{frame.object_id}",
@@ -322,7 +322,7 @@ async fn run_publisher(
           }
         }
       }
-      Some(@session.PublishAccepted(id)) if id == publish_id => {
+      Some(@session.PublishAccepted(id, _, _)) if id == publish_id => {
         ffi_set_status("published")
         ffi_wait_to_start().wait()
         let stream = publish_stream.unwrap()

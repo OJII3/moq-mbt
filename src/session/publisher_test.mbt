@@ -36,7 +36,15 @@ fn publisher_announced() -> @session.ClientSession raise {
   )
   assert_eq(
     publisher.receive(@session.StreamData(20, b"\x07\x00\x01\x00")),
-    Ok([@session.Notify(@session.PublishAccepted(0))]),
+    Ok([
+      @session.Notify(
+        @session.PublishAccepted(
+          0,
+          { namespace_fields: [b"demo"], name: b"video", },
+          1UL,
+        ),
+      ),
+    ]),
   )
   publisher
 }
@@ -293,7 +301,16 @@ test "publisher keeps EndOfGroup status separate from header End of Group" {
   )
   assert_eq(
     subscriber.receive(@session.StreamData(80, wire)),
-    Ok([@session.Notify(@session.ObjectReceived(0, header, [frame]))]),
+    Ok([
+      @session.Notify(
+        @session.ObjectReceived(
+          0,
+          { namespace_fields: [b"demo"], name: b"video", },
+          header,
+          [frame],
+        ),
+      ),
+    ]),
   )
   publisher_finish(publisher, 80, 1)
   assert_eq(subscriber.receive(@session.StreamFinished(80)), Ok([]))

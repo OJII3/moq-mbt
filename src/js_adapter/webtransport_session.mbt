@@ -1,14 +1,120 @@
 ///|
+/// Browser WebTransport backend for the portable session driver.
+priv struct WebTransportTransport {
+  connection : WebTransportConnection
+}
+
+///|
+impl @driver.SessionTransport for WebTransportTransport with fn open_stream(
+  self,
+  direction,
+  _purpose,
+  on_done,
+) {
+  let opening = match direction {
+    @session.Unidirectional => self.connection.open_unidirectional()
+    @session.Bidirectional => self.connection.open_bidirectional()
+  }
+  ignore(
+    opening.then(fn(result) {
+      match result {
+        Ok(stream) => on_done(@driver.Opened(stream))
+        Err(_) => on_done(@driver.OpenFailed(-1L))
+      }
+      @js.Promise::resolve(())
+    }),
+  )
+  @driver.Accepted
+}
+
+///|
+impl @driver.SessionTransport for WebTransportTransport with fn send(
+  self,
+  stream,
+  bytes,
+  fin,
+  on_done,
+) {
+  let writing = self.connection.write_stream(stream, bytes, fin~)
+  ignore(
+    writing.then(fn(result) {
+      match result {
+        Ok(_) => on_done(@driver.Written)
+        Err(failure) =>
+          match failure.stream_error_code {
+            Some(code) =>
+              on_done(@driver.WriteReset(code.reinterpret_as_uint64()))
+            None => on_done(@driver.WriteFailed(-1L))
+          }
+      }
+      @js.Promise::resolve(())
+    }),
+  )
+  @driver.Accepted
+}
+
+///|
+impl @driver.SessionTransport for WebTransportTransport with fn send_datagram(
+  self,
+  bytes,
+  on_done,
+) {
+  let sending = self.connection.send_datagram(bytes)
+  ignore(
+    sending.then(fn(result) {
+      match result {
+        Ok(_) => on_done(@driver.Written)
+        Err(_) => on_done(@driver.WriteFailed(-4L))
+      }
+      @js.Promise::resolve(())
+    }),
+  )
+  @driver.Accepted
+}
+
+///|
+impl @driver.SessionTransport for WebTransportTransport with fn abort_send(
+  self,
+  stream,
+  code,
+) -> Unit {
+  ignore(
+    self.connection
+    .abort_stream_write(stream, code.reinterpret_as_int64())
+    .then(fn(_) { @js.Promise::resolve(()) }),
+  )
+}
+
+///|
+impl @driver.SessionTransport for WebTransportTransport with fn stop_receiving(
+  self,
+  stream,
+  code,
+) -> Unit {
+  ignore(
+    self.connection
+    .cancel_stream_read(stream, code.reinterpret_as_int64())
+    .then(fn(_) { @js.Promise::resolve(()) }),
+  )
+}
+
+///|
+impl @driver.SessionTransport for WebTransportTransport with fn close_connection(
+  self,
+  code,
+  reason,
+) -> Unit {
+  let reason = @utf8.decode(reason) catch { _ => "" }
+  ignore(self.connection.close(code.reinterpret_as_int64(), reason))
+}
+
+///|
 /// Drives a Sans-I/O client session over a WebTransport connection. Session
 /// mutations happen synchronously on the JS event loop; I/O promises feed
 /// their results back as events and never block the receive pumps.
 pub struct WebTransportSessionDriver {
   connection : WebTransportConnection
-  session : @session.ClientSession
-  mut pending_actions : Array[@session.ClientSessionAction]
-  mut pending_opens : Int32
-  mut pending_sends : Int32
-  mut pending_datagrams : Int32
+  priv driver : @driver.SessionDriver[WebTransportTransport]
   notices : Array[@session.ClientSessionNotice]
   notice_waiters : Array[(@session.ClientSessionNotice?) -> Unit]
   opened_streams : Array[(@session.ClientStreamPurpose, Int64)]
@@ -21,17 +127,25 @@ pub struct WebTransportSessionDriver {
 }
 
 ///|
+/// Queue limits for browser backpressure. They are passed to the portable
+/// driver rather than hardcoded in its pump.
+fn WebTransportSessionDriver::config() -> @driver.SessionDriverConfig {
+  { max_pending_opens: 8, max_pending_sends: 128, max_pending_datagrams: 32, }
+}
+
+///|
 pub fn WebTransportSessionDriver::new(
   connection : WebTransportConnection,
   session : @session.ClientSession,
 ) -> WebTransportSessionDriver {
-  {
-    connection,
+  let driver = @driver.SessionDriver::new(
+    WebTransportTransport::{ connection, },
     session,
-    pending_actions: [],
-    pending_opens: 0,
-    pending_sends: 0,
-    pending_datagrams: 0,
+    WebTransportSessionDriver::config(),
+  )
+  let result : WebTransportSessionDriver = {
+    connection,
+    driver,
     notices: [],
     notice_waiters: [],
     opened_streams: [],
@@ -40,6 +154,8 @@ pub fn WebTransportSessionDriver::new(
     clock_timer: None,
     datagram_read_ended: false,
   }
+  result.driver.set_update_handler(fn() { result.flush() })
+  result
 }
 
 ///|
@@ -72,15 +188,18 @@ pub fn WebTransportSessionDriver::start(
   }
   self.active = true
   let capability = self.connection.datagram_capability()
-  match
-    self.session.receive(
-      @session.DatagramSendCapabilityChanged(
-        capability.enabled,
-        capability.max_length,
-      ),
-    ) {
-    Err(error) => return Err(error)
-    Ok(actions) => self.process_actions(actions)
+  self.driver.receive(
+    @session.DatagramSendCapabilityChanged(
+      capability.enabled,
+      capability.max_length,
+    ),
+  )
+  match self.driver.failure() {
+    Some(error) => {
+      self.finish()
+      return Err(error)
+    }
+    None => ()
   }
   self.read_stream_events()
   self.read_datagrams()
@@ -94,10 +213,11 @@ pub fn WebTransportSessionDriver::start(
         match result {
           Ok(_) => {
             self.refresh_datagram_capability()
-            match self.session.start() {
-              Ok(actions) => self.process_actions(actions)
+            match self.driver.session().start() {
+              Ok(actions) => self.driver.dispatch(actions)
               Err(_) => self.finish()
             }
+            self.flush()
           }
           Err(_) => self.receive_event(@session.TransportFailed(-1L))
         }
@@ -114,7 +234,8 @@ pub fn WebTransportSessionDriver::dispatch(
   self : WebTransportSessionDriver,
   actions : Array[@session.ClientSessionAction],
 ) -> Unit {
-  self.process_actions(actions)
+  self.driver.dispatch(actions)
+  self.flush()
 }
 
 ///|
@@ -122,7 +243,7 @@ pub fn WebTransportSessionDriver::dispatch(
 pub fn WebTransportSessionDriver::session(
   self : WebTransportSessionDriver,
 ) -> @session.ClientSession {
-  self.session
+  self.driver.session()
 }
 
 ///|
@@ -131,6 +252,7 @@ pub fn WebTransportSessionDriver::session(
 pub fn WebTransportSessionDriver::next_notice(
   self : WebTransportSessionDriver,
 ) -> @js.Promise[@session.ClientSessionNotice?] {
+  self.flush()
   if self.notices.length() > 0 {
     let notice = self.notices[0]
     ignore(self.notices.remove(0))
@@ -148,6 +270,7 @@ pub fn WebTransportSessionDriver::next_notice(
 pub fn WebTransportSessionDriver::next_opened_stream(
   self : WebTransportSessionDriver,
 ) -> @js.Promise[(@session.ClientStreamPurpose, Int64)?] {
+  self.flush()
   if self.opened_streams.length() > 0 {
     let stream = self.opened_streams[0]
     ignore(self.opened_streams.remove(0))
@@ -159,6 +282,20 @@ pub fn WebTransportSessionDriver::next_opened_stream(
   @js.Promise::new(fn(resolve, _reject) {
     self.opened_stream_waiters.push(resolve)
   })
+}
+
+///|
+/// Move driver notices and opened streams into the adapter's waiter queues.
+fn WebTransportSessionDriver::flush(self : WebTransportSessionDriver) -> Unit {
+  for notice in self.driver.take_notices() {
+    self.enqueue_notice(notice)
+  }
+  for (purpose, stream) in self.driver.take_opened_streams() {
+    self.notify_opened_stream(purpose, stream)
+  }
+  if self.driver.failed() {
+    self.finish()
+  }
 }
 
 ///|
@@ -184,152 +321,11 @@ fn WebTransportSessionDriver::receive_event(
   if !self.active {
     return
   }
-  match self.session.receive(event) {
-    Err(_) => self.finish()
-    Ok(actions) => {
-      self.process_actions(actions)
-      match event {
-        @session.PeerClosed(_) | @session.TransportFailed(_) => self.finish()
-        _ => ()
-      }
-    }
-  }
-}
-
-///|
-fn WebTransportSessionDriver::process_actions(
-  self : WebTransportSessionDriver,
-  actions : Array[@session.ClientSessionAction],
-) -> Unit {
-  if !self.active {
-    return
-  }
-  if actions.length() > 512 - self.pending_actions.length() {
-    self.receive_event(@session.TransportFailed(-7L))
-    return
-  }
-  self.pending_actions = self.pending_actions + actions
-  self.pump_actions()
-}
-
-///|
-fn WebTransportSessionDriver::pump_actions(
-  self : WebTransportSessionDriver,
-) -> Unit {
-  if !self.active {
-    return
-  }
-  let mut blocked = false
-  while self.pending_actions.length() > 0 && !blocked && self.active {
-    match self.pending_actions[0] {
-      @session.OpenStream(direction, purpose) =>
-        if self.pending_opens >= 8 {
-          blocked = true
-        } else {
-          ignore(self.pending_actions.remove(0))
-          self.pending_opens += 1
-          let opening = match direction {
-            @session.Unidirectional => self.connection.open_unidirectional()
-            @session.Bidirectional => self.connection.open_bidirectional()
-          }
-          ignore(
-            opening.then(fn(result) {
-              self.pending_opens -= 1
-              match result {
-                Ok(stream) => {
-                  self.notify_opened_stream(purpose, stream)
-                  self.receive_event(@session.StreamOpened(purpose, stream))
-                }
-                Err(_) => self.receive_event(@session.TransportFailed(-1L))
-              }
-              self.pump_actions()
-              @js.Promise::resolve(())
-            }),
-          )
-        }
-      @session.Send(stream, bytes, fin) =>
-        if self.pending_sends >= 128 {
-          blocked = true
-        } else {
-          ignore(self.pending_actions.remove(0))
-          self.pending_sends += 1
-          let writing = self.connection.write_stream(stream, bytes, fin~)
-          ignore(
-            writing.then(fn(result) {
-              self.pending_sends -= 1
-              match result {
-                Ok(_) =>
-                  self.receive_event(@session.SendComplete(stream, false))
-                Err(failure) =>
-                  match failure.stream_error_code {
-                    Some(code) =>
-                      self.receive_event(
-                        @session.StreamReset(
-                          stream,
-                          code.reinterpret_as_uint64(),
-                        ),
-                      )
-                    None => self.receive_event(@session.TransportFailed(-1L))
-                  }
-              }
-              self.pump_actions()
-              @js.Promise::resolve(())
-            }),
-          )
-        }
-      @session.SendDatagram(bytes) =>
-        if self.pending_datagrams >= 32 {
-          blocked = true
-        } else {
-          ignore(self.pending_actions.remove(0))
-          self.pending_datagrams += 1
-          let sending = self.connection.send_datagram(bytes)
-          ignore(
-            sending.then(fn(result) {
-              self.pending_datagrams -= 1
-              match result {
-                Ok(_) => self.receive_event(@session.DatagramSendComplete)
-                Err(_) => self.receive_event(@session.TransportFailed(-4L))
-              }
-              self.pump_actions()
-              @js.Promise::resolve(())
-            }),
-          )
-        }
-      action => {
-        ignore(self.pending_actions.remove(0))
-        self.execute_immediate(action)
-      }
-    }
-  }
-}
-
-///|
-fn WebTransportSessionDriver::execute_immediate(
-  self : WebTransportSessionDriver,
-  action : @session.ClientSessionAction,
-) -> Unit {
-  match action {
-    @session.AbortSend(stream, code) =>
-      ignore(
-        self.connection
-        .abort_stream_write(stream, code.reinterpret_as_int64())
-        .then(fn(_) { @js.Promise::resolve(()) }),
-      )
-    @session.StopReceiving(stream, code) =>
-      ignore(
-        self.connection
-        .cancel_stream_read(stream, code.reinterpret_as_int64())
-        .then(fn(_) { @js.Promise::resolve(()) }),
-      )
-    @session.CloseConnection(code, reason) => {
-      let reason = @utf8.decode(reason) catch { _ => "" }
-      ignore(self.connection.close(code.reinterpret_as_int64(), reason))
-    }
-    @session.Notify(notice) => self.enqueue_notice(notice)
-    @session.OpenStream(_, _)
-    | @session.Send(_, _, _)
-    | @session.SendDatagram(_) => ()
+  self.driver.receive(event)
+  self.flush()
+  match event {
+    @session.PeerClosed(_) | @session.TransportFailed(_) => self.finish()
+    _ => ()
   }
 }
 
@@ -508,7 +504,6 @@ fn WebTransportSessionDriver::finish(self : WebTransportSessionDriver) -> Unit {
     return
   }
   self.active = false
-  self.pending_actions.clear()
   match self.clock_timer {
     Some(timer) => ffi_webtransport_clear_timeout(timer)
     None => ()

@@ -67,7 +67,14 @@ fn collect_frames(
   let frames : Array[@protocol.SubgroupFrame] = []
   for action in actions {
     match action {
-      @session.Notify(@session.ObjectReceived(_, _, received)) =>
+      @session.Notify(
+        @session.ObjectReceived(
+          _,
+          { namespace_fields: [b"demo"], name: b"video", },
+          _,
+          received
+        )
+      ) =>
         for frame in received {
           frames.push(frame)
         }
@@ -86,7 +93,16 @@ test "subscriber decodes multiple objects from one stream chunk" {
   subscriber_start_stream(subscriber, 9)
   assert_eq(
     subscriber.receive(@session.StreamData(9, wire)),
-    Ok([@session.Notify(@session.ObjectReceived(0, header, frames))]),
+    Ok([
+      @session.Notify(
+        @session.ObjectReceived(
+          0,
+          { namespace_fields: [b"demo"], name: b"video", },
+          header,
+          frames,
+        ),
+      ),
+    ]),
   )
 }
 
@@ -132,7 +148,12 @@ test "subscriber isolates interleaved subgroup streams" {
     subscriber.receive(@session.StreamData(21, wire_a[:split_a].to_owned())),
     Ok([
       @session.Notify(
-        @session.ObjectReceived(0, header_a, [subscriber_frame(1, b"a1")]),
+        @session.ObjectReceived(
+          0,
+          { namespace_fields: [b"demo"], name: b"video", },
+          header_a,
+          [subscriber_frame(1, b"a1")],
+        ),
       ),
     ]),
   )
@@ -144,7 +165,12 @@ test "subscriber isolates interleaved subgroup streams" {
     subscriber.receive(@session.StreamData(21, wire_a[split_a:].to_owned())),
     Ok([
       @session.Notify(
-        @session.ObjectReceived(0, header_a, [subscriber_frame(3, b"a2")]),
+        @session.ObjectReceived(
+          0,
+          { namespace_fields: [b"demo"], name: b"video", },
+          header_a,
+          [subscriber_frame(3, b"a2")],
+        ),
       ),
     ]),
   )
@@ -152,7 +178,12 @@ test "subscriber isolates interleaved subgroup streams" {
     subscriber.receive(@session.StreamData(23, wire_b[split_b:].to_owned())),
     Ok([
       @session.Notify(
-        @session.ObjectReceived(0, header_b, [subscriber_frame(7, b"b1")]),
+        @session.ObjectReceived(
+          0,
+          { namespace_fields: [b"demo"], name: b"video", },
+          header_b,
+          [subscriber_frame(7, b"b1")],
+        ),
       ),
     ]),
   )
@@ -202,7 +233,12 @@ test "subscriber distinguishes FIN, reset, and incomplete frames" {
     subscriber.receive(@session.StreamData(41, header_bytes + b"\x00\x01x")),
     Ok([
       @session.Notify(
-        @session.ObjectReceived(0, header, [subscriber_frame(0, b"x")]),
+        @session.ObjectReceived(
+          0,
+          { namespace_fields: [b"demo"], name: b"video", },
+          header,
+          [subscriber_frame(0, b"x")],
+        ),
       ),
     ]),
   )
@@ -251,7 +287,16 @@ test "EndOfGroup object status does not imply header End of Group" {
   let wire = @protocol.encode_subgroup_stream(header, [frame]).unwrap()
   assert_eq(
     subscriber.receive(@session.StreamData(44, wire)),
-    Ok([@session.Notify(@session.ObjectReceived(0, header, [frame]))]),
+    Ok([
+      @session.Notify(
+        @session.ObjectReceived(
+          0,
+          { namespace_fields: [b"demo"], name: b"video", },
+          header,
+          [frame],
+        ),
+      ),
+    ]),
   )
   assert_eq(subscriber.receive(@session.StreamFinished(44)), Ok([]))
 }
@@ -286,7 +331,16 @@ test "subscriber accepts concatenated SUBSCRIBE_OK and PUBLISH_DONE while object
         @protocol.encode_subgroup_stream(header, frames).unwrap(),
       ),
     ),
-    Ok([@session.Notify(@session.ObjectReceived(0, header, frames))]),
+    Ok([
+      @session.Notify(
+        @session.ObjectReceived(
+          0,
+          { namespace_fields: [b"demo"], name: b"video", },
+          header,
+          frames,
+        ),
+      ),
+    ]),
   )
   assert_eq(
     subscriber.receive(@session.StreamFinished(44)),

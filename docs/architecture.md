@@ -10,9 +10,10 @@
 | --- | --- |
 | `protocol` | Draft 18 のメッセージ、wire format、エンコードとデコード |
 | `session` | MoQ セッションの状態、制御メッセージ、受信イベントと送信アクション |
+| `driver` | 送信アクションをトランスポートへ流す portable な pump と queue 管理 |
 | `transport` | セッションと QUIC / WebTransport の接続、ストリームと接続のライフサイクル処理 |
 
-依存の向きは `session` から `protocol`、各トランスポートアダプターから `session` とする。セッションは MsQuic や WebTransport の API に依存しない。
+依存の向きは `session` から `protocol`、`driver` から `session`、各トランスポートアダプターから `session` と `driver` とする。セッションは MsQuic や WebTransport の API に依存しない。
 
 ## セッションとトランスポートの境界
 
@@ -20,7 +21,11 @@
 
 アダプターはセッションの送信アクションを QUIC / WebTransport の操作に変換し、トランスポートの受信イベントをセッションへ渡す。ストリーム参照はセッション内では不透明な値として扱い、実際のストリーム ID との対応はアダプターが管理する。
 
-送信アクションを受け取ったアダプターは、受理または致命的失敗の通知までそのアクションを保持する。ストリームごとのアクション順を維持し、一時的なバックプレッシャーでは同じアクションを再試行する。ストリーム開設や送信の致命的失敗は `TransportFailed` としてセッションへ渡し、アクションを黙って破棄しない。セッションがアクションを返した時点で内部状態を進めるため、この責務はアダプター側にある。アクションの受理はトランスポートへの投入を意味し、ピアでのアプリケーション処理完了は別途通知で追跡する。
+送信アクションの実行は `driver` の `SessionDriver` に集約する。アダプターは `SessionTransport` の primitive 操作だけを実装し、`ClientSessionAction` の variant ごとの分岐や queue を持たない。`SessionDriver` はアクションを受理されるまで保持し、`Retry` では同じアクションを再試行する。ストリームごとのアクション順を維持し、あるストリームの拒否が無関係なストリームの送信を止めない。queue 上限（open / send / datagram）は `SessionDriverConfig` としてアダプターから注入し、driver や adapter に固定値を埋め込まない。
+
+driver は `Accepted` の完了を `StreamOpened`、`SendComplete`、`StreamReset`、`TransportFailed` などのセッションイベントに変換して session へ戻す。開設や送信の致命的失敗は `TransportFailed` として渡し、アクションを黙って破棄しない。アクションの受理はトランスポートへの投入を意味し、ピアでのアプリケーション処理完了は別途通知で追跡する。
+
+`AbortSend` を受けた driver は、そのストリームに残っている未送信アクションを破棄する。session は `AbortSend` を返した時点でそのストリームの保留送信数を閉じるため、GOAWAY の drain は abort した Object stream を待たない。abort 後に遅れて届いた `SendComplete` は無視してよい。この契約により、アプリケーションが `SendComplete` を注入して drain を補う必要はない。
 
 受信側のバッファ上限、データのコピーまたは保持期間も API ごとに明示する。
 
@@ -31,6 +36,10 @@
 要求の受理段階（pending / accepted / terminal）は `ClientRequest` が所有し、`RequestLifetime` の送受信方向の終了とは別の状態として扱う。terminal でも `PUBLISH_DONE` 後の Object drain が残るため、stream 数・稼働数・保留中の完了通知と drain 完了条件は `ObjectDrain` に集約する。Datagram の配送可否も同じ `ClientRequest` の状態判断を参照する。
 
 Subgroup の reader / writer と送信完了待ちの状態は private なストリーム状態として管理し、処理を責務ごとのファイルへ分割する。Publisher / Subscriber の利便 API が必要になった場合は、`ClientSession` の操作と通知を使う上位のラッパーとして構築する。
+
+track 名の逆引きは session が所有する。`track_for_request`、`subscription_track`、`track_alias_for_request` を公開し、`PublishAccepted`、`SubscriptionEnded`、`ObjectReceived`、`ObjectDatagramReceived` の notice には track を載せ、`PublishAccepted` は alias も返す。アプリケーションは track 名だけを目的とした対応表を持たない。
+
+Object の送信も session 側の状態を使う。`send_object_datagram_for_track` は publisher 側の track から forwarding 中の subscription を列挙し、subscription ごとの Track Alias に詰め替えて datagram を返す。`ObjectGroupWriter` は `open_object_group` が返す token ベースの thin な handle で、Object ID の採番、stream 開設待ちのキュー、`rotate`、FIN 待ち、abort を session の状態だけで説明する。128 objects ごとの rotation のような方針はアプリケーション側に残す。
 
 ## Request stream lifetime
 
@@ -60,8 +69,9 @@ Draft 18 では `MAX_REQUEST_ID` / `REQUESTS_BLOCKED` と独立したキャン�
 src/
 ├── protocol/
 ├── session/
+├── driver/
 ├── js_adapter/
 └── transport/
 ```
 
-MsQuic アダプターと JavaScript WebTransport アダプターを用意している。アダプターはそれぞれ `transport` と `js_adapter` にあり、`session` の送受信アクションとトランスポートのイベントを変換する。Browser E2E probe は moqtail を介した Native/Browser 双方向 publish/subscribe を検証する。relay interop の追加シナリオは [interop notes](interop.md) に記録する。
+MsQuic アダプターと JavaScript WebTransport アダプターを用意している。アダプターはそれぞれ `transport` と `js_adapter` にあり、`session` の送受信アクションとトランスポートのイベントを変換する。送信アクションの queue と再試行は `driver` が担う。Browser E2E probe は moqtail を介した Native/Browser 双方向 publish/subscribe を検証する。relay interop の追加シナリオは [interop notes](interop.md) に記録する。

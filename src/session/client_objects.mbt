@@ -3,6 +3,8 @@ priv struct PendingObjectStream {
   subscription_stream : Int64
   header : @protocol.SubgroupHeader
   mut cancelled_error_code : UInt64?
+  mut finish_requested : Bool
+  frames : Array[@protocol.SubgroupFrame]
 }
 
 ///|
@@ -29,6 +31,7 @@ priv struct ResolvedSubscriptionFilter {
 priv struct OutgoingObjectStream {
   subscription_stream : Int64
   header : @protocol.SubgroupHeader
+  token : UInt64
   mut previous_object_id : UInt64?
   mut finishing : Bool
   mut abort_sent : Bool
@@ -221,6 +224,7 @@ fn ClientSession::close_outgoing_object_stream(
         None => ()
       }
       self.outgoing_object_streams.remove(stream)
+      self.group_streams.remove(outgoing.token)
     }
     None => ()
   }
@@ -306,7 +310,7 @@ fn ClientSession::receive_subgroup(
   } else {
     let request = self.requests.get(request_id).unwrap()
     if request.can_receive_object_data() {
-      Ok([Notify(ObjectReceived(request_id, header, frames))])
+      Ok([Notify(ObjectReceived(request_id, request.track, header, frames))])
     } else {
       Ok([])
     }
@@ -342,7 +346,7 @@ fn ClientSession::receive_object_datagram(
   if !request.can_receive_object_data() {
     return Ok([])
   }
-  Ok([Notify(ObjectDatagramReceived(request_id, datagram))])
+  Ok([Notify(ObjectDatagramReceived(request_id, request.track, datagram))])
 }
 
 ///|
@@ -392,6 +396,8 @@ pub fn ClientSession::open_object_stream(
     subscription_stream,
     header,
     cancelled_error_code: None,
+    finish_requested: false,
+    frames: [],
   }
   Ok(self.finish_actions([OpenStream(Unidirectional, Object(token))]))
 }
@@ -504,6 +510,106 @@ pub fn ClientSession::send_object_datagram(
     datagram.object_id,
   )
   Ok(self.finish_actions([SendDatagram(bytes)]))
+}
+
+///|
+/// Send one Object Datagram to every active forwarding subscription of a
+/// published track. The Track Alias is rewritten for each subscription; a
+/// subscription that does not forward or whose filter excludes the Object is
+/// skipped. Returns `Ok([])` when every subscription is skipped.
+pub fn ClientSession::send_object_datagram_for_track(
+  self : ClientSession,
+  track : @protocol.TrackName,
+  datagram : @protocol.ObjectDatagram,
+) -> Result[Array[ClientSessionAction], ClientSessionError] {
+  match self.ensure_open() {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  let mut publisher_request_id : UInt64? = None
+  for (request_id, request) in self.requests {
+    if request.kind == Publishing &&
+      request.is_accepted() &&
+      !request.is_terminal() &&
+      request.track == track {
+      publisher_request_id = Some(request_id)
+    }
+  }
+  let publisher_request_id = match publisher_request_id {
+    Some(value) => value
+    None => return Err(UnknownRequest)
+  }
+  let publisher = self.requests.get(publisher_request_id).unwrap()
+  let base_alias = match publisher.track_alias {
+    Some(value) => value
+    None => return Err(UnknownRequest)
+  }
+  if !self.datagram_send_enabled {
+    return Err(DatagramSendUnavailable)
+  }
+  let probe = match
+    @protocol.encode_object_datagram({ ..datagram, track_alias: base_alias, }) {
+    Ok(value) => value
+    Err(error) => return Err(Encoding(error))
+  }
+  if probe.length() > self.max_datagram_length {
+    return Err(DatagramTooLarge(probe.length(), self.max_datagram_length))
+  }
+  let actions : Array[ClientSessionAction] = []
+  for (subscription_stream, subscription) in self.published_subscriptions {
+    // The local PUBLISH request also has a published_subscriptions entry; it
+    // is the publisher's own state, not a peer subscription.
+    let inbound = match self.inbound_subscriptions.get(subscription_stream) {
+      Some(value) => value
+      None => continue
+    }
+    if inbound.publisher_request_id != publisher_request_id ||
+      !self.subscription_is_active(subscription_stream) ||
+      !subscription_forward(subscription.parameters) ||
+      !subscription_allows_location(
+        subscription.resolved_filter,
+        datagram.group_id,
+        datagram.object_id,
+      ) {
+      continue
+    }
+    let track_alias = match
+      self.subscription_publisher_alias(subscription_stream) {
+      Some(value) => value
+      None => base_alias
+    }
+    let bytes = match
+      @protocol.encode_object_datagram({ ..datagram, track_alias, }) {
+      Ok(value) => value
+      Err(error) => return Err(Encoding(error))
+    }
+    if bytes.length() > self.max_datagram_length {
+      return Err(DatagramTooLarge(bytes.length(), self.max_datagram_length))
+    }
+    actions.push(SendDatagram(bytes))
+  }
+  self.note_published_location(
+    publisher_request_id,
+    datagram.group_id,
+    datagram.object_id,
+  )
+  Ok(self.finish_actions(actions))
+}
+
+///|
+fn ClientSession::subscription_publisher_alias(
+  self : ClientSession,
+  subscription_stream : Int64,
+) -> UInt64? {
+  let publisher_request_id = match
+    self.publisher_request_for_subscription(subscription_stream) {
+    Some(value) => value
+    None => return None
+  }
+  match self.requests.get(publisher_request_id) {
+    Some(request) => request.track_alias
+    None => None
+  }
 }
 
 ///|

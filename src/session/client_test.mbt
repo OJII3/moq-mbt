@@ -129,11 +129,19 @@ test "ClientSession shares even request IDs across tracks and routes interleaved
   }).unwrap()
   assert_eq(
     publisher.receive(@session.StreamData(22, publish_ok)),
-    Ok([@session.Notify(@session.PublishAccepted(2))]),
+    Ok([@session.Notify(@session.PublishAccepted(2, track_b, 2UL))]),
   )
   assert_eq(
     publisher.receive(@session.StreamData(20, publish_ok)),
-    Ok([@session.Notify(@session.PublishAccepted(0))]),
+    Ok([
+      @session.Notify(
+        @session.PublishAccepted(
+          0,
+          { namespace_fields: [b"demo"], name: b"video", },
+          1UL,
+        ),
+      ),
+    ]),
   )
 
   let (subscribe_a, open_subscribe_a) = subscriber
@@ -333,7 +341,12 @@ test "ClientSession shares even request IDs across tracks and routes interleaved
     subscriber.receive(@session.StreamData(60, object_a0)),
     Ok([
       @session.Notify(
-        @session.ObjectReceived(0, subscriber_header_a, [frame_a0]),
+        @session.ObjectReceived(
+          0,
+          { namespace_fields: [b"demo"], name: b"video", },
+          subscriber_header_a,
+          [frame_a0],
+        ),
       ),
     ]),
   )
@@ -341,7 +354,7 @@ test "ClientSession shares even request IDs across tracks and routes interleaved
     subscriber.receive(@session.StreamData(62, object_b0)),
     Ok([
       @session.Notify(
-        @session.ObjectReceived(2, subscriber_header_b, [frame_b0]),
+        @session.ObjectReceived(2, track_b, subscriber_header_b, [frame_b0]),
       ),
     ]),
   )
@@ -349,7 +362,12 @@ test "ClientSession shares even request IDs across tracks and routes interleaved
     subscriber.receive(@session.StreamData(60, object_a1)),
     Ok([
       @session.Notify(
-        @session.ObjectReceived(0, subscriber_header_a, [frame_a1]),
+        @session.ObjectReceived(
+          0,
+          { namespace_fields: [b"demo"], name: b"video", },
+          subscriber_header_a,
+          [frame_a1],
+        ),
       ),
     ]),
   )
@@ -357,7 +375,7 @@ test "ClientSession shares even request IDs across tracks and routes interleaved
     subscriber.receive(@session.StreamData(62, object_b1)),
     Ok([
       @session.Notify(
-        @session.ObjectReceived(2, subscriber_header_b, [frame_b1]),
+        @session.ObjectReceived(2, track_b, subscriber_header_b, [frame_b1]),
       ),
     ]),
   )
@@ -622,7 +640,15 @@ test "ClientSession sends Objects and PUBLISH_DONE on a local PUBLISH stream" {
         @protocol.encode_request_ok({ parameters: [], properties: b"", }).unwrap(),
       ),
     ),
-    Ok([@session.Notify(@session.PublishAccepted(0))]),
+    Ok([
+      @session.Notify(
+        @session.PublishAccepted(
+          0,
+          { namespace_fields: [b"demo"], name: b"video", },
+          1UL,
+        ),
+      ),
+    ]),
   )
 
   let header = client_subgroup_header(1, 7)
@@ -703,7 +729,15 @@ test "ClientSession ends inbound subscriptions when request streams terminate" {
         @protocol.encode_request_ok({ parameters: [], properties: b"", }).unwrap(),
       ),
     ),
-    Ok([@session.Notify(@session.PublishAccepted(0))]),
+    Ok([
+      @session.Notify(
+        @session.PublishAccepted(
+          0,
+          { namespace_fields: [b"demo"], name: b"video", },
+          1UL,
+        ),
+      ),
+    ]),
   )
 
   assert_eq(
@@ -749,7 +783,12 @@ test "ClientSession ends inbound subscriptions when request streams terminate" {
     Ok([
       @session.AbortSend(40, 9UL),
       @session.AbortSend(50, 9UL),
-      @session.Notify(@session.SubscriptionEnded(1, 40)),
+      @session.Notify(
+        @session.SubscriptionEnded(1, 40, {
+          namespace_fields: [b"demo"],
+          name: b"video",
+        }),
+      ),
     ]),
   )
   assert_eq(
@@ -797,7 +836,12 @@ test "ClientSession ends inbound subscriptions when request streams terminate" {
     publisher.receive(@session.SendStopped(42, 5UL)),
     Ok([
       @session.StopReceiving(42, 5UL),
-      @session.Notify(@session.SubscriptionEnded(3, 42)),
+      @session.Notify(
+        @session.SubscriptionEnded(3, 42, {
+          namespace_fields: [b"demo"],
+          name: b"video",
+        }),
+      ),
     ]),
   )
   assert_eq(
@@ -861,7 +905,12 @@ test "ClientSession stops incoming object streams when a subscription request en
     Ok([
       @session.AbortSend(30, 1UL),
       @session.StopReceiving(60, 1UL),
-      @session.Notify(@session.SubscriptionEnded(0, 30)),
+      @session.Notify(
+        @session.SubscriptionEnded(0, 30, {
+          namespace_fields: [b"demo"],
+          name: b"video",
+        }),
+      ),
     ]),
   )
   assert_eq(
@@ -985,7 +1034,15 @@ test "ClientSession ends local PUBLISH subscriptions on STOP_SENDING" {
         @protocol.encode_request_ok({ parameters: [], properties: b"", }).unwrap(),
       ),
     ),
-    Ok([@session.Notify(@session.PublishAccepted(0))]),
+    Ok([
+      @session.Notify(
+        @session.PublishAccepted(
+          0,
+          { namespace_fields: [b"demo"], name: b"video", },
+          1UL,
+        ),
+      ),
+    ]),
   )
 
   let header = client_subgroup_header(1, 7)
@@ -1002,7 +1059,12 @@ test "ClientSession ends local PUBLISH subscriptions on STOP_SENDING" {
     Ok([
       @session.StopReceiving(20, 4UL),
       @session.AbortSend(50, 4UL),
-      @session.Notify(@session.SubscriptionEnded(0, 20)),
+      @session.Notify(
+        @session.SubscriptionEnded(0, 20, {
+          namespace_fields: [b"demo"],
+          name: b"video",
+        }),
+      ),
     ]),
   )
   assert_eq(

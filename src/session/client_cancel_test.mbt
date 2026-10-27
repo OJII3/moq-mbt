@@ -12,7 +12,12 @@ test "cancellation before Request stream open closes the delayed stream without 
     Ok([
       @session.AbortSend(30, 1UL),
       @session.StopReceiving(30, 1UL),
-      @session.Notify(@session.SubscriptionEnded(request_id, 30)),
+      @session.Notify(
+        @session.SubscriptionEnded(request_id, 30, {
+          namespace_fields: [b"demo"],
+          name: b"video",
+        }),
+      ),
     ]),
   )
   assert_eq(subscriber.receive(@session.StreamData(30, b"late")), Ok([]))
@@ -47,7 +52,12 @@ test "cancellation closes pending local and peer requests before acceptance" {
     Ok([
       @session.AbortSend(30, 1UL),
       @session.StopReceiving(30, 1UL),
-      @session.Notify(@session.SubscriptionEnded(local_request_id, 30)),
+      @session.Notify(
+        @session.SubscriptionEnded(local_request_id, 30, {
+          namespace_fields: [b"demo"],
+          name: b"video",
+        }),
+      ),
     ]),
   )
   assert_eq(
@@ -100,7 +110,7 @@ test "cancellation closes pending local and peer requests before acceptance" {
     Ok([
       @session.AbortSend(40, 1UL),
       @session.StopReceiving(40, 1UL),
-      @session.Notify(@session.SubscriptionEnded(1UL, 40)),
+      @session.Notify(@session.SubscriptionEnded(1UL, 40, track)),
     ]),
   )
   assert_eq(publisher.accept_subscription(40), Err(@session.UnexpectedMessage))
@@ -130,7 +140,12 @@ test "cancellation stops active and late incoming Object streams once" {
       @session.AbortSend(30, 1UL),
       @session.StopReceiving(30, 1UL),
       @session.StopReceiving(40, 1UL),
-      @session.Notify(@session.SubscriptionEnded(0, 30)),
+      @session.Notify(
+        @session.SubscriptionEnded(0, 30, {
+          namespace_fields: [b"demo"],
+          name: b"video",
+        }),
+      ),
     ]),
   )
   assert_eq(subscriber.cancel_request(0UL), Ok([]))
@@ -194,7 +209,12 @@ test "cancellation of a peer SUBSCRIBE is idempotent and leaves its PUBLISH acti
       @session.AbortSend(40, 1UL),
       @session.StopReceiving(40, 1UL),
       @session.AbortSend(50, 1UL),
-      @session.Notify(@session.SubscriptionEnded(1, 40)),
+      @session.Notify(
+        @session.SubscriptionEnded(1, 40, {
+          namespace_fields: [b"demo"],
+          name: b"video",
+        }),
+      ),
     ]),
   )
   assert_eq(publisher.cancel_request(1UL), Ok([]))
@@ -233,7 +253,9 @@ fn cancellation_publish_track(
         @protocol.encode_request_ok({ parameters: [], properties: b"", }).unwrap(),
       ),
     ),
-    Ok([@session.Notify(@session.PublishAccepted(request_id))]),
+    Ok([
+      @session.Notify(@session.PublishAccepted(request_id, track, track_alias)),
+    ]),
   )
   request_id
 }
@@ -348,8 +370,10 @@ test "cancelling a local PUBLISH tears down its subscriptions but preserves othe
       @session.AbortSend(40, 1UL),
       @session.StopReceiving(40, 1UL),
       @session.AbortSend(50, 1UL),
-      @session.Notify(@session.SubscriptionEnded(1UL, 40)),
-      @session.Notify(@session.SubscriptionEnded(first_request, 20)),
+      @session.Notify(@session.SubscriptionEnded(1UL, 40, first_track)),
+      @session.Notify(
+        @session.SubscriptionEnded(first_request, 20, first_track),
+      ),
     ]),
   )
   let second_header = client_subgroup_header(2UL, 2UL)
@@ -378,7 +402,13 @@ test "request FIN then cancellation closes only the still-open direction for eve
       session.cancel_request(request_id),
       Ok([
         @session.AbortSend(stream, 1UL),
-        @session.Notify(@session.SubscriptionEnded(request_id, stream)),
+        @session.Notify(
+          @session.SubscriptionEnded(
+            request_id,
+            stream,
+            client_track(b"lifetime"),
+          ),
+        ),
       ]),
     )
     assert_eq(session.cancel_request(request_id), Ok([]))
@@ -423,7 +453,12 @@ test "cancelling a SUBSCRIBE while PUBLISH_DONE waits for Object streams" {
     Ok([
       @session.StopReceiving(30, 1UL),
       @session.StopReceiving(40, 1UL),
-      @session.Notify(@session.SubscriptionEnded(request_id, 30)),
+      @session.Notify(
+        @session.SubscriptionEnded(request_id, 30, {
+          namespace_fields: [b"demo"],
+          name: b"video",
+        }),
+      ),
     ]),
   )
   assert_eq(

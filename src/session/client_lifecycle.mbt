@@ -53,6 +53,10 @@ fn ClientSession::finish_actions(
       }
       SendDatagram(_) =>
         self.pending_datagram_sends = self.pending_datagram_sends + 1UL
+      // An aborted stream will never accept another send. Late SendComplete
+      // events are ignored by note_send_complete, so release the slot now to
+      // let GOAWAY drain finish.
+      AbortSend(stream, _) => self.pending_sends.remove(stream)
       _ => ()
     }
   }

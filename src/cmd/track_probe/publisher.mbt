@@ -243,7 +243,7 @@ fn handle_publisher_notices(
 ) -> Unit raise {
   for notice in notices {
     match notice {
-      @session.PublishAccepted(_) => {
+      @session.PublishAccepted(_, _, _) => {
         eprintln("PUBLISH request accepted")
         state.publish_accepted = true
         state.publish_after = @env.now() + 1000UL
@@ -418,22 +418,14 @@ fn run_publisher(
         handle_publisher_notices(client, session, notices, driver, state)
       }
       SendComplete(stream, canceled) => {
-        note_send_complete(driver, stream)
-        let (notices, _) = drive_session_result(
-          client,
-          session,
-          receive_session_event(
-            session,
-            @session.SendComplete(stream, canceled),
-          ),
-          driver,
-        )
+        driver.complete_send(stream, canceled)
+        let (notices, _) = take_driver_events(driver)
         handle_publisher_notices(client, session, notices, driver, state)
         if canceled {
           fail("publisher send was canceled")
         }
         if state.done_stream == Some(stream) &&
-          driver.send_counts.get(stream) is None &&
+          !driver.has_pending_sends(stream) &&
           (
             !state.datagrams ||
             state.datagram_send_final_count == state.datagram_send_count
@@ -509,12 +501,8 @@ fn run_publisher(
             state.datagram_send_final_count = state.datagram_send_final_count +
               1UL
           }
-          let (notices, _) = drive_session_result(
-            client,
-            session,
-            receive_session_event(session, @session.DatagramSendComplete),
-            driver,
-          )
+          driver.complete_datagram()
+          let (notices, _) = take_driver_events(driver)
           handle_publisher_notices(client, session, notices, driver, state)
         }
       }
