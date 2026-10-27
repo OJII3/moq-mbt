@@ -165,13 +165,27 @@ pub fn WebTransportSessionDriver::from_setup(
   connection : WebTransportConnection,
   setup : @protocol.Setup,
 ) -> Result[WebTransportSessionDriver, @protocol.CodecError] {
-  let options : Array[@protocol.SetupOption] = []
-  for option in setup.options {
-    if option.kind != 1UL && option.kind != 5UL {
-      options.push(option)
-    }
-  }
-  match @session.ClientSession::new(@session.Draft18, { options, }) {
+  WebTransportSessionDriver::from_setup_with_desired_subscriptions(
+    connection,
+    setup,
+    [],
+  )
+}
+
+///|
+/// Create a WebTransport driver that restores desired subscriptions after
+/// the peer completes SETUP.
+pub fn WebTransportSessionDriver::from_setup_with_desired_subscriptions(
+  connection : WebTransportConnection,
+  setup : @protocol.Setup,
+  desired_subscriptions : Array[@session.DesiredSubscription],
+) -> Result[WebTransportSessionDriver, @protocol.CodecError] {
+  match
+    @session.ClientSession::new_with_desired_subscriptions(
+      @session.Draft18,
+      setup.for_webtransport(),
+      desired_subscriptions,
+    ) {
     Ok(session) => Ok(WebTransportSessionDriver::new(connection, session))
     Err(error) => Err(error)
   }

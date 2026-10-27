@@ -105,7 +105,10 @@ driver. Call `start()`, use `session()` to make MoQ requests, pass each
 operation's returned actions to `dispatch()`, and await `next_notice()` for
 results. Call `close(code, reason)` when the application is done; `closed()`
 reports whether the local peer, remote peer, or transport failure ended the
-connection. The facade does not access `window` or `document` during import.
+connection. To restore subscriptions after reconnecting, pass the previous
+session's `desired_subscriptions()` to
+`browser_connect_with_desired_subscriptions(url, setup, desired)`. The facade
+does not access `window` or `document` during import.
 
 See [`examples/browser`](../examples/browser) for a runnable publish /
 subscribe page.

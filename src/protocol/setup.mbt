@@ -17,6 +17,19 @@ pub(all) struct Setup {
 } derive(Debug, Eq)
 
 ///|
+/// Return a copy without the Native-only PATH (1) and AUTHORITY (5) options.
+/// WebTransport supplies these values through the connection URL instead.
+pub fn Setup::for_webtransport(self : Setup) -> Setup {
+  let options : Array[SetupOption] = []
+  for option in self.options {
+    if option.kind != 1UL && option.kind != 5UL {
+      options.push(option)
+    }
+  }
+  { options, }
+}
+
+///|
 fn unique_option(kind : UInt64) -> Bool {
   kind == 1 || kind == 4 || kind == 5 || kind == 7
 }

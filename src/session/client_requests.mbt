@@ -342,7 +342,13 @@ fn ClientSession::receive_response(
           self.aliases[response.track_alias] = request_id
           request.track_alias = Some(response.track_alias)
           request.dynamic_groups = dynamic_groups
+          let old_parameters = request.parameters
           request.parameters = response.parameters
+          self.update_desired_subscription_parameters(
+            request.track,
+            old_parameters,
+            request.parameters,
+          )
           request.joining_location = match
             subscription_largest_location(response.parameters) {
             Some((group_id, object_id)) =>
@@ -374,7 +380,13 @@ fn ClientSession::receive_response(
           is Some(pending) => {
           let was_forwarding = subscription_forward(request.parameters)
           let forwarding = subscription_forward(pending.effective_parameters)
+          let old_parameters = request.parameters
           request.parameters = pending.effective_parameters
+          self.update_desired_subscription_parameters(
+            request.track,
+            old_parameters,
+            request.parameters,
+          )
           if !was_forwarding && forwarding {
             request.joining_location = match
               subscription_largest_location(response.parameters) {
@@ -685,6 +697,21 @@ pub fn ClientSession::subscribe_track_with_parameters(
   track : @protocol.TrackName,
   parameters : Array[@protocol.MessageParameter],
 ) -> Result[(UInt64, Array[SessionAction]), ClientSessionError] {
+  match self.start_subscription_request(track, parameters) {
+    Ok((request_id, actions)) => {
+      self.remember_desired_subscription(track, parameters)
+      Ok((request_id, actions))
+    }
+    Err(error) => Err(error)
+  }
+}
+
+///|
+fn ClientSession::start_subscription_request(
+  self : ClientSession,
+  track : @protocol.TrackName,
+  parameters : Array[@protocol.MessageParameter],
+) -> Result[(UInt64, Array[SessionAction]), ClientSessionError] {
   match self.ensure_new_request_allowed() {
     Ok(_) => ()
     Err(error) => return Err(error)
@@ -772,6 +799,9 @@ pub fn ClientSession::cancel_request(
   }
   match self.requests.get(request_id) {
     Some(request) => {
+      if request.kind == Subscribing {
+        self.forget_desired_subscription(request.track, request.parameters)
+      }
       let publisher_pending_publish_done = match request.stream {
         Some(stream) => self.has_pending_publish_done(stream)
         None => false

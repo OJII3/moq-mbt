@@ -12,6 +12,7 @@
 | `session` | MoQ セッションの状態、制御メッセージ、受信イベントと送信アクション |
 | `driver` | 送信アクションをトランスポートへ流す portable な pump と queue 管理 |
 | `transport` | セッションと QUIC / WebTransport の接続、ストリームと接続のライフサイクル処理 |
+| `test_support` | 公開 `SessionTransport` / `SessionDriver` を使う scripted transport |
 
 依存の向きは `session` から `protocol`、`driver` から `session`、各トランスポートアダプターから `session` と `driver` とする。セッションは MsQuic や WebTransport の API に依存しない。
 
@@ -20,6 +21,8 @@
 セッションはネットワーク I/O、スレッド、実時間時計を持たない Sans-I/O の状態機械とする。受信バイト列や datagram、ストリームの終了・リセット、明示的な時刻更新を入力として受け取り、送信アクションを返す。時刻は呼び出し元から渡す。
 
 アダプターはセッションの送信アクションを QUIC / WebTransport の操作に変換し、トランスポートの受信イベントをセッションへ渡す。ストリーム参照はセッション内では不透明な値として扱い、実際のストリーム ID との対応はアダプターが管理する。
+
+外部パッケージのテストは `test_support.ScriptedTransport` と実際の `SessionDriver` を組み合わせる。テスト側は受理・再試行・完了をscriptし、peerイベントをdriverへ渡す。sessionの処理や状態遷移をテスト用コードに複製しない。
 
 送信アクションの実行は `driver` の `SessionDriver` に集約する。アダプターは `SessionTransport` の primitive 操作だけを実装し、`SessionAction` の variant ごとの分岐や queue を持たない。`SessionDriver` はアクションを受理されるまで保持し、`Retry` では同じアクションを再試行する。ストリームごとのアクション順を維持し、あるストリームの拒否が無関係なストリームの送信を止めない。queue 上限（open / send / datagram）は `SessionDriverConfig` としてアダプターから注入し、driver や adapter に固定値を埋め込まない。
 
@@ -42,6 +45,14 @@ track 名の逆引きは session が所有する。`track_for_request`、`subscr
 Object の送信も session 側の状態を使う。`send_object_datagram_for_track` は publisher 側の track から forwarding 中の subscription を列挙し、subscription ごとの Track Alias に詰め替えて datagram を返す。`ObjectGroupWriter` は `open_object_group` が返す token ベースの thin な handle で、Object ID の採番、stream 開設待ちのキュー、`rotate`、FIN 待ち、abort を session の状態だけで説明する。128 objects ごとの rotation のような方針はアプリケーション側に残す。
 
 Object Datagram の送信は token で追跡する。`send_object_datagram` は `(token, actions)` を返し、`send_object_datagram_for_track` は fan-out した datagram ごとの token を返す。session は投入時に `DatagramQueued(token)`、transport がローカル書き込みに失敗した時に `DatagramLocalWriteFailed(token, status)` を通知する。`DatagramQueued` はローカル transport への投入であり、ピアへの到達や QUIC ACK を意味しない。送信可能な最大サイズは `max_datagram_length()` で問い合わせる。
+
+## 再接続時の購読復元
+
+`ClientSession` はアプリケーションが作成した SUBSCRIBE を desired subscription として保持する。接続が切れたら `desired_subscriptions()` で状態を取り出し、再接続用の `ClientSession::new_with_desired_subscriptions` に渡す。新sessionはSETUP完了後に購読を再発行し、新しいrequest IDを割り当てる。個別のdesiredを終了するには `cancel_request` を使い、切断中にtrackのdesiredを外すには `forget_desired_subscriptions` を使う。
+
+ネットワーク接続の再試行や待ち時間は引き続きアダプターまたはアプリケーションが決める。sessionは再接続後の購読状態とrequest IDの再作成を担当する。
+
+`ClientSessionError::message()` と `Show` はユーザー表示用の説明を返す。`close_code()` は接続終了コードを持つHandshakeErrorの場合に限って値を返す。その他のsession errorはローカルAPIの誤用やstream単位の失敗でも発生するため、共通の接続終了コードへ変換しない。
 
 ## Request stream lifetime
 

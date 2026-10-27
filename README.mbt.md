@@ -28,6 +28,7 @@ src/
 ├── protocol/       # Wire format, vi64 integer codec, control and data messages
 ├── session/        # Sans-I/O session state machine (tracks, requests, streams)
 ├── transport/      # Native MsQuic QUIC transport adapter
+├── test_support/   # Scripted in-memory transport for session tests
 ├── js_adapter/     # Browser WebTransport adapter
 ├── cmd/
 │   ├── setup_probe          # CLI: SETUP handshake verification
@@ -42,6 +43,7 @@ src/
 | `OJII3/moq-mbt/protocol` | Framing, message serialization, and deserialization | Native, JS |
 | `OJII3/moq-mbt/session` | Session state machine and request lifecycles | Native, JS |
 | `OJII3/moq-mbt/transport` | Native QUIC client using `libmsquic` | Native |
+| `OJII3/moq-mbt/test_support` | Scripted transport for tests using `SessionDriver` | Native, JS |
 | `OJII3/moq-mbt/js_adapter` | WebTransport client adapter and browser session facade | JS (Browser) |
 
 ## Quick Start
