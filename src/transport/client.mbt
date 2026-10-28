@@ -183,8 +183,8 @@ pub fn Client::open_bidi(self : Client) -> Int64 raise TransportError {
 
 ///|
 /// Copy bytes into a send buffer retained until MsQuic completes the send.
-/// `SendComplete(stream, false)` confirms peer QUIC acknowledgement; `true`
-/// means the send was canceled. This does not acknowledge application processing.
+/// `SendComplete(stream, false)` releases the local send buffer; `true` means
+/// the send was canceled. Only `StreamDataCommitted` confirms QUIC commitment.
 pub fn Client::send(
   self : Client,
   stream : Int64,
@@ -353,6 +353,7 @@ pub fn Client::next_event(
           enabled: native_event_id(raw) != 0L,
           max_length: native_event_code(raw).to_int(),
         })
+      15 => return StreamDataCommitted(native_event_id(raw))
       _ => raise TransportError("event queue failed")
     }
   }

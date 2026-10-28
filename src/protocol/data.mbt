@@ -307,6 +307,43 @@ pub fn encode_subgroup_frame(
 }
 
 ///|
+/// Encode the header of a normal Object whose payload is written separately.
+/// The caller must append exactly `payload_length` bytes before another frame.
+pub fn encode_subgroup_object_header(
+  header : SubgroupHeader,
+  previous_object_id : UInt64?,
+  object_id : UInt64,
+  properties : Bytes,
+  payload_length : UInt64,
+) -> Result[Bytes, CodecError] {
+  if !header.has_properties && !properties.is_empty() {
+    return Err(InvalidSubgroup)
+  }
+  let delta = match previous_object_id {
+    None => object_id
+    Some(previous) => {
+      if object_id <= previous {
+        return Err(InvalidSubgroup)
+      }
+      object_id - previous - 1UL
+    }
+  }
+  let bytes : Array[Byte] = []
+  append_vi64s(bytes, delta)
+  if header.has_properties {
+    append_vi64s(bytes, properties.length().to_uint64())
+    for byte in properties {
+      bytes.push(byte)
+    }
+  }
+  append_vi64s(bytes, payload_length)
+  if payload_length == 0UL {
+    append_vi64s(bytes, 0UL)
+  }
+  Ok(Bytes::from_array(bytes))
+}
+
+///|
 /// Encode one or more Objects with a Subgroup header. Object IDs are absolute
 /// in `frames` and encoded as Draft 18 deltas on the wire.
 pub fn encode_subgroup_stream(

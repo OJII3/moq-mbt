@@ -44,14 +44,17 @@ fn ClientSession::finish_actions(
 ) -> Array[SessionAction] {
   for action in actions {
     match action {
-      SendChunk(stream, _) | SendFin(stream, _) => {
+      SendChunk(stream, _)
+      | SendObjectChunk(stream, _, _)
+      | SendFin(stream, _) => {
         let count = match self.pending_sends.get(stream) {
           Some(value) => value
           None => 0UL
         }
         self.pending_sends[stream] = count + 1UL
       }
-      SendDatagram(token, _) => self.pending_datagram_sends[token] = true
+      SendDatagram(token, _) | SendObjectDatagram(token, _, _) =>
+        self.pending_datagram_sends[token] = true
       // An aborted stream will never accept another send. Late SendCompleted
       // events are ignored by note_send_complete, so release the slot now to
       // let GOAWAY drain finish.
@@ -141,6 +144,9 @@ fn ClientSession::clock(
   }
   self.clock_initialized = true
   let actions : Array[SessionAction] = self.expire_pending_joining_fetches()
+  for action in self.expire_object_streams() {
+    actions.push(action)
+  }
   let expired_requests : Array[Int64] = []
   for (stream, deadline) in self.request_goaway_deadlines {
     if self.now_ms >= deadline {

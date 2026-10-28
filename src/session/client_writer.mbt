@@ -9,18 +9,20 @@ pub struct ObjectGroupWriter {
   priv mut token : UInt64
   priv mut next_object_id : UInt64
   priv mut finished : Bool
+  priv has_properties : Bool
   priv mut aborted : Bool
 }
 
 ///|
 /// Start a new Object group on an accepted subscription. The returned actions
-/// contain the `OpenStream` request; Objects sent before the stream opens are
-/// queued by the session and flushed in order.
+/// contain the `OpenStream` request. Wait for StreamOpened before submitting
+/// Objects; earlier sends return ObjectStreamNotReady without retaining payload.
 pub fn ClientSession::open_object_group(
   self : ClientSession,
   subscription_stream : Int64,
   group_id : UInt64,
   end_of_group~ : Bool = false,
+  has_properties~ : Bool = false,
 ) -> Result[(ObjectGroupWriter, Array[SessionAction]), ClientSessionError] {
   let publisher_request_id = match
     self.publisher_request_for_subscription(subscription_stream) {
@@ -39,7 +41,7 @@ pub fn ClientSession::open_object_group(
     publisher_priority: None,
     end_of_group,
     first_object: true,
-    has_properties: false,
+    has_properties,
   }
   let actions = match self.open_object_stream(subscription_stream, header) {
     Ok(value) => value
@@ -66,6 +68,7 @@ pub fn ClientSession::open_object_group(
         next_object_id: 0UL,
         finished: false,
         aborted: false,
+        has_properties,
       },
       actions,
     ),
@@ -74,6 +77,7 @@ pub fn ClientSession::open_object_group(
 
 ///|
 /// Send one normal Object. The Object ID is allocated by the writer.
+/// Supply a fresh monotonic Clock event immediately before this operation.
 pub fn ObjectGroupWriter::send(
   self : ObjectGroupWriter,
   payload : Bytes,
@@ -88,7 +92,7 @@ pub fn ObjectGroupWriter::send(
 
 ///|
 /// Send one Object with an explicit status and properties. `frame.object_id`
-/// must be the writer's next Object ID.
+/// must be the writer's next Object ID. Supply a fresh Clock before sending.
 pub fn ObjectGroupWriter::send_frame(
   self : ObjectGroupWriter,
   frame : @protocol.SubgroupFrame,
@@ -101,7 +105,7 @@ pub fn ObjectGroupWriter::send_frame(
   }
   let actions = match self.session.group_streams.get(self.token) {
     Some(stream) => self.session.send_object(stream, frame)
-    None => self.session.queue_group_object(self.token, frame)
+    None => Err(ObjectStreamNotReady)
   }
   match actions {
     Ok(value) => {
@@ -126,6 +130,7 @@ pub fn ObjectGroupWriter::rotate(
     self.session.open_object_group(
       self.subscription_stream,
       self.group_id + 1UL,
+      has_properties=self.has_properties,
     ) {
     Ok(value) => value
     Err(error) => return Err(error)
@@ -138,33 +143,53 @@ pub fn ObjectGroupWriter::rotate(
 }
 
 ///|
-/// Finish the current group. FIN is sent after already queued Objects.
+/// Finish the current group. Supply a fresh Clock immediately beforehand;
+/// the Subgroup delivery timer starts here.
 pub fn ObjectGroupWriter::finish(
   self : ObjectGroupWriter,
 ) -> Result[Array[SessionAction], ClientSessionError] {
   if self.finished || self.aborted {
     return Err(UnexpectedMessage)
   }
-  self.finished = true
-  match self.session.group_streams.get(self.token) {
+  let result = match self.session.group_streams.get(self.token) {
     Some(stream) => self.session.finish_object_stream(stream)
     None => self.session.finish_pending_group(self.token)
   }
+  if result is Ok(_) {
+    self.finished = true
+  }
+  result
 }
 
 ///|
-/// Abort the group without FIN.
+/// Abort the group, including after FIN was requested while delivery is pending.
+/// Repeated aborts and aborts after the stream has completed are harmless.
 pub fn ObjectGroupWriter::abort(
   self : ObjectGroupWriter,
   code : UInt64,
 ) -> Result[Array[SessionAction], ClientSessionError] {
-  if self.finished || self.aborted {
-    return Err(UnexpectedMessage)
+  if self.aborted {
+    return Ok([])
+  }
+  match self.session.group_streams.get(self.token) {
+    Some(stream) => {
+      let outgoing = self.session.outgoing_object_streams.get(stream).unwrap()
+      if outgoing.finishing && !self.session.abort_after_fin_supported {
+        return Err(DeliveryTimeoutUnsupported)
+      }
+    }
+    None => ()
   }
   self.aborted = true
   match self.session.group_streams.get(self.token) {
     Some(stream) => self.session.abort_outgoing_object_stream(stream, code)
-    None => self.session.cancel_pending_group(self.token, code)
+    None =>
+      if self.finished &&
+        self.session.pending_object_streams.get(self.token) is None {
+        Ok([])
+      } else {
+        self.session.cancel_pending_group(self.token, code)
+      }
   }
 }
 
@@ -181,52 +206,22 @@ fn ClientSession::publisher_request_for_subscription(
 }
 
 ///|
-fn ClientSession::queue_group_object(
-  self : ClientSession,
-  token : UInt64,
-  frame : @protocol.SubgroupFrame,
-) -> Result[Array[SessionAction], ClientSessionError] {
-  let pending = match self.pending_object_streams.get(token) {
-    Some(value) => value
-    None => return Err(UnknownStream)
-  }
-  if pending.cancelled_error_code is Some(_) ||
-    !self.subscription_is_active(pending.subscription_stream) {
-    return Err(SubscriptionNotAccepted)
-  }
-  let subscription = match
-    self.published_subscriptions.get(pending.subscription_stream) {
-    Some(value) => value
-    None => return Err(SubscriptionNotAccepted)
-  }
-  if !subscription_allows_location(
-      subscription.resolved_filter,
-      pending.header.group_id,
-      frame.object_id,
-    ) {
-    return Err(SubscriptionNotAccepted)
-  }
-  match self.publisher_request_for_subscription(pending.subscription_stream) {
-    Some(publisher_request_id) =>
-      self.note_published_location(
-        publisher_request_id,
-        pending.header.group_id,
-        frame.object_id,
-      )
-    None => ()
-  }
-  pending.frames.push(frame)
-  Ok([])
-}
-
-///|
 fn ClientSession::finish_pending_group(
   self : ClientSession,
   token : UInt64,
 ) -> Result[Array[SessionAction], ClientSessionError] {
   match self.pending_object_streams.get(token) {
     Some(pending) => {
+      if self.delivery_timeout(pending.subscription_stream, 0x06UL) != 0UL &&
+        (!self.stream_committed_supported || !self.abort_after_fin_supported) {
+        return Err(DeliveryTimeoutUnsupported)
+      }
+      match self.ensure_delivery_clock(pending.subscription_stream) {
+        Ok(_) => ()
+        Err(error) => return Err(error)
+      }
       pending.finish_requested = true
+      pending.finish_time_ms = Some(self.now_ms)
       Ok([])
     }
     None => Err(UnknownStream)

@@ -213,7 +213,8 @@ pub fn WebTransportConnection::open_bidirectional(
 ///|
 /// Write bytes in call order, respecting writer.ready. `fin=true` closes the
 /// send side after the write. Completion means the browser accepted the write;
-/// it does not report a QUIC acknowledgement.
+/// non-final writes do not report a QUIC acknowledgement. A final write waits
+/// for WebTransport close and emits StreamDataCommitted.
 pub fn WebTransportConnection::write_stream(
   self : WebTransportConnection,
   stream : Int64,

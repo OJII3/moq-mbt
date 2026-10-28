@@ -54,7 +54,7 @@ pub fn BrowserClient::session(self : BrowserClient) -> @session.ClientSession {
 pub fn BrowserClient::dispatch(
   self : BrowserClient,
   actions : Array[@session.SessionAction],
-) -> Unit {
+) -> @driver.DriverDispatchResult {
   self.driver.dispatch(actions)
 }
 

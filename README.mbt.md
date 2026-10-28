@@ -158,7 +158,10 @@ let client_result = @js_adapter.browser_connect(
 Call `start()` to begin the session, then consume `next_notice()` until you
 receive `HandshakeComplete` before making requests through `session()`. Pass
 each request's returned actions to `dispatch()`, and continue reading notices
-to observe its result. `next_notice()` resolves to `None` when the session ends.
+to observe its result. `dispatch()` returns `Dispatched`, `QueueFull`,
+`TooLarge`, or `DriverFailed`; retain actions after `QueueFull` and retry after
+progress, and split batches after `TooLarge`. `next_notice()` resolves to
+`None` when the session ends.
 Call `close(code, reason)` when the application is done. For an explicitly
 trusted certificate hash, pass `certificate_hashes=hashes` to
 `browser_connect`. To restore subscriptions after reconnecting, pass

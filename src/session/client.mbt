@@ -39,6 +39,9 @@ pub(all) enum SendCompletion {
 /// and FIN completion, while a QUIC backend may report a stronger signal.
 /// The common session contract does not promise peer receipt or QUIC ACK.
 /// `Clock` values are monotonic milliseconds supplied by the adapter.
+/// Supply a fresh Clock before submitting publisher data or finishing a group.
+/// `StreamDataCommitted` is a transport acknowledgement covering all stream
+/// data and FIN; local write completion alone must not produce this event.
 pub(all) enum SessionEvent {
   InboundStreamStarted(Int64, ClientStreamDirection)
   StreamData(Int64, Bytes)
@@ -49,6 +52,7 @@ pub(all) enum SessionEvent {
   StreamReset(Int64, UInt64)
   SendStopped(Int64, UInt64)
   SendCompleted(Int64, SendCompletion)
+  StreamDataCommitted(Int64)
   DatagramSendComplete(UInt64)
   DatagramSendFailed(UInt64, Int64)
   Clock(UInt64)
@@ -167,8 +171,10 @@ pub(all) enum SessionNotice {
 pub(all) enum SessionAction {
   OpenStream(ClientStreamDirection, ClientStreamPurpose)
   SendChunk(Int64, Bytes)
+  SendObjectChunk(Int64, Bytes, UInt64)
   SendFin(Int64, Bytes)
   SendDatagram(UInt64, Bytes)
+  SendObjectDatagram(UInt64, Bytes, UInt64)
   AbortSend(Int64, UInt64)
   StopReceiving(Int64, UInt64)
   CloseConnection(UInt64, Bytes)
@@ -195,6 +201,10 @@ pub(all) enum ClientSessionError {
   RequestUpdatePending
   PrefixOverlap
   UnexpectedMessage
+  ObjectStreamNotReady
+  DeliveryTimeoutUnsupported
+  ClockNotInitialized
+  ObjectPayloadLengthMismatch
   BufferLimitExceeded
   DatagramSendUnavailable
   DatagramTooLarge(Int32, Int32)
@@ -278,23 +288,32 @@ pub struct ClientSession {
   priv pending_object_streams : Map[UInt64, PendingObjectStream]
   priv outgoing_object_streams : Map[Int64, OutgoingObjectStream]
   priv group_streams : Map[UInt64, Int64]
+  priv max_object_buffer_bytes : UInt64
+  priv mut stream_committed_supported : Bool
+  priv mut abort_after_fin_supported : Bool
 }
 
 ///|
 /// Create a session that restores these desired track subscriptions after
 /// SETUP completes. Each restored request receives a fresh request ID.
 /// Pass an empty list or omit the argument to start without restored
-/// subscriptions.
+/// subscriptions. Object payloads are buffered until complete;
+/// max_object_buffer_bytes limits each incoming Subgroup buffer, including
+/// framing and partial payload, and defaults to 16 MiB.
 pub fn ClientSession::new(
   version : Version,
   setup : @protocol.Setup,
   desired_subscriptions~ : Array[DesiredSubscription] = [],
+  max_object_buffer_bytes~ : UInt64 = 16UL * 1024UL * 1024UL,
 ) -> Result[ClientSession, @protocol.CodecError] {
   match ClientHandshake::new(version, setup) {
     Err(error) => Err(error)
     Ok(handshake) =>
       Ok({
         handshake,
+        max_object_buffer_bytes,
+        stream_committed_supported: false,
+        abort_after_fin_supported: false,
         started: false,
         ready: false,
         state: Active,
@@ -440,6 +459,7 @@ pub fn ClientSession::receive(
       self.note_send_complete(stream)
       self.send_complete(stream, completion)
     }
+    StreamDataCommitted(stream) => self.object_stream_committed(stream)
     DatagramSendComplete(token) => {
       self.pending_datagram_sends.remove(token)
       Ok([])

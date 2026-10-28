@@ -83,17 +83,25 @@ notices. The adapter implements `SessionTransport` from the shared `driver`
 package; action queueing, per-stream ordering, and retry live there, with
 in-flight limits (8 opens / 128 sends / 32 datagrams) passed as
 `SessionDriverConfig`. These limits count transport-accepted operations whose
-completion callback has not run; they do not cap the driver's queue of
-unaccepted actions. The driver starts the session after WebTransport
+completion callback has not run. The adapter also bounds pending actions to
+1024, pending payload bytes to 16 MiB, and each send chunk to 64 KiB. The
+driver starts the session after WebTransport
 negotiation succeeds and continues to poll its monotonic clock while active.
 I/O promises feed completion or failure events back into the session without
 pausing the stream and datagram readers.
 
 `SendCompleted` represents the backend's completion point and reports `Sent`
 or `Reset`. In this adapter it means the browser accepted each write and, for
-FIN, completed `writer.close()`; it is not a QUIC ACK or peer delivery
-confirmation. Native backends may provide a stronger completion signal, but
-the common session API does not require one.
+FIN, completed `writer.close()`. Successful final close emits
+`StreamDataCommitted` separately: the [WebTransport close algorithm](https://www.w3.org/TR/webtransport/#webtransport-send-stream)
+waits for the QUIC all-data-committed state. Ordinary writes only indicate
+local acceptance. This does not acknowledge peer application processing.
+
+A queued FIN can still be aborted before the underlying close begins. Once
+close is in flight, the [Streams standard](https://streams.spec.whatwg.org/#writable-stream-finish-in-flight-close)
+allows it to finish despite a concurrent abort; the browser API cannot promise
+a RESET at that point. Policies requiring abort throughout the period before
+QUIC commitment therefore require a backend with that capability.
 
 Object Datagrams are tracked by token. `send_object_datagram` returns a token
 and emits `DatagramQueued(token)` once the session has queued it for transport.
@@ -106,7 +114,13 @@ proof of peer delivery.
 `browser_connect(url, setup)` creates a connection and a Draft 18 session
 driver. Call `start()`, use `session()` to make MoQ requests, pass each
 operation's returned actions to `dispatch()`, and await `next_notice()` for
-results. Call `close(code, reason)` when the application is done; `closed()`
+results. `dispatch()` returns `Dispatched`, `QueueFull`, `TooLarge`, or
+`DriverFailed`; retain and retry the same actions after `QueueFull`. A batch
+that is too large can be dispatched in order as smaller batches. An individual
+action larger than the byte limit cannot be retried: abort its Subgroup and
+use `ObjectWriter::write` with smaller chunks on a new Subgroup. Choose chunk
+sizes within the driver's byte limit before calling the session API.
+Call `close(code, reason)` when the application is done; `closed()`
 reports whether the local peer, remote peer, or transport failure ended the
 connection. To restore subscriptions after reconnecting, pass the previous
 session's `desired_subscriptions()` as

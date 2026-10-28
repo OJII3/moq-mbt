@@ -162,7 +162,7 @@ fn ClientSession::stream_opened(
             track: request.track,
             track_alias: request.track_alias.unwrap(),
             parameters: [],
-            properties: b"",
+            properties: request.properties,
           })
         Subscribing =>
           @protocol.encode_subscribe({
@@ -227,22 +227,19 @@ fn ClientSession::stream_opened(
         header: pending.header,
         token,
         previous_object_id: None,
+        partial_object: None,
         finishing: pending.finish_requested,
         abort_sent: false,
         pending_send_count: 1UL,
+        delivery_deadline_ms: match pending.finish_time_ms {
+          Some(time) =>
+            self.subgroup_deadline(pending.subscription_stream, time)
+          None => None
+        },
       }
       let actions : Array[SessionAction] = [
         SendChunk(stream, @protocol.encode_subgroup_header(pending.header)),
       ]
-      for frame in pending.frames {
-        match encode_outgoing_object(outgoing, frame) {
-          Ok(bytes) => {
-            actions.push(SendChunk(stream, bytes))
-            outgoing.pending_send_count = outgoing.pending_send_count + 1UL
-          }
-          Err(_) => return Err(Track(InvalidControlMessage))
-        }
-      }
       if pending.finish_requested {
         actions.push(SendFin(stream, b""))
         outgoing.pending_send_count = outgoing.pending_send_count + 1UL
@@ -426,19 +423,7 @@ fn ClientSession::send_complete(
       if outgoing.pending_send_count > 0UL {
         outgoing.pending_send_count = outgoing.pending_send_count - 1UL
       }
-      if outgoing.finishing && outgoing.pending_send_count == 0UL {
-        let subscription_stream = outgoing.subscription_stream
-        self.close_outgoing_object_stream(stream)
-        Ok(
-          [
-            EmitNotice(StreamSendFinished(stream, Sent)),
-            EmitNotice(ObjectStreamSendFinished(stream)),
-          ] +
-          self.finish_failed_subscription(subscription_stream),
-        )
-      } else {
-        Ok([EmitNotice(StreamSendFinished(stream, Sent))])
-      }
+      Ok([EmitNotice(StreamSendFinished(stream, Sent))])
     }
     None =>
       match self.outgoing_fetch_streams.get(stream) {

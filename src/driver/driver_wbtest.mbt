@@ -156,6 +156,9 @@ fn driver_config(
     max_in_flight_opens: opens,
     max_in_flight_sends: sends,
     max_in_flight_datagrams: datagrams,
+    max_pending_actions: 1024,
+    max_pending_bytes: 16777216L,
+    max_send_chunk_bytes: 1048576,
   }
 }
 
@@ -168,7 +171,7 @@ test "driver retries a refused send in order until it is accepted" {
     driver_session(),
     driver_config(8, 8, 8),
   )
-  driver.dispatch([
+  let _ = driver.dispatch([
     @session.SendChunk(4L, b"first"),
     @session.SendChunk(5L, b"other"),
   ])
@@ -191,14 +194,14 @@ test "driver keeps per-stream order after a temporary refusal" {
     driver_config(8, 8, 8),
   )
   transport.retry_streams.push(4L)
-  driver.dispatch([
+  let _ = driver.dispatch([
     @session.SendChunk(4L, b"first"),
     @session.SendChunk(4L, b"second"),
   ])
   // The second action on the refused stream is not attempted out of order.
   assert_eq(transport.sends.length(), 1)
   assert_eq(driver.pending_action_count(), 2)
-  driver.dispatch([@session.SendChunk(5L, b"other")])
+  let _ = driver.dispatch([@session.SendChunk(5L, b"other")])
   // Stream 4 is still blocked, but stream 5 is accepted independently.
   assert_eq(transport.sends.length(), 3)
   assert_eq(transport.sends[2].0, 5L)
@@ -214,7 +217,7 @@ test "driver drops queued sends for an aborted stream" {
     driver_session(),
     driver_config(8, 8, 8),
   )
-  driver.dispatch([
+  let _ = driver.dispatch([
     @session.SendChunk(4L, b"queued"),
     @session.AbortSend(4L, 7UL),
     @session.SendChunk(5L, b"kept"),
@@ -223,8 +226,8 @@ test "driver drops queued sends for an aborted stream" {
   assert_eq(driver.pending_action_count(), 1)
   transport.send_acceptance = Accepted
   driver.pump()
-  assert_eq(transport.sends.length(), 3)
-  assert_eq(transport.sends[2].0, 5L)
+  assert_eq(transport.sends.length(), 2)
+  assert_eq(transport.sends[1].0, 5L)
 }
 
 ///|
@@ -235,7 +238,7 @@ test "driver respects the configured in-flight send limit" {
     driver_session(),
     driver_config(8, 1, 8),
   )
-  driver.dispatch([
+  let _ = driver.dispatch([
     @session.SendChunk(4L, b"first"),
     @session.SendChunk(5L, b"second"),
   ])
@@ -251,7 +254,7 @@ test "driver reports an opened stream and forwards its purpose" {
   let transport = FakeTransport::new()
   let session = driver_session()
   let driver = SessionDriver::new(transport, session, driver_config(8, 8, 8))
-  driver.dispatch(session.start().unwrap())
+  let _ = driver.dispatch(session.start().unwrap())
   assert_eq(transport.opens.length(), 1)
   assert_eq(transport.opens[0].1, @session.Control)
   transport.complete_open(Opened(10L))
@@ -265,7 +268,7 @@ test "driver terminates on an asynchronous stream open failure" {
   let transport = FakeTransport::new()
   let session = driver_session()
   let driver = SessionDriver::new(transport, session, driver_config(8, 8, 8))
-  driver.dispatch(session.start().unwrap())
+  let _ = driver.dispatch(session.start().unwrap())
   transport.complete_open(OpenFailed(-10L))
   assert_true(driver.failed())
   assert_eq(driver.failure(), Some(SessionDriverFailureReason::Transport(-10L)))
@@ -282,7 +285,7 @@ test "driver terminates on an asynchronous stream write failure" {
     driver_session(),
     driver_config(8, 8, 8),
   )
-  driver.dispatch([@session.SendChunk(4L, b"payload")])
+  let _ = driver.dispatch([@session.SendChunk(4L, b"payload")])
   transport.complete_send(4L, WriteFailed(-11L))
   assert_true(driver.failed())
   assert_eq(driver.failure(), Some(SessionDriverFailureReason::Transport(-11L)))
@@ -315,7 +318,7 @@ test "driver turns a fatal transport result into a session end" {
     driver_session(),
     driver_config(8, 8, 8),
   )
-  driver.dispatch([@session.SendChunk(4L, b"payload")])
+  let _ = driver.dispatch([@session.SendChunk(4L, b"payload")])
   assert_true(driver.failed())
   assert_eq(driver.failure(), Some(SessionDriverFailureReason::Transport(-9L)))
   assert_eq(driver.take_notices(), [
@@ -332,7 +335,7 @@ test "driver retries datagrams independently of sends" {
     driver_session(),
     driver_config(8, 8, 8),
   )
-  driver.dispatch([
+  let _ = driver.dispatch([
     @session.SendDatagram(0UL, b"datagram"),
     @session.SendChunk(4L, b"payload"),
   ])
@@ -349,7 +352,7 @@ test "driver caps datagrams independently" {
     driver_session(),
     driver_config(8, 8, 1),
   )
-  driver.dispatch([
+  let _ = driver.dispatch([
     @session.SendDatagram(0UL, b"one"),
     @session.SendDatagram(1UL, b"two"),
   ])
@@ -368,7 +371,7 @@ test "driver reports datagram write failure without failing the session" {
     driver_session(),
     driver_config(8, 8, 8),
   )
-  driver.dispatch([@session.SendDatagram(7UL, b"payload")])
+  let _ = driver.dispatch([@session.SendDatagram(7UL, b"payload")])
   assert_eq(transport.datagrams.length(), 1)
   transport.datagram_callbacks[0](WriteFailed(-4L))
   assert_false(driver.failed())
@@ -385,7 +388,170 @@ test "driver releases the in-flight slot of a synchronous send" {
     driver_session(),
     driver_config(8, 8, 8),
   )
-  driver.dispatch([@session.SendChunk(4L, b"payload")])
+  let _ = driver.dispatch([@session.SendChunk(4L, b"payload")])
   assert_eq(driver.pending_action_count(), 0)
   assert_false(driver.has_pending_sends(4L))
+}
+
+///|
+test "driver rejects queue overflow atomically and permits abort" {
+  let transport = FakeTransport::new()
+  transport.send_acceptance = Retry
+  let session = driver_session()
+  let config = {
+    ..driver_config(1, 1, 1),
+    max_pending_actions: 1,
+    max_pending_bytes: 4L,
+  }
+  let driver = SessionDriver::new(transport, session, config)
+  assert_eq(driver.dispatch([@session.SendChunk(4L, b"1234")]), Dispatched)
+  assert_eq(driver.dispatch([@session.SendChunk(5L, b"x")]), QueueFull)
+  assert_eq(driver.dispatch([@session.SendChunk(5L, b"12345")]), TooLarge)
+  assert_eq(driver.pending_action_count(), 1)
+  assert_eq(driver.dispatch([@session.AbortSend(4L, 2UL)]), Dispatched)
+  assert_eq(driver.pending_action_count(), 0)
+  assert_eq(transport.aborts, [(4L, 2UL)])
+}
+
+///|
+test "driver chunks writes and attaches fin only to final chunk" {
+  let transport = FakeTransport::new()
+  let driver = SessionDriver::new(transport, driver_session(), {
+    ..driver_config(1, 1, 1),
+    max_send_chunk_bytes: 3,
+  })
+  assert_eq(driver.dispatch([@session.SendFin(4L, b"1234567")]), Dispatched)
+  assert_eq(transport.sends, [(4L, b"123", false)])
+  let (_, done) = transport.send_callbacks.remove(0)
+  done(Written)
+  assert_eq(transport.sends, [(4L, b"123", false), (4L, b"456", false)])
+  let (_, done) = transport.send_callbacks.remove(0)
+  done(Written)
+  assert_eq(transport.sends, [
+    (4L, b"123", false),
+    (4L, b"456", false),
+    (4L, b"7", true),
+  ])
+}
+
+///|
+test "driver handles synchronous chunk completion without stalling" {
+  let transport = FakeTransport::new()
+  transport.sync_sends = true
+  let driver = SessionDriver::new(transport, driver_session(), {
+    ..driver_config(1, 1, 1),
+    max_send_chunk_bytes: 3,
+  })
+  assert_eq(driver.dispatch([@session.SendFin(4L, b"1234567")]), Dispatched)
+  assert_eq(transport.sends.length(), 3)
+  assert_eq(driver.pending_action_count(), 0)
+}
+
+///|
+test "driver keeps later writes behind every chunk of the same stream" {
+  let transport = FakeTransport::new()
+  let driver = SessionDriver::new(transport, driver_session(), {
+    ..driver_config(1, 4, 1),
+    max_send_chunk_bytes: 3,
+  })
+  assert_eq(
+    driver.dispatch([
+      @session.SendChunk(4L, b"1234567"),
+      @session.SendFin(4L, b"end"),
+    ]),
+    Dispatched,
+  )
+  assert_eq(transport.sends, [(4L, b"123", false)])
+  let (_, done) = transport.send_callbacks.remove(0)
+  done(Written)
+  assert_eq(transport.sends, [(4L, b"123", false), (4L, b"456", false)])
+  let (_, done) = transport.send_callbacks.remove(0)
+  done(Written)
+  assert_eq(transport.sends, [
+    (4L, b"123", false),
+    (4L, b"456", false),
+    (4L, b"7", false),
+    (4L, b"end", true),
+  ])
+}
+
+///|
+test "driver abort discards even following writes in the same batch" {
+  let transport = FakeTransport::new()
+  let driver = SessionDriver::new(
+    transport,
+    driver_session(),
+    driver_config(1, 1, 1),
+  )
+  assert_eq(
+    driver.dispatch([
+      @session.AbortSend(4L, 2UL),
+      @session.SendFin(4L, b"never"),
+    ]),
+    Dispatched,
+  )
+  assert_eq(transport.sends.length(), 0)
+  assert_eq(driver.pending_action_count(), 0)
+}
+
+///|
+test "driver expires queued object writes using the latest clock value" {
+  let transport = FakeTransport::new()
+  transport.send_acceptance = Retry
+  let driver = SessionDriver::new(
+    transport,
+    driver_session(),
+    driver_config(1, 1, 1),
+  )
+  driver.set_clock(fn() { 10UL })
+  assert_eq(
+    driver.dispatch([@session.SendObjectChunk(4L, b"body", 20UL)]),
+    Dispatched,
+  )
+  assert_eq(transport.sends.length(), 1)
+  transport.send_acceptance = Accepted
+  driver.set_clock(fn() { 21UL })
+  driver.pump()
+  assert_eq(transport.sends.length(), 1)
+  assert_eq(driver.pending_action_count(), 0)
+}
+
+///|
+test "driver applies queued abort before earlier data and preserves other streams" {
+  let transport = FakeTransport::new()
+  transport.send_acceptance = Retry
+  let driver = SessionDriver::new(
+    transport,
+    driver_session(),
+    driver_config(1, 4, 1),
+  )
+  assert_eq(driver.dispatch([@session.SendChunk(4L, b"queued")]), Dispatched)
+  transport.send_acceptance = Accepted
+  assert_eq(
+    driver.dispatch([
+      @session.SendChunk(5L, b"other"),
+      @session.AbortSend(4L, 2UL),
+    ]),
+    Dispatched,
+  )
+  assert_eq(transport.sends, [(4L, b"queued", false), (5L, b"other", false)])
+  assert_eq(transport.aborts, [(4L, 2UL)])
+  assert_eq(driver.pending_action_count(), 0)
+}
+
+///|
+test "driver handles terminal transport event before retrying queued data" {
+  let transport = FakeTransport::new()
+  transport.send_acceptance = Retry
+  let driver = SessionDriver::new(
+    transport,
+    driver_session(),
+    driver_config(1, 4, 1),
+  )
+  assert_eq(driver.dispatch([@session.SendChunk(4L, b"queued")]), Dispatched)
+  transport.send_acceptance = Accepted
+  driver.receive(@session.TransportFailed(-10L))
+  assert_eq(transport.sends.length(), 1)
+  assert_true(driver.failed())
+  assert_eq(driver.pending_action_count(), 0)
 }

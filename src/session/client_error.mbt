@@ -40,6 +40,14 @@ pub fn ClientSessionError::message(self : ClientSessionError) -> String {
     PrefixOverlap => "Namespace prefix overlaps another active subscription"
     UnexpectedMessage =>
       "Message or operation is unexpected in the current state"
+    DeliveryTimeoutUnsupported =>
+      "Transport does not support committed delivery and abort after FIN"
+    ClockNotInitialized =>
+      "Supply a monotonic Clock event before timed publisher operations"
+    ObjectStreamNotReady =>
+      "Object stream is still opening; retry after StreamOpened"
+    ObjectPayloadLengthMismatch =>
+      "Object payload length does not match its declared length"
     BufferLimitExceeded => "Session receive buffer limit exceeded"
     DatagramSendUnavailable =>
       "Datagram sending is unavailable on this transport"

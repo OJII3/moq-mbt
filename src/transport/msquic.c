@@ -92,6 +92,10 @@ static QUIC_STATUS QUIC_API stream_cb(HQUIC s, void *ctx, QUIC_STREAM_EVENT *e) 
         free(e->SEND_COMPLETE.ClientContext);
         push(c, 8, id, e->SEND_COMPLETE.Canceled ? 1 : 0, NULL, NULL, 0);
         break;
+    case QUIC_STREAM_EVENT_SEND_SHUTDOWN_COMPLETE:
+        if (e->SEND_SHUTDOWN_COMPLETE.Graceful)
+            push(c, 15, id, 0, NULL, NULL, 0);
+        break;
     case QUIC_STREAM_EVENT_SHUTDOWN_COMPLETE:
         push(c, 10, id, 0, NULL, NULL, 0);
         break;

@@ -70,6 +70,7 @@ pub(all) enum Event {
   StreamReset(Int64, Int64)
   SendStopped(Int64, Int64)
   SendComplete(Int64, Bool)
+  StreamDataCommitted(Int64)
   Closed(Int64)
   TransportClosed(Int)
   QueueOverflow

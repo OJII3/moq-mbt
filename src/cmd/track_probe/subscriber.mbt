@@ -293,6 +293,13 @@ fn run_subscriber(
           fail("SUBSCRIBE send was canceled")
         }
       }
+      StreamDataCommitted(stream) => {
+        driver.committed(stream)
+        let (notices, _) = take_driver_events(driver)
+        if handle_subscriber_notices(notices, state) {
+          return
+        }
+      }
       SendStopped(stream, code) => {
         let (notices, _) = drive_session_result(
           client,

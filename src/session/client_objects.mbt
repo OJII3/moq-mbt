@@ -4,7 +4,7 @@ priv struct PendingObjectStream {
   header : @protocol.SubgroupHeader
   mut cancelled_error_code : UInt64?
   mut finish_requested : Bool
-  frames : Array[@protocol.SubgroupFrame]
+  mut finish_time_ms : UInt64?
 }
 
 ///|
@@ -36,6 +36,8 @@ priv struct OutgoingObjectStream {
   mut finishing : Bool
   mut abort_sent : Bool
   mut pending_send_count : UInt64
+  mut delivery_deadline_ms : UInt64?
+  mut partial_object : PartialObject?
 }
 
 ///|
@@ -252,7 +254,9 @@ fn ClientSession::receive_subgroup(
       value
     }
   }
-  if bytes.length() > 1024 * 1024 - state.buffer.length() {
+  if state.buffer.length().to_uint64() > self.max_object_buffer_bytes ||
+    bytes.length().to_uint64() >
+    self.max_object_buffer_bytes - state.buffer.length().to_uint64() {
     return Err(BufferLimitExceeded)
   }
   state.buffer = state.buffer + bytes
@@ -390,6 +394,13 @@ pub fn ClientSession::open_object_stream(
   if header.track_alias != publisher_request.track_alias.unwrap() {
     return Err(Track(AliasMismatch))
   }
+  if !self.stream_committed_supported {
+    return Err(DeliveryTimeoutUnsupported)
+  }
+  if self.delivery_timeout(subscription_stream, 0x06UL) != 0UL &&
+    (!self.stream_committed_supported || !self.abort_after_fin_supported) {
+    return Err(DeliveryTimeoutUnsupported)
+  }
   let token = self.next_object_token
   self.next_object_token = token + 1UL
   self.pending_object_streams[token] = {
@@ -397,13 +408,14 @@ pub fn ClientSession::open_object_stream(
     header,
     cancelled_error_code: None,
     finish_requested: false,
-    frames: [],
+    finish_time_ms: None,
   }
   Ok(self.finish_actions([OpenStream(Unidirectional, Object(token))]))
 }
 
 ///|
 /// Encode and send an Object on an open outgoing Subgroup stream.
+/// Supply a fresh Clock event immediately before this timed operation.
 pub fn ClientSession::send_object(
   self : ClientSession,
   stream : Int64,
@@ -420,7 +432,7 @@ pub fn ClientSession::send_object(
   if !self.subscription_is_active(outgoing.subscription_stream) {
     return Err(SubscriptionNotAccepted)
   }
-  if outgoing.finishing {
+  if outgoing.finishing || outgoing.partial_object is Some(_) {
     return Err(UnexpectedMessage)
   }
   if !subscription_allows_location(
@@ -429,6 +441,10 @@ pub fn ClientSession::send_object(
       frame.object_id,
     ) {
     return Err(SubscriptionNotAccepted)
+  }
+  match self.ensure_delivery_clock(outgoing.subscription_stream) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
   }
   let bytes = match encode_outgoing_object(outgoing, frame) {
     Ok(value) => value
@@ -445,7 +461,16 @@ pub fn ClientSession::send_object(
     frame.object_id,
   )
   outgoing.pending_send_count = outgoing.pending_send_count + 1UL
-  Ok(self.finish_actions([SendChunk(stream, bytes)]))
+  Ok(
+    self.finish_actions([
+      self.object_chunk_action(
+        stream,
+        outgoing.subscription_stream,
+        bytes,
+        self.now_ms,
+      ),
+    ]),
+  )
 }
 
 ///|
@@ -506,6 +531,10 @@ pub fn ClientSession::send_object_datagram(
   if bytes.length() > self.max_datagram_length {
     return Err(DatagramTooLarge(bytes.length(), self.max_datagram_length))
   }
+  match self.ensure_delivery_clock(subscription_stream) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
   self.note_published_location(
     publisher_request_id,
     datagram.group_id,
@@ -517,7 +546,12 @@ pub fn ClientSession::send_object_datagram(
     (
       token,
       self.finish_actions([
-        SendDatagram(token, bytes),
+        self.object_datagram_action(
+          token,
+          subscription_stream,
+          bytes,
+          self.now_ms,
+        ),
         EmitNotice(DatagramQueued(token)),
       ]),
     ),
@@ -587,6 +621,10 @@ pub fn ClientSession::send_object_datagram_for_track(
       ) {
       continue
     }
+    match self.ensure_delivery_clock(subscription_stream) {
+      Ok(_) => ()
+      Err(error) => return Err(error)
+    }
     let track_alias = match
       self.subscription_publisher_alias(subscription_stream) {
       Some(value) => value
@@ -603,7 +641,14 @@ pub fn ClientSession::send_object_datagram_for_track(
     let token = self.next_datagram_token
     self.next_datagram_token = token + 1UL
     tokens.push(token)
-    actions.push(SendDatagram(token, bytes))
+    actions.push(
+      self.object_datagram_action(
+        token,
+        subscription_stream,
+        bytes,
+        self.now_ms,
+      ),
+    )
     actions.push(EmitNotice(DatagramQueued(token)))
   }
   self.note_published_location(
@@ -663,6 +708,7 @@ fn ClientSession::note_published_location(
 
 ///|
 /// Finish an outgoing Subgroup stream after all of its Objects have been sent.
+/// Supply a fresh Clock immediately beforehand to start the Subgroup timer.
 pub fn ClientSession::finish_object_stream(
   self : ClientSession,
   stream : Int64,
@@ -675,10 +721,22 @@ pub fn ClientSession::finish_object_stream(
     Some(value) => value
     None => return Err(UnknownStream)
   }
-  if outgoing.finishing {
+  if outgoing.finishing || outgoing.partial_object is Some(_) {
     return Err(UnexpectedMessage)
   }
+  if self.delivery_timeout(outgoing.subscription_stream, 0x06UL) != 0UL &&
+    (!self.stream_committed_supported || !self.abort_after_fin_supported) {
+    return Err(DeliveryTimeoutUnsupported)
+  }
+  match self.ensure_delivery_clock(outgoing.subscription_stream) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
   outgoing.finishing = true
+  outgoing.delivery_deadline_ms = self.subgroup_deadline(
+    outgoing.subscription_stream,
+    self.now_ms,
+  )
   outgoing.pending_send_count = outgoing.pending_send_count + 1UL
   Ok(self.finish_actions([SendFin(stream, b"")]))
 }

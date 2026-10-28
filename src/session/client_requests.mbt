@@ -23,6 +23,7 @@ priv struct ClientRequest {
   lifetime : RequestLifetime
   object_drain : ObjectDrain
   mut parameters : Array[@protocol.MessageParameter]
+  properties : Bytes
   mut joining_location : @protocol.FetchLocation?
   mut pending_local_update : PendingSubscriptionUpdate?
   mut update_failed : Bool
@@ -637,6 +638,7 @@ pub fn ClientSession::publish_track(
   self : ClientSession,
   track : @protocol.TrackName,
   track_alias : UInt64,
+  properties~ : Bytes = b"",
 ) -> Result[(UInt64, Array[SessionAction]), ClientSessionError] {
   match self.ensure_new_request_allowed() {
     Ok(_) => ()
@@ -652,9 +654,13 @@ pub fn ClientSession::publish_track(
       return Err(AliasInUse)
     }
   }
+  if track_supports_dynamic_groups(properties) is None {
+    return Err(UnexpectedMessage)
+  }
   let request_id = self.allocate_request_id()
   self.requests[request_id] = {
     kind: Publishing,
+    properties,
     track,
     track_alias: Some(track_alias),
     stream: None,
@@ -713,6 +719,7 @@ fn ClientSession::start_subscription_request(
   let request_id = self.allocate_request_id()
   self.requests[request_id] = {
     kind: Subscribing,
+    properties: b"",
     track,
     track_alias: None,
     stream: None,

@@ -150,6 +150,10 @@ async test "WebTransport connection and session lifecycle" {
     assert_true(pending.wait() is Ok(_))
   }
   assert_true(connection.write_stream(stream, b"", fin=true).wait() is Ok(_))
+  match connection.next_stream_event().wait() {
+    StreamDataCommitted(id) => assert_eq(id, stream)
+    _ => fail("local stream commitment was not reported")
+  }
   ffi_fake_finish_created_readable()
   match connection.next_stream_event().wait() {
     StreamFinished(id) => assert_eq(id, stream)
@@ -184,6 +188,10 @@ async test "WebTransport connection and session lifecycle" {
   assert_true(
     connection.write_stream(uni_stream, b"uni", fin=true).wait() is Ok(_),
   )
+  match connection.next_stream_event().wait() {
+    StreamDataCommitted(id) => assert_eq(id, uni_stream)
+    _ => fail("unidirectional stream commitment was not reported")
+  }
 
   let cancelled_stream = match connection.open_bidirectional().wait() {
     Ok(stream) => stream
@@ -224,6 +232,30 @@ async test "WebTransport connection and session lifecycle" {
   }
   ffi_fake_resolve_pending_stream_writes()
   assert_true(finishing_write.wait() is Ok(_))
+  match connection.next_stream_event().wait() {
+    StreamDataCommitted(id) => assert_eq(id, fin_stream)
+    _ => fail("final close did not report stream data commitment")
+  }
+  let aborted_fin_stream = match connection.open_bidirectional().wait() {
+    Ok(stream) => stream
+    Err(error) => fail(error.message)
+  }
+  match connection.next_stream_event().wait() {
+    LocalStreamOpened(id, Bidirectional) => assert_eq(id, aborted_fin_stream)
+    _ => fail("abort-after-FIN stream was not announced")
+  }
+  ffi_fake_delay_stream_writes()
+  let aborted_fin = connection.write_stream(
+    aborted_fin_stream,
+    b"queued",
+    fin=true,
+  )
+  @js.sleep(1)
+  let aborting_fin = connection.abort_stream_write(aborted_fin_stream, 26L)
+  ffi_fake_resolve_pending_stream_writes()
+  assert_true(aborting_fin.wait() is Ok(_))
+  assert_true(aborted_fin.wait() is Err(_))
+  assert_eq(ffi_fake_abort_error_code(), 26)
   assert_true(connection.cancel_stream_read(fin_stream, 25L).wait() is Ok(_))
   ignore(connection.close(0L, "done"))
   ignore(connection.closed().wait())

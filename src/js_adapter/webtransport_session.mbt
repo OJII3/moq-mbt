@@ -127,13 +127,15 @@ pub struct WebTransportSessionDriver {
 }
 
 ///|
-/// In-flight limits for browser backpressure. The driver's unaccepted action
-/// queue is not bounded by these values.
+/// Bounded pending actions and transport operations for browser backpressure.
 fn WebTransportSessionDriver::config() -> @driver.SessionDriverConfig {
   {
     max_in_flight_opens: 8,
     max_in_flight_sends: 128,
     max_in_flight_datagrams: 32,
+    max_pending_actions: 1024,
+    max_pending_bytes: 16777216L,
+    max_send_chunk_bytes: 65536,
   }
 }
 
@@ -142,11 +144,13 @@ pub fn WebTransportSessionDriver::new(
   connection : WebTransportConnection,
   session : @session.ClientSession,
 ) -> WebTransportSessionDriver {
+  session.set_stream_delivery_capability(committed=true, abort_after_fin=false)
   let driver = @driver.SessionDriver::new(
     WebTransportTransport::{ connection, },
     session,
     WebTransportSessionDriver::config(),
   )
+  driver.set_clock(fn() { ffi_webtransport_monotonic_now().to_uint64() })
   let result : WebTransportSessionDriver = {
     connection,
     driver,
@@ -201,7 +205,7 @@ pub fn WebTransportSessionDriver::start(
   )
   match self.driver.failure() {
     Some(error) => {
-      self.finish()
+      self.fail_close()
       return Err(error)
     }
     None => ()
@@ -219,12 +223,22 @@ pub fn WebTransportSessionDriver::start(
           Ok(_) => {
             self.refresh_datagram_capability()
             match self.driver.session().start() {
-              Ok(actions) => self.driver.dispatch(actions)
-              Err(_) => self.finish()
+              Ok(actions) =>
+                match self.driver.dispatch(actions) {
+                  Dispatched => ()
+                  QueueFull | TooLarge | DriverFailed => {
+                    self.receive_event(@session.TransportFailed(-7L))
+                    self.fail_close()
+                  }
+                }
+              Err(_) => self.fail_close()
             }
             self.flush()
           }
-          Err(_) => self.receive_event(@session.TransportFailed(-1L))
+          Err(_) => {
+            self.receive_event(@session.TransportFailed(-1L))
+            self.fail_close()
+          }
         }
       }
       @js.Promise::resolve(())
@@ -234,13 +248,19 @@ pub fn WebTransportSessionDriver::start(
 }
 
 ///|
-/// Apply actions returned by a public ClientSession operation.
+/// Apply actions returned by a public ClientSession operation. On QueueFull, retain
+/// these actions and retry dispatch after progress; do not repeat the session
+/// operation that produced them. TooLarge requires a smaller action batch.
 pub fn WebTransportSessionDriver::dispatch(
   self : WebTransportSessionDriver,
   actions : Array[@session.SessionAction],
-) -> Unit {
-  self.driver.dispatch(actions)
+) -> @driver.DriverDispatchResult {
+  let result = self.driver.dispatch(actions)
   self.flush()
+  if result == @driver.DriverFailed {
+    self.fail_close()
+  }
+  result
 }
 
 ///|
@@ -376,6 +396,10 @@ fn WebTransportSessionDriver::read_stream_events(
           self.receive_event(@session.StreamData(stream, bytes))
         StreamFinished(stream) =>
           self.receive_event(@session.InboundStreamFinished(stream))
+        StreamDataCommitted(stream) => {
+          self.driver.receive(@session.StreamDataCommitted(stream))
+          self.flush()
+        }
         StreamReset(stream, failure) =>
           match failure.stream_error_code {
             Some(code) =>
@@ -526,6 +550,14 @@ fn WebTransportSessionDriver::finish(self : WebTransportSessionDriver) -> Unit {
     ignore(self.opened_stream_waiters.remove(0))
     waiter(None)
   }
+}
+
+///|
+fn WebTransportSessionDriver::fail_close(
+  self : WebTransportSessionDriver,
+) -> Unit {
+  self.finish()
+  ignore(self.connection.close(0L, "session driver failed"))
 }
 
 ///|

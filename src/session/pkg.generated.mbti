@@ -43,13 +43,13 @@ pub fn ClientSession::finish_object_stream(Self, Int64) -> Result[Array[SessionA
 pub fn ClientSession::finish_subscription_updates(Self, UInt64) -> Result[Array[SessionAction], ClientSessionError]
 pub fn ClientSession::forget_desired_subscriptions(Self, @protocol.TrackName) -> Unit
 pub fn ClientSession::max_datagram_length(Self) -> Int
-pub fn ClientSession::new(Version, @protocol.Setup, desired_subscriptions? : Array[DesiredSubscription]) -> Result[Self, @protocol.CodecError]
-pub fn ClientSession::open_object_group(Self, Int64, UInt64, end_of_group? : Bool) -> Result[(ObjectGroupWriter, Array[SessionAction]), ClientSessionError]
+pub fn ClientSession::new(Version, @protocol.Setup, desired_subscriptions? : Array[DesiredSubscription], max_object_buffer_bytes? : UInt64) -> Result[Self, @protocol.CodecError]
+pub fn ClientSession::open_object_group(Self, Int64, UInt64, end_of_group? : Bool, has_properties? : Bool) -> Result[(ObjectGroupWriter, Array[SessionAction]), ClientSessionError]
 pub fn ClientSession::open_object_stream(Self, Int64, @protocol.SubgroupHeader) -> Result[Array[SessionAction], ClientSessionError]
 pub fn ClientSession::publish_application_namespace(Self, @protocol.TrackNamespace) -> Result[Array[SessionAction], ClientSessionError]
 pub fn ClientSession::publish_done(Self, Int64, UInt64, Bytes) -> Result[Array[SessionAction], ClientSessionError]
 pub fn ClientSession::publish_namespace(Self, @protocol.TrackNamespace, Array[@protocol.MessageParameter]) -> Result[(UInt64, Array[SessionAction]), ClientSessionError]
-pub fn ClientSession::publish_track(Self, @protocol.TrackName, UInt64) -> Result[(UInt64, Array[SessionAction]), ClientSessionError]
+pub fn ClientSession::publish_track(Self, @protocol.TrackName, UInt64, properties? : Bytes) -> Result[(UInt64, Array[SessionAction]), ClientSessionError]
 pub fn ClientSession::receive(Self, SessionEvent) -> Result[Array[SessionAction], ClientSessionError]
 pub fn ClientSession::reject_fetch(Self, UInt64, @protocol.RequestErrorMessage) -> Result[Array[SessionAction], ClientSessionError]
 pub fn ClientSession::reject_fetch_update(Self, UInt64, UInt64, @protocol.RequestErrorMessage) -> Result[Array[SessionAction], ClientSessionError]
@@ -65,6 +65,7 @@ pub fn ClientSession::send_goaway(Self, UInt64) -> Result[Array[SessionAction], 
 pub fn ClientSession::send_object(Self, Int64, @protocol.SubgroupFrame) -> Result[Array[SessionAction], ClientSessionError]
 pub fn ClientSession::send_object_datagram(Self, Int64, @protocol.ObjectDatagram) -> Result[(UInt64, Array[SessionAction]), ClientSessionError]
 pub fn ClientSession::send_object_datagram_for_track(Self, @protocol.TrackName, @protocol.ObjectDatagram) -> Result[(Array[UInt64], Array[SessionAction]), ClientSessionError]
+pub fn ClientSession::set_stream_delivery_capability(Self, committed~ : Bool, abort_after_fin~ : Bool) -> Unit
 pub fn ClientSession::start(Self) -> Result[Array[SessionAction], ClientSessionError]
 pub fn ClientSession::state(Self) -> ClientSessionState
 pub fn ClientSession::subscribe_namespace(Self, @protocol.TrackNamespace) -> Result[(UInt64, Array[SessionAction]), ClientSessionError]
@@ -106,6 +107,10 @@ pub(all) enum ClientSessionError {
   RequestUpdatePending
   PrefixOverlap
   UnexpectedMessage
+  ObjectStreamNotReady
+  DeliveryTimeoutUnsupported
+  ClockNotInitialized
+  ObjectPayloadLengthMismatch
   BufferLimitExceeded
   DatagramSendUnavailable
   DatagramTooLarge(Int, Int)
@@ -179,10 +184,17 @@ pub struct ObjectGroupWriter {
   // private fields
 }
 pub fn ObjectGroupWriter::abort(Self, UInt64) -> Result[Array[SessionAction], ClientSessionError]
+pub fn ObjectGroupWriter::begin_object(Self, UInt64, properties? : Bytes) -> Result[(ObjectWriter, Array[SessionAction]), ClientSessionError]
 pub fn ObjectGroupWriter::finish(Self) -> Result[Array[SessionAction], ClientSessionError]
 pub fn ObjectGroupWriter::rotate(Self) -> Result[Array[SessionAction], ClientSessionError]
 pub fn ObjectGroupWriter::send(Self, Bytes) -> Result[Array[SessionAction], ClientSessionError]
 pub fn ObjectGroupWriter::send_frame(Self, @protocol.SubgroupFrame) -> Result[Array[SessionAction], ClientSessionError]
+
+pub struct ObjectWriter {
+  // private fields
+}
+pub fn ObjectWriter::finish(Self) -> Result[Array[SessionAction], ClientSessionError]
+pub fn ObjectWriter::write(Self, Bytes) -> Result[Array[SessionAction], ClientSessionError]
 
 pub(all) enum SendCompletion {
   Sent
@@ -195,8 +207,10 @@ pub fn SendCompletion::to_repr(Self) -> @debug.Repr
 pub(all) enum SessionAction {
   OpenStream(ClientStreamDirection, ClientStreamPurpose)
   SendChunk(Int64, Bytes)
+  SendObjectChunk(Int64, Bytes, UInt64)
   SendFin(Int64, Bytes)
   SendDatagram(UInt64, Bytes)
+  SendObjectDatagram(UInt64, Bytes, UInt64)
   AbortSend(Int64, UInt64)
   StopReceiving(Int64, UInt64)
   CloseConnection(UInt64, Bytes)
@@ -216,6 +230,7 @@ pub(all) enum SessionEvent {
   StreamReset(Int64, UInt64)
   SendStopped(Int64, UInt64)
   SendCompleted(Int64, SendCompletion)
+  StreamDataCommitted(Int64)
   DatagramSendComplete(UInt64)
   DatagramSendFailed(UInt64, Int64)
   Clock(UInt64)

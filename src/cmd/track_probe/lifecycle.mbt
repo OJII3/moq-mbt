@@ -162,6 +162,11 @@ fn lifecycle_poll(
       let (notices, _) = take_driver_events(peer.driver)
       notices
     }
+    StreamDataCommitted(stream) => {
+      peer.driver.committed(stream)
+      let (notices, _) = take_driver_events(peer.driver)
+      notices
+    }
     SendStopped(stream, code) => {
       let (notices, _) = drive_session_result(
         peer.client,

@@ -125,10 +125,11 @@ fn publisher_finish(
   }
   assert_eq(
     publisher.receive(@session.SendCompleted(stream, @session.Sent)),
-    Ok([
-      @session.EmitNotice(@session.StreamSendFinished(stream, @session.Sent)),
-      @session.EmitNotice(@session.ObjectStreamSendFinished(stream)),
-    ]),
+    Ok([@session.EmitNotice(@session.StreamSendFinished(stream, @session.Sent))]),
+  )
+  assert_eq(
+    publisher.receive(@session.StreamDataCommitted(stream)),
+    Ok([@session.EmitNotice(@session.ObjectStreamSendFinished(stream))]),
   )
 }
 

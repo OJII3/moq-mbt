@@ -10,6 +10,8 @@ pub(all) enum WebTransportStreamEvent {
   LocalStreamOpened(Int64, WebTransportStreamDirection)
   Data(Int64, Bytes)
   StreamFinished(Int64)
+  /// WebTransport close fulfilled after reaching all data committed.
+  StreamDataCommitted(Int64)
   StreamReset(Int64, WebTransportFailure)
   SendStopped(Int64, WebTransportFailure)
   StreamQueueOverflow(Int64)
@@ -109,6 +111,7 @@ fn WebTransportStreamManager::enqueue_stream_event(
           | LocalStreamOpened(stream, _)
           | Data(stream, _)
           | StreamFinished(stream)
+          | StreamDataCommitted(stream)
           | StreamReset(stream, _)
           | SendStopped(stream, _)
           | StreamQueueOverflow(stream) => stream
@@ -526,7 +529,9 @@ fn WebTransportStreamManager::open_stream(
 ///|
 /// Write bytes in call order, respecting writer.ready. `fin=true` closes the
 /// send side after the write. Completion means the browser accepted the write;
-/// it does not report a QUIC acknowledgement.
+/// non-final writes do not report a QUIC acknowledgement. A final write also
+/// waits for close, which the WebTransport specification defines to wait for
+/// all data committed.
 fn WebTransportStreamManager::write_stream(
   self : WebTransportStreamManager,
   stream : Int64,
@@ -600,6 +605,7 @@ fn WebTransportStreamManager::write_stream(
       writer.write(data.as_any())
       if fin {
         writer.close()
+        self.enqueue_stream_event(StreamDataCommitted(stream))
         writer.release_lock()
         self.release_writer(stream)
       }

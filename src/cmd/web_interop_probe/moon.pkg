@@ -6,6 +6,7 @@ import {
   "moonbitlang/core/encoding/utf8",
   "OJII3/moq-mbt/protocol",
   "OJII3/moq-mbt/session",
+  "OJII3/moq-mbt/driver",
   "OJII3/moq-mbt/js_adapter",
 }
 

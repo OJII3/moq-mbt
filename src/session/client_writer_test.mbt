@@ -62,23 +62,17 @@ fn writer_object_ids(
 }
 
 ///|
-test "object group writer queues objects and FIN until the stream opens" {
+test "object group writer rejects Objects before the stream opens" {
   let publisher = publisher_started()
   let (group, token) = writer_group_open(publisher, 0UL)
-  assert_eq(group.send(b"one"), Ok([]))
-  assert_eq(group.send(b"two"), Ok([]))
+  assert_eq(group.send(b"one"), Err(@session.ObjectStreamNotReady))
+  assert_eq(group.send(b"two"), Err(@session.ObjectStreamNotReady))
   assert_eq(group.finish(), Ok([]))
   let actions = publisher
     .receive(@session.StreamOpened(@session.Object(token), 50))
     .unwrap()
-  assert_eq(actions.length(), 4)
-  let (group_id, ids) = writer_object_ids(actions)
-  assert_eq(group_id, 0UL)
-  assert_eq(ids, [0UL, 1UL])
-  match actions[3] {
-    @session.SendFin(50, bytes) => assert_true(bytes.is_empty())
-    _ => fail("expected FIN after queued Objects")
-  }
+  assert_eq(actions.length(), 2)
+  assert_true(actions[1] is @session.SendFin(50, b""))
 }
 
 ///|
@@ -124,10 +118,11 @@ test "object group writer rotates to the next group" {
     ] => token
     _ => fail("expected FIN and the next OpenStream")
   }
-  ignore(group.send(b"second"))
-  let actions = publisher
+  assert_eq(group.send(b"second"), Err(@session.ObjectStreamNotReady))
+  let opened = publisher
     .receive(@session.StreamOpened(@session.Object(next_token), 52))
     .unwrap()
+  let actions = opened + group.send(b"second").unwrap()
   let (group_id, ids) = writer_object_ids(actions)
   assert_eq(group_id, 8UL)
   assert_eq(ids, [0UL])
@@ -137,7 +132,7 @@ test "object group writer rotates to the next group" {
 test "object group writer aborts a pending stream on open" {
   let publisher = publisher_started()
   let (group, token) = writer_group_open(publisher, 0UL)
-  ignore(group.send(b"queued"))
+  assert_eq(group.send(b"queued"), Err(@session.ObjectStreamNotReady))
   assert_eq(group.abort(5UL), Ok([]))
   assert_eq(
     publisher.receive(@session.StreamOpened(@session.Object(token), 50)),
