@@ -682,20 +682,11 @@ pub fn ClientSession::publish_track(
 }
 
 ///|
-/// Start a local unfiltered SUBSCRIBE request.
+/// Start a local SUBSCRIBE request, optionally with initial parameters.
 pub fn ClientSession::subscribe_track(
   self : ClientSession,
   track : @protocol.TrackName,
-) -> Result[(UInt64, Array[SessionAction]), ClientSessionError] {
-  self.subscribe_track_with_parameters(track, [])
-}
-
-///|
-/// Start a local SUBSCRIBE request with initial parameters.
-pub fn ClientSession::subscribe_track_with_parameters(
-  self : ClientSession,
-  track : @protocol.TrackName,
-  parameters : Array[@protocol.MessageParameter],
+  parameters~ : Array[@protocol.MessageParameter] = [],
 ) -> Result[(UInt64, Array[SessionAction]), ClientSessionError] {
   match self.start_subscription_request(track, parameters) {
     Ok((request_id, actions)) => {

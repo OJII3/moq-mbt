@@ -43,8 +43,7 @@ pub fn ClientSession::finish_object_stream(Self, Int64) -> Result[Array[SessionA
 pub fn ClientSession::finish_subscription_updates(Self, UInt64) -> Result[Array[SessionAction], ClientSessionError]
 pub fn ClientSession::forget_desired_subscriptions(Self, @protocol.TrackName) -> Unit
 pub fn ClientSession::max_datagram_length(Self) -> Int
-pub fn ClientSession::new(Version, @protocol.Setup) -> Result[Self, @protocol.CodecError]
-pub fn ClientSession::new_with_desired_subscriptions(Version, @protocol.Setup, Array[DesiredSubscription]) -> Result[Self, @protocol.CodecError]
+pub fn ClientSession::new(Version, @protocol.Setup, desired_subscriptions? : Array[DesiredSubscription]) -> Result[Self, @protocol.CodecError]
 pub fn ClientSession::open_object_group(Self, Int64, UInt64, end_of_group? : Bool) -> Result[(ObjectGroupWriter, Array[SessionAction]), ClientSessionError]
 pub fn ClientSession::open_object_stream(Self, Int64, @protocol.SubgroupHeader) -> Result[Array[SessionAction], ClientSessionError]
 pub fn ClientSession::publish_application_namespace(Self, @protocol.TrackNamespace) -> Result[Array[SessionAction], ClientSessionError]
@@ -69,8 +68,7 @@ pub fn ClientSession::send_object_datagram_for_track(Self, @protocol.TrackName, 
 pub fn ClientSession::start(Self) -> Result[Array[SessionAction], ClientSessionError]
 pub fn ClientSession::state(Self) -> ClientSessionState
 pub fn ClientSession::subscribe_namespace(Self, @protocol.TrackNamespace) -> Result[(UInt64, Array[SessionAction]), ClientSessionError]
-pub fn ClientSession::subscribe_track(Self, @protocol.TrackName) -> Result[(UInt64, Array[SessionAction]), ClientSessionError]
-pub fn ClientSession::subscribe_track_with_parameters(Self, @protocol.TrackName, Array[@protocol.MessageParameter]) -> Result[(UInt64, Array[SessionAction]), ClientSessionError]
+pub fn ClientSession::subscribe_track(Self, @protocol.TrackName, parameters? : Array[@protocol.MessageParameter]) -> Result[(UInt64, Array[SessionAction]), ClientSessionError]
 pub fn ClientSession::subscription_track(Self, Int64) -> @protocol.TrackName?
 pub fn ClientSession::track_alias_for_request(Self, UInt64) -> UInt64?
 pub fn ClientSession::track_for_request(Self, UInt64) -> @protocol.TrackName?

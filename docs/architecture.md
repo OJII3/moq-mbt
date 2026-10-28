@@ -50,7 +50,7 @@ Object Datagram の送信は token で追跡する。`send_object_datagram` は 
 
 ## 再接続時の購読復元
 
-`ClientSession` はアプリケーションが作成した SUBSCRIBE を desired subscription として保持する。接続が切れたら `desired_subscriptions()` で状態を取り出し、再接続用の `ClientSession::new_with_desired_subscriptions` に渡す。新sessionはSETUP完了後に購読を再発行し、新しいrequest IDを割り当てる。個別のdesiredを終了するには `cancel_request` を使い、切断中にtrackのdesiredを外すには `forget_desired_subscriptions` を使う。
+`ClientSession` はアプリケーションが作成した SUBSCRIBE を desired subscription として保持する。接続が切れたら `desired_subscriptions()` で状態を取り出し、再接続用の `ClientSession::new(..., desired_subscriptions=desired)` に渡す。新sessionはSETUP完了後に購読を再発行し、新しいrequest IDを割り当てる。個別のdesiredを終了するには `cancel_request` を使い、切断中にtrackのdesiredを外すには `forget_desired_subscriptions` を使う。
 
 ネットワーク接続の再試行や待ち時間は引き続きアダプターまたはアプリケーションが決める。sessionは再接続後の購読状態とrequest IDの再作成を担当する。
 

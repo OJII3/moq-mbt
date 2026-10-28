@@ -8,52 +8,23 @@ pub struct BrowserClient {
 
 ///|
 /// Open a WebTransport connection and create a Draft 18 client session.
-/// Call `start` before issuing session operations. The returned error explains
-/// when WebTransport is unavailable, including in a non-browser environment.
+/// Call `start` before issuing session operations. Optional certificate hashes
+/// enable certificate pinning; desired subscriptions are restored after SETUP.
 pub fn browser_connect(
   url : String,
   setup : @protocol.Setup,
+  certificate_hashes~ : Array[@arraybuffer.Uint8Array] = [],
+  desired_subscriptions~ : Array[@session.DesiredSubscription] = [],
 ) -> Result[BrowserClient, String] {
-  browser_connect_with_certificate_hashes(url, setup, [])
-}
-
-///|
-/// As `browser_connect`, with explicit SHA-256 WebTransport certificate
-/// hashes. Pass an empty list to use the browser's default Web PKI validation.
-pub fn browser_connect_with_certificate_hashes(
-  url : String,
-  setup : @protocol.Setup,
-  certificate_hashes : Array[@arraybuffer.Uint8Array],
-) -> Result[BrowserClient, String] {
-  browser_connect_internal(url, setup, certificate_hashes, [])
-}
-
-///|
-/// Open a WebTransport connection and restore desired track subscriptions
-/// after the new session completes SETUP.
-pub fn browser_connect_with_desired_subscriptions(
-  url : String,
-  setup : @protocol.Setup,
-  desired_subscriptions : Array[@session.DesiredSubscription],
-) -> Result[BrowserClient, String] {
-  browser_connect_internal(url, setup, [], desired_subscriptions)
-}
-
-///|
-fn browser_connect_internal(
-  url : String,
-  setup : @protocol.Setup,
-  certificate_hashes : Array[@arraybuffer.Uint8Array],
-  desired_subscriptions : Array[@session.DesiredSubscription],
-) -> Result[BrowserClient, String] {
-  let connection = match
-    webtransport_connect_with_certificate_hashes(url, certificate_hashes) {
+  let connection = match webtransport_connect(url, certificate_hashes~) {
     Ok(connection) => connection
     Err(message) => return Err(message)
   }
   match
-    WebTransportSessionDriver::from_setup_with_desired_subscriptions(
-      connection, setup, desired_subscriptions,
+    WebTransportSessionDriver::from_setup(
+      connection,
+      setup,
+      desired_subscriptions~,
     ) {
     Ok(driver) => Ok({ connection, driver, })
     Err(error) => {

@@ -90,10 +90,9 @@ async test "WebTransport connection and session lifecycle" {
   assert_true(validation.close(-1L, "") is Err(_))
   assert_true(validation.close(0L, "界".repeat(342)) is Err(_))
   let _with_hash = match
-    @js_adapter.webtransport_connect_with_certificate_hashes(
-      "moqt://example.test/local",
-      [@js_adapter.bytes_to_uint8array(b"test hash")],
-    ) {
+    @js_adapter.webtransport_connect("moqt://example.test/local", certificate_hashes=[
+      @js_adapter.bytes_to_uint8array(b"test hash"),
+    ]) {
     Ok(connection) => connection
     Err(message) => fail(message)
   }

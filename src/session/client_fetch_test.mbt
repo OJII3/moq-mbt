@@ -212,7 +212,7 @@ test "SUBSCRIBE sends its initial filter parameters" {
     { kind: 0x21UL, value: @protocol.Filter(@protocol.LargestObject), },
   ]
   let (request_id, actions) = client
-    .subscribe_track_with_parameters(track, parameters)
+    .subscribe_track(track, parameters~)
     .unwrap()
   assert_eq(request_id, 0UL)
   assert_eq(actions, [
