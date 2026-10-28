@@ -32,6 +32,13 @@ pub(all) enum TransportWriteOutcome {
 } derive(Debug, Eq)
 
 ///|
+/// Reason a `SessionDriver` entered its terminal failure state.
+pub(all) enum SessionDriverFailureReason {
+  SessionError(@session.ClientSessionError)
+  Transport(Int64)
+} derive(Debug, Eq)
+
+///|
 /// Transport operations required by `SessionDriver`.
 ///
 /// Implementations must invoke the completion callback exactly once for every
@@ -93,7 +100,7 @@ pub struct SessionDriver[T] {
   priv mut pumping : Bool
   priv mut repump : Bool
   priv mut failed : Bool
-  priv mut failure : @session.ClientSessionError?
+  priv mut failure_reason : SessionDriverFailureReason?
   priv mut update_handler : (() -> Unit)?
 }
 
@@ -121,7 +128,7 @@ pub fn[T] SessionDriver::new(
     pumping: false,
     repump: false,
     failed: false,
-    failure: None,
+    failure_reason: None,
     update_handler: None,
   }
 }
@@ -149,11 +156,11 @@ pub fn[T] SessionDriver::failed(self : SessionDriver[T]) -> Bool {
 }
 
 ///|
-/// The session error that stopped the driver, if any.
+/// The reason the driver entered its terminal failure state, if any.
 pub fn[T] SessionDriver::failure(
   self : SessionDriver[T],
-) -> @session.ClientSessionError? {
-  self.failure
+) -> SessionDriverFailureReason? {
+  self.failure_reason
 }
 
 ///|
@@ -402,7 +409,7 @@ fn[T : SessionTransport] SessionDriver::deliver_events(
               self.repump = true
             }
           Err(error) => {
-            self.failure = Some(error)
+            self.failure_reason = Some(SessionError(error))
             self.abort()
           }
         }
@@ -548,6 +555,7 @@ fn[T : SessionTransport] SessionDriver::fail(
   if self.failed {
     return
   }
+  self.failure_reason = Some(Transport(status))
   self.failed = true
   self.pending = []
   self.events = []
@@ -582,6 +590,14 @@ pub extend TransportWriteOutcome with @moonbitlang/core/debug.Debug::{to_repr}
 
 ///|
 pub extend TransportWriteOutcome with Eq::{equal, not_equal}
+
+///|
+pub extend SessionDriverFailureReason with @moonbitlang/core/debug.Debug::{
+  to_repr,
+}
+
+///|
+pub extend SessionDriverFailureReason with Eq::{equal, not_equal}
 
 ///|
 pub extend SessionDriverConfig with @moonbitlang/core/debug.Debug::{to_repr}

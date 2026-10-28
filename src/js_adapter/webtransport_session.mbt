@@ -200,7 +200,7 @@ pub fn WebTransportSessionDriver::from_setup_with_desired_subscriptions(
 /// transport events until the session or connection ends.
 pub fn WebTransportSessionDriver::start(
   self : WebTransportSessionDriver,
-) -> Result[Unit, @session.ClientSessionError] {
+) -> Result[Unit, @driver.SessionDriverFailureReason] {
   if self.active {
     return Ok(())
   }
