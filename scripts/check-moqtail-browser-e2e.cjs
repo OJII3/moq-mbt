@@ -34,19 +34,25 @@ async function runNative(role, mode) {
   let output = "";
   let resolveReady;
   let rejectReady;
+  let resolveSubscribed;
+  let rejectSubscribed;
   let resolveSuccess;
   let rejectSuccess;
   let stopping = false;
   const readyMarker = role === "publish" ? "PUBLISH request accepted" : "SUBSCRIBE request sent";
+  const subscribedMarker = "SUBSCRIBE_OK received";
   const successMarker = role === "publish" ? "PUBLISH_DONE send completed" : "PUBLISH_DONE received";
   const ready = new Promise((resolve, reject) => { resolveReady = resolve; rejectReady = reject; });
+  const subscribed = new Promise((resolve, reject) => { resolveSubscribed = resolve; rejectSubscribed = reject; });
   const success = new Promise((resolve, reject) => { resolveSuccess = resolve; rejectSuccess = reject; });
   ready.catch(() => {});
+  subscribed.catch(() => {});
   success.catch(() => {});
   const onOutput = (data, stream) => {
     output += data;
     stream.write(data);
     if (output.includes(readyMarker)) resolveReady();
+    if (output.includes(subscribedMarker)) resolveSubscribed();
     if (output.includes(successMarker)) resolveSuccess();
   };
   child.stdout.setEncoding("utf8").on("data", data => onOutput(data, process.stdout));
@@ -56,6 +62,9 @@ async function runNative(role, mode) {
     child.once("exit", (code, signal) => {
       if (!output.includes(readyMarker)) {
         rejectReady(new Error(`Native ${role} exited before readiness:\n${output}`));
+      }
+      if (role === "subscribe" && !stopping && !output.includes(subscribedMarker)) {
+        rejectSubscribed(new Error(`Native ${role} exited before subscription acceptance:\n${output}`));
       }
       if (role === "subscribe" && !stopping && !output.includes(successMarker)) {
         rejectSuccess(new Error(`Native ${role} exited before peer delivery:\n${output}`));
@@ -69,6 +78,7 @@ async function runNative(role, mode) {
     child,
     done,
     ready,
+    subscribed,
     success,
     output: () => output,
     start: () => {},
@@ -152,6 +162,11 @@ async function main() {
       nativeSubscriber = await runNative("subscribe", mode);
       nativePeers.push(nativeSubscriber);
       await withTimeout(nativeSubscriber.ready, 20000, "timed out waiting for Native SUBSCRIBE request");
+      await withTimeout(
+        nativeSubscriber.subscribed,
+        20000,
+        "timed out waiting for Native SUBSCRIBE acceptance",
+      );
       await page.evaluate(() => globalThis.__moqE2EStart());
     }
     try {
