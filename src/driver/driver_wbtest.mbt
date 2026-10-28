@@ -268,6 +268,10 @@ test "driver terminates on an asynchronous stream open failure" {
   driver.dispatch(session.start().unwrap())
   transport.complete_open(OpenFailed(-10L))
   assert_true(driver.failed())
+  assert_eq(
+    driver.failure_reason(),
+    Some(SessionDriverFailureReason::Transport(-10L)),
+  )
   assert_eq(driver.take_notices(), [
     @session.SessionEnded(@session.Transport(-10L)),
   ])
@@ -284,6 +288,10 @@ test "driver terminates on an asynchronous stream write failure" {
   driver.dispatch([@session.SendChunk(4L, b"payload")])
   transport.complete_send(4L, WriteFailed(-11L))
   assert_true(driver.failed())
+  assert_eq(
+    driver.failure_reason(),
+    Some(SessionDriverFailureReason::Transport(-11L)),
+  )
   assert_eq(driver.take_notices(), [
     @session.SessionEnded(@session.Transport(-11L)),
   ])
@@ -298,6 +306,10 @@ test "driver treats a transport failure event as terminal" {
   )
   driver.receive(@session.TransportFailed(-12L))
   assert_true(driver.failed())
+  assert_eq(
+    driver.failure_reason(),
+    Some(SessionDriverFailureReason::Transport(-12L)),
+  )
   assert_eq(driver.take_notices(), [
     @session.SessionEnded(@session.Transport(-12L)),
   ])
@@ -314,6 +326,10 @@ test "driver turns a fatal transport result into a session end" {
   )
   driver.dispatch([@session.SendChunk(4L, b"payload")])
   assert_true(driver.failed())
+  assert_eq(
+    driver.failure_reason(),
+    Some(SessionDriverFailureReason::Transport(-9L)),
+  )
   assert_eq(driver.take_notices(), [
     @session.SessionEnded(@session.Transport(-9L)),
   ])
@@ -368,6 +384,7 @@ test "driver reports datagram write failure without failing the session" {
   assert_eq(transport.datagrams.length(), 1)
   transport.datagram_callbacks[0](WriteFailed(-4L))
   assert_false(driver.failed())
+  assert_eq(driver.failure_reason(), None)
   assert_eq(driver.take_notices(), [@session.DatagramLocalWriteFailed(7UL, -4L)])
 }
 
