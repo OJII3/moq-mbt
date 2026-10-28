@@ -164,31 +164,18 @@ pub fn WebTransportSessionDriver::new(
 
 ///|
 /// Create a WebTransport driver and remove the Native-only PATH and AUTHORITY
-/// setup parameters. Their WebTransport equivalents come from the URL.
+/// setup parameters. Their WebTransport equivalents come from the URL. Pass
+/// `desired_subscriptions` to restore those subscriptions after SETUP.
 pub fn WebTransportSessionDriver::from_setup(
   connection : WebTransportConnection,
   setup : @protocol.Setup,
-) -> Result[WebTransportSessionDriver, @protocol.CodecError] {
-  WebTransportSessionDriver::from_setup_with_desired_subscriptions(
-    connection,
-    setup,
-    [],
-  )
-}
-
-///|
-/// Create a WebTransport driver that restores desired subscriptions after
-/// the peer completes SETUP.
-pub fn WebTransportSessionDriver::from_setup_with_desired_subscriptions(
-  connection : WebTransportConnection,
-  setup : @protocol.Setup,
-  desired_subscriptions : Array[@session.DesiredSubscription],
+  desired_subscriptions~ : Array[@session.DesiredSubscription] = [],
 ) -> Result[WebTransportSessionDriver, @protocol.CodecError] {
   match
-    @session.ClientSession::new_with_desired_subscriptions(
+    @session.ClientSession::new(
       @session.Draft18,
       setup.for_webtransport(),
-      desired_subscriptions,
+      desired_subscriptions~,
     ) {
     Ok(session) => Ok(WebTransportSessionDriver::new(connection, session))
     Err(error) => Err(error)

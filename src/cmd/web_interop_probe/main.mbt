@@ -41,11 +41,9 @@ fn main {
       ffi_set_status("connecting")
       let setup = @protocol.Setup::{ options: [], }
       let client_result = if ffi_has_certificate_hash() {
-        @js_adapter.browser_connect_with_certificate_hashes(
-          ffi_moq_uri(),
-          setup,
-          [ffi_certificate_hash()],
-        )
+        @js_adapter.browser_connect(ffi_moq_uri(), setup, certificate_hashes=[
+          ffi_certificate_hash(),
+        ])
       } else {
         @js_adapter.browser_connect(ffi_moq_uri(), setup)
       }

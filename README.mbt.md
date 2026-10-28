@@ -160,7 +160,9 @@ receive `HandshakeComplete` before making requests through `session()`. Pass
 each request's returned actions to `dispatch()`, and continue reading notices
 to observe its result. `next_notice()` resolves to `None` when the session ends.
 Call `close(code, reason)` when the application is done. For an explicitly
-trusted certificate hash, use `browser_connect_with_certificate_hashes`.
+trusted certificate hash, pass `certificate_hashes=hashes` to
+`browser_connect`. To restore subscriptions after reconnecting, pass
+`desired_subscriptions=desired` to the same function.
 
 See [`src/js_adapter/README.md`](src/js_adapter/README.md) for the complete
 adapter API, certificate pinning, browser requirements, buffer limits, and

@@ -184,7 +184,7 @@ fn run_subscriber(
   defer client.close()
   let driver = SessionActionDriver::new()
   let (request_id, actions) = session
-    .subscribe_track_with_parameters(track, [
+    .subscribe_track(track, parameters=[
       { kind: 4UL, value: @protocol.VarInt(10000UL), },
     ])
     .unwrap()

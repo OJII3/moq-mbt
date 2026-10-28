@@ -339,7 +339,7 @@ pub fn run_joining_fetch(
     closed_streams: {},
   }
   let (subscribe_id, actions) = subscriber_session
-    .subscribe_track_with_parameters(track, [
+    .subscribe_track(track, parameters=[
       { kind: 0x21UL, value: @protocol.Filter(@protocol.LargestObject), },
     ])
     .unwrap()

@@ -16,10 +16,10 @@ property. As of 2026-10-23, those negotiation features are supported by Chrome
 time; check the browser's WebTransport support before connecting.
 
 By default, certificate verification uses the browser's Web PKI. For an
-explicitly trusted local or ephemeral certificate, call
-`webtransport_connect_with_certificate_hashes` with SHA-256 certificate hashes
-as `Uint8Array` values. This opts into the WebTransport certificate-hash
-mechanism and its browser restrictions; it does not disable TLS verification.
+explicitly trusted local or ephemeral certificate, pass
+the SHA-256 hashes as `certificate_hashes=hashes` to `webtransport_connect`.
+This opts into the WebTransport certificate-hash mechanism and its browser
+restrictions; it does not disable TLS verification.
 
 `ready()` resolves to `Ok(protocol)` or `Err(WebTransportFailure)`, including
 typed error name, message, source, and stream error code. `wait_ready(timeout_ms)`
@@ -75,9 +75,10 @@ releases the reader and writer and resolves waiting reads with `DatagramsClosed`
 
 `WebTransportSessionDriver::from_setup(connection, setup)` creates a Draft 18
 `ClientSession` and removes Native-only PATH and AUTHORITY parameters from its
-SETUP options; the WebTransport URL supplies those values. Call `start()` after
-connection creation, then use `dispatch(actions)` for actions returned by
-operations on `driver.session()`, and `next_notice()` to receive session
+SETUP options; the WebTransport URL supplies those values. Pass
+`desired_subscriptions=desired` to restore subscriptions after reconnecting.
+Call `start()` after connection creation, then use `dispatch(actions)` for
+operations on `driver.session()` and `next_notice()` to receive session
 notices. The adapter implements `SessionTransport` from the shared `driver`
 package; action queueing, per-stream ordering, and retry live there, with
 in-flight limits (8 opens / 128 sends / 32 datagrams) passed as
@@ -108,9 +109,12 @@ operation's returned actions to `dispatch()`, and await `next_notice()` for
 results. Call `close(code, reason)` when the application is done; `closed()`
 reports whether the local peer, remote peer, or transport failure ended the
 connection. To restore subscriptions after reconnecting, pass the previous
-session's `desired_subscriptions()` to
-`browser_connect_with_desired_subscriptions(url, setup, desired)`. The facade
-does not access `window` or `document` during import.
+session's `desired_subscriptions()` as
+`browser_connect(url, setup, desired_subscriptions=desired)`. The facade
+does not access `window` or `document` during import. Certificate hashes and
+restored subscriptions can be supplied together as
+`browser_connect(url, setup, certificate_hashes=hashes,
+desired_subscriptions=desired)`.
 
 See [`examples/browser`](../examples/browser) for a runnable publish /
 subscribe page.

@@ -41,19 +41,11 @@ pub struct WebTransportConnection {
 ///|
 /// Create a WebTransport session from an HTTPS URL or an MOQT URI. For an
 /// MOQT URI, its path and query are preserved while replacing `moqt:` with
-/// `https:`. The browser's default certificate validation remains enabled.
+/// `https:`. An empty hash list uses the browser's default Web PKI validation;
+/// supplying SHA-256 hashes pins the server certificate.
 pub fn webtransport_connect(
   moqt_uri : String,
-) -> Result[WebTransportConnection, String] {
-  webtransport_connect_with_certificate_hashes(moqt_uri, [])
-}
-
-///|
-/// As `webtransport_connect`, with explicit SHA-256 server certificate hashes.
-/// An empty list keeps the browser's default Web PKI validation.
-pub fn webtransport_connect_with_certificate_hashes(
-  moqt_uri : String,
-  certificate_hashes : Array[@arraybuffer.Uint8Array],
+  certificate_hashes~ : Array[@arraybuffer.Uint8Array] = [],
 ) -> Result[WebTransportConnection, String] {
   let connection_box : Ref[WebTransportConnection?] = { val: None, }
   let _result = @js.try_sync(fn() {

@@ -281,20 +281,14 @@ pub struct ClientSession {
 }
 
 ///|
+/// Create a session that restores these desired track subscriptions after
+/// SETUP completes. Each restored request receives a fresh request ID.
+/// Pass an empty list or omit the argument to start without restored
+/// subscriptions.
 pub fn ClientSession::new(
   version : Version,
   setup : @protocol.Setup,
-) -> Result[ClientSession, @protocol.CodecError] {
-  ClientSession::new_with_desired_subscriptions(version, setup, [])
-}
-
-///|
-/// Create a session that restores these desired track subscriptions after
-/// SETUP completes. Each restored request receives a fresh request ID.
-pub fn ClientSession::new_with_desired_subscriptions(
-  version : Version,
-  setup : @protocol.Setup,
-  desired_subscriptions : Array[DesiredSubscription],
+  desired_subscriptions~ : Array[DesiredSubscription] = [],
 ) -> Result[ClientSession, @protocol.CodecError] {
   match ClientHandshake::new(version, setup) {
     Err(error) => Err(error)

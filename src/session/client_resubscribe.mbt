@@ -37,7 +37,7 @@ fn copy_desired_subscriptions(
 
 ///|
 /// Return the current reconnect intent for this session. This snapshot can be
-/// passed to `ClientSession::new_with_desired_subscriptions` when reconnecting.
+/// passed as `desired_subscriptions` to `ClientSession::new` when reconnecting.
 pub fn ClientSession::desired_subscriptions(
   self : ClientSession,
 ) -> Array[DesiredSubscription] {
