@@ -108,7 +108,9 @@ async fn run_subscriber(
         match client.session().subscribe_track(track) {
           Ok((id, actions)) => {
             request_id = id
-            client.dispatch(actions)
+            if !dispatch_actions(client, actions) {
+              return
+            }
             match client.next_opened_stream().wait() {
               Some((@session.Request(opened_id), _)) if opened_id == id => ()
               Some(_) => {
@@ -198,7 +200,9 @@ async fn publish_group(
     }
   }
   ffi_set_status("opening-group-\{group_id}")
-  client.dispatch(actions)
+  if !dispatch_actions(client, actions) {
+    return false
+  }
   let object_stream = match client.next_opened_stream().wait() {
     Some((@session.Object(_), stream)) => stream
     Some(_) => {
@@ -219,7 +223,7 @@ async fn publish_group(
       payload: @utf8.encode("group-\{group_id}-object-\{object_id}"),
     }
     match client.session().send_object(object_stream, frame) {
-      Ok(actions) => client.dispatch(actions)
+      Ok(actions) => if !dispatch_actions(client, actions) { return false }
       Err(error) => {
         ffi_set_status("failed: \{error.to_repr()}")
         return false
@@ -227,7 +231,7 @@ async fn publish_group(
     }
   }
   match client.session().finish_object_stream(object_stream) {
-    Ok(actions) => client.dispatch(actions)
+    Ok(actions) => if !dispatch_actions(client, actions) { return false }
     Err(error) => {
       ffi_set_status("failed: \{error.to_repr()}")
       return false
@@ -271,6 +275,28 @@ async fn close_connection(client : @js_adapter.BrowserClient) -> Unit {
 }
 
 ///|
+fn dispatch_actions(
+  client : @js_adapter.BrowserClient,
+  actions : Array[@session.SessionAction],
+) -> Bool {
+  match client.dispatch(actions) {
+    @driver.Dispatched => true
+    @driver.QueueFull => {
+      ffi_set_status("failed: action queue full")
+      false
+    }
+    @driver.TooLarge => {
+      ffi_set_status("failed: action batch too large")
+      false
+    }
+    @driver.DriverFailed => {
+      ffi_set_status("failed: session driver failed")
+      false
+    }
+  }
+}
+
+///|
 async fn run_publisher(
   client : @js_adapter.BrowserClient,
   track : @protocol.TrackName,
@@ -300,7 +326,9 @@ async fn run_publisher(
         match client.session().publish_track(track, 1UL) {
           Ok((id, actions)) => {
             publish_id = id
-            client.dispatch(actions)
+            if !dispatch_actions(client, actions) {
+              return
+            }
             match client.next_opened_stream().wait() {
               Some((@session.Request(request_id), stream)) if request_id == id =>
                 publish_stream = Some(stream)
@@ -329,7 +357,7 @@ async fn run_publisher(
           return
         }
         match client.session().publish_done(stream, 0UL, b"") {
-          Ok(actions) => client.dispatch(actions)
+          Ok(actions) => if !dispatch_actions(client, actions) { return }
           Err(error) => {
             ffi_set_status("failed: \{error.to_repr()}")
             return

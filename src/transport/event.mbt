@@ -88,7 +88,10 @@ pub(all) enum Event {
   StreamClosed(Int64)
   StreamReset(Int64, Int64)
   SendStopped(Int64, Int64)
+  /// Local send-buffer release; this is not peer acknowledgement.
   SendComplete(Int64, Bool)
+  /// The peer acknowledged all stream data and the final offset.
+  StreamDataCommitted(Int64)
   Closed(Int64)
   TransportClosed(Int32)
   QueueOverflow

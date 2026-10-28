@@ -60,6 +60,8 @@ pub fn encode_subgroup_frame(SubgroupHeader, UInt64?, SubgroupFrame) -> Result[B
 
 pub fn encode_subgroup_header(SubgroupHeader) -> Bytes
 
+pub fn encode_subgroup_object_header(SubgroupHeader, UInt64?, UInt64, Bytes, UInt64) -> Result[Bytes, CodecError]
+
 pub fn encode_subgroup_stream(SubgroupHeader, Array[SubgroupFrame]) -> Result[Bytes, CodecError]
 
 pub fn encode_subscribe(SubscribeMessage) -> Result[Bytes, CodecError]

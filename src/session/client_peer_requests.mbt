@@ -297,7 +297,7 @@ pub fn ClientSession::accept_subscription(
           [{ kind: 0x09UL, value: @protocol.Location(group_id, object_id), }]
         None => []
       },
-      properties: b"",
+      properties: request.properties,
     }) {
     Ok(value) => value
     Err(error) => return Err(Encoding(error))

@@ -18,7 +18,7 @@ pub(all) enum TransportOpenOutcome {
 } derive(Debug, Eq)
 
 ///|
-/// Completion of a stream write or datagram send.
+/// Local completion of a stream write or datagram send, not peer delivery.
 ///
 /// `Abandoned` reports that the transport will never report this send again,
 /// for example after a local abort. It only releases the driver's in-flight
@@ -36,6 +36,7 @@ pub(all) enum TransportWriteOutcome {
 pub(all) enum SessionDriverFailureReason {
   SessionError(@session.ClientSessionError)
   Transport(Int64)
+  PendingOverflow
 } derive(Debug, Eq)
 
 ///|
@@ -63,22 +64,45 @@ pub(open) trait SessionTransport {
 
 ///|
 /// Maximum number of transport-accepted operations awaiting completion.
-/// These limits cover opens, stream sends, and datagram sends in flight; they
-/// do not bound the driver's queue of actions awaiting transport acceptance.
-/// A value of zero or less disables the corresponding limit.
+/// In-flight limits may be disabled with zero. Pending action and byte limits
+/// must be positive; control actions are exempt so aborts remain available.
+/// Stream writes are divided into chunks of at most max_send_chunk_bytes.
 pub(all) struct SessionDriverConfig {
   max_in_flight_opens : Int32
   max_in_flight_sends : Int32
   max_in_flight_datagrams : Int32
+  max_pending_actions : Int32
+  max_pending_bytes : Int64
+  max_send_chunk_bytes : Int32
 } derive(Debug, Eq)
+
+///|
+pub(all) enum DriverDispatchResult {
+  Dispatched
+  QueueFull
+  TooLarge
+  DriverFailed
+} derive(Debug, Eq)
+
+///|
+priv struct PendingAction {
+  action : @session.SessionAction
+  offset : Int32
+  state : PendingState
+}
+
+///|
+priv struct PendingState {
+  mut failed : Bool
+}
 
 ///|
 /// Portable pump for `SessionAction` values.
 ///
 /// The driver tracks transport-accepted operations in flight, retries
 /// temporarily refused actions without blocking unrelated streams, and turns
-/// transport completions back into session events. Its queue of actions
-/// awaiting transport acceptance has no configured size limit. All calls,
+/// transport completions back into session events. Pending data is bounded
+/// by the configured action and byte limits. All calls,
 /// including transport completion callbacks, must be serialized on one thread.
 /// Adapters only implement `SessionTransport`; they do not match on
 /// `SessionAction`.
@@ -86,7 +110,9 @@ pub struct SessionDriver[T] {
   priv transport : T
   priv session : @session.ClientSession
   priv config : SessionDriverConfig
-  priv mut pending : Array[@session.SessionAction]
+  priv mut pending : Array[PendingAction]
+  priv mut now_ms : UInt64
+  priv mut clock : (() -> UInt64)?
   priv mut events : Array[@session.SessionEvent]
   priv mut notices : Array[@session.SessionNotice]
   priv mut opened_streams : Array[(@session.ClientStreamPurpose, Int64)]
@@ -95,6 +121,7 @@ pub struct SessionDriver[T] {
   priv send_streams : Map[Int64, Int32]
   priv mut in_flight_datagrams : Int32
   priv blocked_streams : Array[Int64]
+  priv chunk_blocked_streams : Array[Int64]
   priv mut blocked_datagrams : Bool
   priv mut blocked_opens : Bool
   priv mut pumping : Bool
@@ -115,6 +142,8 @@ pub fn[T] SessionDriver::new(
     session,
     config,
     pending: [],
+    now_ms: 0UL,
+    clock: None,
     events: [],
     notices: [],
     opened_streams: [],
@@ -123,6 +152,7 @@ pub fn[T] SessionDriver::new(
     send_streams: Map([]),
     in_flight_datagrams: 0,
     blocked_streams: [],
+    chunk_blocked_streams: [],
     blocked_datagrams: false,
     blocked_opens: false,
     pumping: false,
@@ -164,17 +194,90 @@ pub fn[T] SessionDriver::failure(
 }
 
 ///|
-/// Enqueue actions returned by a public `ClientSession` operation and pump
-/// them through the transport.
+/// Atomically enqueue actions and pump them through the transport. On Retry,
+/// the caller retains the entire action array and may retry dispatch after
+/// progress; it must not repeat the session operation that produced it.
+/// TooLarge cannot succeed even when the queue is empty. Control-only batches
+/// remain admissible when the data queue is full.
 pub fn[T : SessionTransport] SessionDriver::dispatch(
   self : SessionDriver[T],
   actions : Array[@session.SessionAction],
-) -> Unit {
+) -> DriverDispatchResult {
   if self.failed {
-    return
+    return DriverFailed
   }
-  self.pending = self.pending + actions
+  let (count, bytes) = action_size(actions)
+  if count > self.config.max_pending_actions ||
+    bytes > self.config.max_pending_bytes {
+    return TooLarge
+  }
+  let existing = self.pending.map(fn(item) { item.action })
+  let (pending_count, pending_bytes) = action_size(existing)
+  if count + pending_count > self.config.max_pending_actions ||
+    bytes + pending_bytes > self.config.max_pending_bytes {
+    return QueueFull
+  }
+  self.append_actions(actions)
   self.pump()
+  Dispatched
+}
+
+///|
+fn action_size(actions : Array[@session.SessionAction]) -> (Int32, Int64) {
+  let mut count = 0
+  let mut bytes = 0L
+  for action in actions {
+    match action {
+      @session.SendChunk(_, data)
+      | @session.SendFin(_, data)
+      | @session.SendObjectChunk(_, data, _)
+      | @session.SendDatagram(_, data)
+      | @session.SendObjectDatagram(_, data, _) => {
+        count = count + 1
+        bytes = bytes + data.length().to_int64()
+      }
+      @session.OpenStream(_, _) => count = count + 1
+      _ => ()
+    }
+  }
+  (count, bytes)
+}
+
+///|
+fn[T] SessionDriver::append_actions(
+  self : SessionDriver[T],
+  actions : Array[@session.SessionAction],
+) -> Unit {
+  for action in actions {
+    self.pending.push({ action, offset: 0, state: { failed: false, }, })
+  }
+}
+
+///|
+/// Update the monotonic time used to expire queued object writes.
+pub fn[T] SessionDriver::set_now_ms(
+  self : SessionDriver[T],
+  now_ms : UInt64,
+) -> Unit {
+  self.now_ms = now_ms
+}
+
+///|
+/// Supply the monotonic clock. It is read immediately before queued writes,
+/// including writes resumed by completion callbacks.
+pub fn[T] SessionDriver::set_clock(
+  self : SessionDriver[T],
+  clock : () -> UInt64,
+) -> Unit {
+  self.clock = Some(clock)
+}
+
+///|
+fn[T] SessionDriver::current_time(self : SessionDriver[T]) -> UInt64 {
+  match self.clock {
+    Some(clock) => clock()
+    None => self.now_ms
+  }
 }
 
 ///|
@@ -263,9 +366,10 @@ pub fn[T : SessionTransport] SessionDriver::pump(
   self.blocked_opens = false
   while true {
     self.repump = false
-    self.attempt_pending()
+    self.chunk_blocked_streams.clear()
+    self.deliver_events()
     if !self.failed {
-      self.deliver_events()
+      self.attempt_pending()
     }
     if self.failed || !self.repump {
       break
@@ -279,16 +383,32 @@ pub fn[T : SessionTransport] SessionDriver::pump(
 fn[T : SessionTransport] SessionDriver::attempt_pending(
   self : SessionDriver[T],
 ) -> Unit {
-  let remaining : Array[@session.SessionAction] = []
+  let remaining : Array[PendingAction] = []
   let aborted_streams : Array[Int64] = []
+  // Cancellation takes precedence over data already waiting in the queue.
+  for item in self.pending {
+    if item.action is @session.AbortSend(stream, _) {
+      aborted_streams.push(stream)
+    }
+  }
   let mut index = 0
   while index < self.pending.length() && !self.failed {
-    let action = self.pending[index]
+    // Process synchronous completions before attempting another action. They
+    // can terminate the session or cancel a stream.
+    if !self.events.is_empty() {
+      self.repump = true
+      break
+    }
+    let item = self.pending[index]
+    let action = item.action
     index = index + 1
+    if item.state.failed {
+      continue
+    }
     match action {
       @session.OpenStream(direction, purpose) =>
         if self.blocked_opens || self.at_open_limit() {
-          remaining.push(action)
+          remaining.push(item)
         } else {
           self.in_flight_opens = self.in_flight_opens + 1
           let accepted = self.transport.open_stream(direction, purpose, fn(
@@ -301,7 +421,7 @@ fn[T : SessionTransport] SessionDriver::attempt_pending(
             Retry => {
               self.in_flight_opens = self.in_flight_opens - 1
               self.blocked_opens = true
-              remaining.push(action)
+              remaining.push(item)
             }
             Fatal(status) => {
               self.in_flight_opens = self.in_flight_opens - 1
@@ -309,26 +429,66 @@ fn[T : SessionTransport] SessionDriver::attempt_pending(
             }
           }
         }
-      @session.SendChunk(stream, bytes) | @session.SendFin(stream, bytes) =>
-        if self.blocked_streams.contains(stream) || self.at_send_limit() {
-          remaining.push(action)
+      @session.SendChunk(stream, bytes)
+      | @session.SendFin(stream, bytes)
+      | @session.SendObjectChunk(stream, bytes, _) =>
+        if aborted_streams.contains(stream) {
+          self.repump = true
+        } else if action is @session.SendObjectChunk(_, _, deadline) &&
+          self.current_time() > deadline {
+          aborted_streams.push(stream)
+          self.events.push(@session.SendStopped(stream, 2UL))
+          self.repump = true
+        } else if self.blocked_streams.contains(stream) ||
+          self.chunk_blocked_streams.contains(stream) ||
+          self.at_send_limit() ||
+          (
+            bytes.length() > self.config.max_send_chunk_bytes &&
+            self.has_pending_sends(stream)
+          ) {
+          remaining.push(item)
+          self.chunk_blocked_streams.push(stream)
         } else {
           let fin = match action {
             @session.SendFin(_, _) => true
             _ => false
           }
+          let end = Int32::min(
+            item.offset + Int32::max(1, self.config.max_send_chunk_bytes),
+            bytes.length(),
+          )
+          let last = end == bytes.length()
+          let chunk = bytes[item.offset:end].to_owned()
           self.in_flight_sends = self.in_flight_sends + 1
           self.note_send_started(stream)
-          let accepted = self.transport.send(stream, bytes, fin, fn(outcome) {
-            self.note_send(stream, outcome)
+          let accepted = self.transport.send(stream, chunk, fin && last, fn(
+            outcome,
+          ) {
+            if outcome != Written {
+              item.state.failed = true
+            }
+            self.note_send(
+              stream,
+              if outcome == Written && !last {
+                Abandoned
+              } else {
+                outcome
+              },
+            )
           })
           match accepted {
-            Accepted => self.repump = true
+            Accepted => {
+              if !last {
+                remaining.push({ action, offset: end, state: item.state, })
+                self.chunk_blocked_streams.push(stream)
+              }
+              self.repump = true
+            }
             Retry => {
               self.in_flight_sends = self.in_flight_sends - 1
               self.note_send_settled(stream)
               self.blocked_streams.push(stream)
-              remaining.push(action)
+              remaining.push(item)
             }
             Fatal(status) => {
               self.in_flight_sends = self.in_flight_sends - 1
@@ -337,9 +497,14 @@ fn[T : SessionTransport] SessionDriver::attempt_pending(
             }
           }
         }
-      @session.SendDatagram(token, bytes) =>
-        if self.blocked_datagrams || self.at_datagram_limit() {
-          remaining.push(action)
+      @session.SendDatagram(token, bytes)
+      | @session.SendObjectDatagram(token, bytes, _) =>
+        if action is @session.SendObjectDatagram(_, _, deadline) &&
+          self.current_time() > deadline {
+          self.events.push(@session.DatagramSendComplete(token))
+          self.repump = true
+        } else if self.blocked_datagrams || self.at_datagram_limit() {
+          remaining.push(item)
         } else {
           self.in_flight_datagrams = self.in_flight_datagrams + 1
           let accepted = self.transport.send_datagram(bytes, fn(outcome) {
@@ -350,7 +515,7 @@ fn[T : SessionTransport] SessionDriver::attempt_pending(
             Retry => {
               self.in_flight_datagrams = self.in_flight_datagrams - 1
               self.blocked_datagrams = true
-              remaining.push(action)
+              remaining.push(item)
             }
             Fatal(status) => {
               self.in_flight_datagrams = self.in_flight_datagrams - 1
@@ -381,13 +546,19 @@ fn[T : SessionTransport] SessionDriver::attempt_pending(
     self.pending = []
     return
   }
-  let filtered : Array[@session.SessionAction] = []
-  for action in remaining {
-    match action {
-      @session.SendChunk(stream, _) | @session.SendFin(stream, _) if aborted_streams.contains(
+  while index < self.pending.length() {
+    remaining.push(self.pending[index])
+    index = index + 1
+  }
+  let filtered : Array[PendingAction] = []
+  for item in remaining {
+    match item.action {
+      @session.SendChunk(stream, _)
+      | @session.SendFin(stream, _)
+      | @session.SendObjectChunk(stream, _, _) if aborted_streams.contains(
           stream,
         ) => self.repump = true
-      _ => filtered.push(action)
+      _ => filtered.push(item)
     }
   }
   self.pending = filtered
@@ -405,7 +576,18 @@ fn[T : SessionTransport] SessionDriver::deliver_events(
         match self.session.receive(event) {
           Ok(actions) =>
             if actions.length() > 0 {
-              self.pending = self.pending + actions
+              let existing = self.pending.map(fn(item) { item.action })
+              let (count, bytes) = action_size(existing + actions)
+              if count > self.config.max_pending_actions ||
+                bytes > self.config.max_pending_bytes {
+                self.failure_reason = Some(PendingOverflow)
+                self.transport.close_connection(
+                  1UL, b"driver pending queue overflow",
+                )
+                self.abort()
+              } else {
+                self.append_actions(actions)
+              }
               self.repump = true
             }
           Err(error) => {
@@ -604,3 +786,9 @@ pub extend SessionDriverConfig with @moonbitlang/core/debug.Debug::{to_repr}
 
 ///|
 pub extend SessionDriverConfig with Eq::{equal, not_equal}
+
+///|
+pub extend DriverDispatchResult with @moonbitlang/core/debug.Debug::{to_repr}
+
+///|
+pub extend DriverDispatchResult with Eq::{equal, not_equal}

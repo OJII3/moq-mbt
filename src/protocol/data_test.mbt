@@ -1,4 +1,36 @@
 ///|
+test "streaming object header matches complete frame encoding" {
+  let header : @protocol.SubgroupHeader = {
+    track_alias: 1,
+    group_id: 0,
+    subgroup_id_mode: @protocol.Zero,
+    publisher_priority: None,
+    end_of_group: false,
+    first_object: true,
+    has_properties: true,
+  }
+  for payload in [b"", b"hello"] {
+    let frame : @protocol.SubgroupFrame = {
+      object_id: 3,
+      status: @protocol.Normal,
+      properties: b"p",
+      payload,
+    }
+    let prefix = @protocol.encode_subgroup_object_header(
+      header,
+      Some(1UL),
+      3UL,
+      b"p",
+      payload.length().to_uint64(),
+    ).unwrap()
+    assert_eq(
+      prefix + payload,
+      @protocol.encode_subgroup_frame(header, Some(1UL), frame).unwrap(),
+    )
+  }
+}
+
+///|
 test "one reliable subgroup frame round-trips including empty payload" {
   let header : @protocol.SubgroupHeader = {
     track_alias: 1,

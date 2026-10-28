@@ -24,9 +24,9 @@
 
 外部パッケージのテストは `test_support.ScriptedTransport` と実際の `SessionDriver` を組み合わせる。テスト側は受理・再試行・完了をscriptし、peerイベントをdriverへ渡す。sessionの処理や状態遷移をテスト用コードに複製しない。
 
-送信アクションの実行は `driver` の `SessionDriver` に集約する。アダプターは `SessionTransport` の primitive 操作だけを実装し、`SessionAction` の variant ごとの分岐や queue を持たない。`SessionDriver` は transport に受理される前のアクションを保持し、`Retry` では同じアクションを再試行する。ストリームごとのアクション順を維持し、あるストリームの拒否が無関係なストリームの送信を止めない。`SessionDriverConfig` の `max_in_flight_*` は transport に受理されて完了 callback を待つ open / send / datagram 数を制限する。これは未受理アクションを保持する driver queue の上限ではなく、その queue 自体には現在上限がない。各 adapter や transport が持つ個別 queue の上限とは別の制御である。
+送信アクションの実行は `driver` の `SessionDriver` に集約する。アダプターは `SessionTransport` の primitive 操作だけを実装する。driver は Stream ごとの順序を守り、transport の一時的な拒否を再試行する。`SessionDriverConfig` は送信中の操作数に加え、driver で待機中のアクション数とバイト数、および一回の Stream write のサイズを制限する。`dispatch` が `QueueFull` を返した場合、呼び出し元は同じアクションを保持し、空きができた後に再試行する。session 操作自体は繰り返さない。`TooLarge` はアクション群を小さくする必要があることを示す。
 
-driver は `Accepted` の完了を `StreamOpened`、`SendCompleted`、`StreamReset`、`TransportFailed` などのセッションイベントに変換して session へ戻す。`SendCompleted` は `Sent` または `Reset` を取り、bool の意味を呼び出し側に推測させない。開設や送信の致命的失敗は `TransportFailed` として渡し、アクションを黙って破棄しない。アクションの受理はトランスポートへの投入を意味し、ピアでのアプリケーション処理完了は別途通知で追跡する。
+driver は開設や書き込みの完了、失敗をセッションイベントに変換する。書き込みのローカル完了と、FIN を含む Stream 全体が transport で確定した `StreamDataCommitted` は別のイベントである。どちらも相手アプリケーションの処理完了を意味しない。Subgroup Delivery Timeout は Stream 確定まで有効とする。
 
 `SessionDriver` は単一スレッド専用で、公開メソッドと完了 callback は同じスレッド上で直列に呼び出す。別スレッドで完了する transport は callback を driver 所有スレッドへ戻してから呼び出す。driver 内で callback と pump の共有状態をロックして直列化する仕組みは持たない。
 
@@ -44,7 +44,11 @@ Subgroup の reader / writer と送信完了待ちの状態は private なスト
 
 track 名の逆引きは session が所有する。`track_for_request`、`subscription_track`、`track_alias_for_request` を公開し、`PublishAccepted`、`SubscriptionEnded`、`ObjectReceived`、`ObjectDatagramReceived` の notice には track を載せ、`PublishAccepted` は alias も返す。アプリケーションは track 名だけを目的とした対応表を持たない。
 
-Object の送信も session 側の状態を使う。`send_object_datagram_for_track` は publisher 側の track から forwarding 中の subscription を列挙し、subscription ごとの Track Alias に詰め替えて datagram を返す。`ObjectGroupWriter` は `open_object_group` が返す token ベースの thin な handle で、Object ID の採番、stream 開設待ちのキュー、`rotate`、FIN 待ち、abort を session の状態だけで説明する。128 objects ごとの rotation のような方針はアプリケーション側に残す。
+Object の送信も session 側の状態を使う。`send_object_datagram_for_track` は publisher 側の track から forwarding 中の subscription を列挙し、subscription ごとの Track Alias に詰め替えて datagram を返す。`ObjectGroupWriter` は `open_object_group` が返す token ベースの thin な handle で、Object ID の採番、`rotate`、FIN 待ち、abort を session の状態だけで説明する。128 objects ごとの rotation のような方針はアプリケーション側に残す。
+
+Object の送信は Stream の開設後に受け付ける。大きな Object は `begin_object` で長さを宣言し、`ObjectWriter::write` で分割して渡し、`finish` で入力の完了を検証する。各操作が返すアクションは driver に渡す。`write` の chunk は driver の待機バイト上限以下にする。既に生成した単一アクションが上限を超えると `TooLarge` からの再試行はできず、Subgroup の abort が必要になる。受信側は Object を一つの値として組み立て、そのバッファの上限は `ClientSession::new` の `max_object_buffer_bytes` で指定する（既定 16 MiB）。
+
+Delivery Timeout は単調時計で判定する。Sans-I/O API の呼び出し元は、期限付きの Object 入力や Subgroup の終了の直前に `Clock` を更新する。driver は transport への投入直前にも時計を確認する。adapter は Stream 確定と FIN 後の abort の能力を session に登録する。Browser の Web Streams は close 処理中の abort を保証できないため、非ゼロの Subgroup Delivery Timeout は明示的に拒否する。
 
 Object Datagram の送信は token で追跡する。`send_object_datagram` は `(token, actions)` を返し、`send_object_datagram_for_track` は fan-out した datagram ごとの token を返す。session は投入時に `DatagramQueued(token)`、transport がローカル書き込みに失敗した時に `DatagramLocalWriteFailed(token, status)` を通知する。`DatagramQueued` はローカル transport への投入であり、ピアへの到達や QUIC ACK を意味しない。送信可能な最大サイズは `max_datagram_length()` で問い合わせる。
 

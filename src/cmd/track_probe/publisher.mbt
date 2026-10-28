@@ -437,6 +437,11 @@ fn run_publisher(
           return
         }
       }
+      StreamDataCommitted(stream) => {
+        driver.committed(stream)
+        let (notices, _) = take_driver_events(driver)
+        handle_publisher_notices(client, session, notices, driver, state)
+      }
       StreamFinished(stream) => {
         let (notices, _) = drive_session_result(
           client,

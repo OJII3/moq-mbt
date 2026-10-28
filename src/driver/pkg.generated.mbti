@@ -11,10 +11,20 @@ import {
 // Errors
 
 // Types and methods
+pub(all) enum DriverDispatchResult {
+  Dispatched
+  QueueFull
+  TooLarge
+  DriverFailed
+} derive(Eq, @debug.Debug)
+pub fn DriverDispatchResult::equal(Self, Self) -> Bool
+pub fn DriverDispatchResult::not_equal(Self, Self) -> Bool
+pub fn DriverDispatchResult::to_repr(Self) -> @debug.Repr
+
 pub struct SessionDriver[T] {
   // private fields
 }
-pub fn[T : SessionTransport] SessionDriver::dispatch(Self[T], Array[@session.SessionAction]) -> Unit
+pub fn[T : SessionTransport] SessionDriver::dispatch(Self[T], Array[@session.SessionAction]) -> DriverDispatchResult
 pub fn[T] SessionDriver::failed(Self[T]) -> Bool
 pub fn[T] SessionDriver::failure(Self[T]) -> SessionDriverFailureReason?
 pub fn[T] SessionDriver::has_pending_sends(Self[T], Int64) -> Bool
@@ -23,6 +33,8 @@ pub fn[T] SessionDriver::pending_action_count(Self[T]) -> Int
 pub fn[T : SessionTransport] SessionDriver::pump(Self[T]) -> Unit
 pub fn[T : SessionTransport] SessionDriver::receive(Self[T], @session.SessionEvent) -> Unit
 pub fn[T] SessionDriver::session(Self[T]) -> @session.ClientSession
+pub fn[T] SessionDriver::set_clock(Self[T], () -> UInt64) -> Unit
+pub fn[T] SessionDriver::set_now_ms(Self[T], UInt64) -> Unit
 pub fn[T] SessionDriver::set_update_handler(Self[T], () -> Unit) -> Unit
 pub fn[T] SessionDriver::take_notices(Self[T]) -> Array[@session.SessionNotice]
 pub fn[T] SessionDriver::take_opened_streams(Self[T]) -> Array[(@session.ClientStreamPurpose, Int64)]
@@ -31,6 +43,9 @@ pub(all) struct SessionDriverConfig {
   max_in_flight_opens : Int
   max_in_flight_sends : Int
   max_in_flight_datagrams : Int
+  max_pending_actions : Int
+  max_pending_bytes : Int64
+  max_send_chunk_bytes : Int
 } derive(Eq, @debug.Debug)
 pub fn SessionDriverConfig::equal(Self, Self) -> Bool
 pub fn SessionDriverConfig::not_equal(Self, Self) -> Bool
@@ -39,6 +54,7 @@ pub fn SessionDriverConfig::to_repr(Self) -> @debug.Repr
 pub(all) enum SessionDriverFailureReason {
   SessionError(@session.ClientSessionError)
   Transport(Int64)
+  PendingOverflow
 } derive(Eq, @debug.Debug)
 pub fn SessionDriverFailureReason::equal(Self, Self) -> Bool
 pub fn SessionDriverFailureReason::not_equal(Self, Self) -> Bool

@@ -198,11 +198,19 @@ fn SessionActionDriver::ensure(
     Some(inner) => inner
     None => {
       let transport = ProbeTransport::new(client)
+      session.set_stream_delivery_capability(
+        committed=true,
+        abort_after_fin=true,
+      )
       let inner = @driver.SessionDriver::new(transport, session, {
         max_in_flight_opens: 8,
         max_in_flight_sends: 128,
         max_in_flight_datagrams: 32,
+        max_pending_actions: 1024,
+        max_pending_bytes: 16777216L,
+        max_send_chunk_bytes: 65536,
       })
+      inner.set_clock(fn() { @env.now() })
       self.transport = Some(transport)
       self.inner = Some(inner)
       inner
@@ -218,6 +226,17 @@ fn SessionActionDriver::complete_send(
 ) -> Unit {
   match self.transport {
     Some(transport) => transport.complete_send(stream, canceled)
+    None => ()
+  }
+}
+
+///|
+fn SessionActionDriver::committed(
+  self : SessionActionDriver,
+  stream : Int64,
+) -> Unit {
+  match self.inner {
+    Some(inner) => inner.receive(@session.StreamDataCommitted(stream))
     None => ()
   }
 }
@@ -265,7 +284,10 @@ fn drive_session_actions(
   Array[(@session.ClientStreamPurpose, Int64)],
 ) raise {
   let inner = driver.ensure(client, session)
-  inner.dispatch(initial)
+  match inner.dispatch(initial) {
+    @driver.Dispatched => ()
+    result => fail("driver rejected actions: \{result.to_repr()}")
+  }
   match inner.failure() {
     Some(error) => fail("client session error: \{error.to_repr()}")
     None => ()
@@ -414,6 +436,11 @@ fn setup_client(
           }
           setup_acknowledged = true
         }
+      }
+      StreamDataCommitted(stream) => {
+        driver.committed(stream)
+        let (notices, _) = take_driver_events(driver)
+        ignore(notices)
       }
       DatagramStateChanged(capability) => {
         let (notices, _) = drive_session_result(

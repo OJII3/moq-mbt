@@ -1,6 +1,13 @@
 ///|
-fn client_session_ready() -> @session.ClientSession raise {
-  let client = @session.ClientSession::new(@session.Draft18, { options: [], }).unwrap()
+fn client_session_ready(
+  max_object_buffer_bytes~ : UInt64 = 16UL * 1024UL * 1024UL,
+) -> @session.ClientSession raise {
+  let client = @session.ClientSession::new(
+    @session.Draft18,
+    { options: [], },
+    max_object_buffer_bytes~,
+  ).unwrap()
+  client.set_stream_delivery_capability(committed=true, abort_after_fin=true)
   assert_eq(
     client.receive(
       @session.DatagramSendCapabilityChanged(enabled=true, max_length=65535),
@@ -388,17 +395,19 @@ test "ClientSession shares even request IDs across tracks and routes interleaved
   }
   assert_eq(
     publisher.receive(@session.SendCompleted(50, @session.Sent)),
-    Ok([
-      @session.EmitNotice(@session.StreamSendFinished(50, @session.Sent)),
-      @session.EmitNotice(@session.ObjectStreamSendFinished(50)),
-    ]),
+    Ok([@session.EmitNotice(@session.StreamSendFinished(50, @session.Sent))]),
+  )
+  assert_eq(
+    publisher.receive(@session.StreamDataCommitted(50)),
+    Ok([@session.EmitNotice(@session.ObjectStreamSendFinished(50))]),
   )
   assert_eq(
     publisher.receive(@session.SendCompleted(52, @session.Sent)),
-    Ok([
-      @session.EmitNotice(@session.StreamSendFinished(52, @session.Sent)),
-      @session.EmitNotice(@session.ObjectStreamSendFinished(52)),
-    ]),
+    Ok([@session.EmitNotice(@session.StreamSendFinished(52, @session.Sent))]),
+  )
+  assert_eq(
+    publisher.receive(@session.StreamDataCommitted(52)),
+    Ok([@session.EmitNotice(@session.ObjectStreamSendFinished(52))]),
   )
   assert_eq(
     publisher.publish_done(40, 3, b""),
@@ -660,10 +669,11 @@ test "ClientSession sends Objects and PUBLISH_DONE on a local PUBLISH stream" {
   )
   assert_eq(
     publisher.receive(@session.SendCompleted(22, @session.Sent)),
-    Ok([
-      @session.EmitNotice(@session.StreamSendFinished(22, @session.Sent)),
-      @session.EmitNotice(@session.ObjectStreamSendFinished(22)),
-    ]),
+    Ok([@session.EmitNotice(@session.StreamSendFinished(22, @session.Sent))]),
+  )
+  assert_eq(
+    publisher.receive(@session.StreamDataCommitted(22)),
+    Ok([@session.EmitNotice(@session.ObjectStreamSendFinished(22))]),
   )
   assert_eq(
     publisher.publish_done(20, 3, b""),
