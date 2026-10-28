@@ -156,19 +156,8 @@ pub fn[T] SessionDriver::failed(self : SessionDriver[T]) -> Bool {
 }
 
 ///|
-/// A session error that stopped the driver, if any.
-pub fn[T] SessionDriver::failure(
-  self : SessionDriver[T],
-) -> @session.ClientSessionError? {
-  match self.failure_reason {
-    Some(SessionError(error)) => Some(error)
-    _ => None
-  }
-}
-
-///|
 /// The reason the driver entered its terminal failure state, if any.
-pub fn[T] SessionDriver::failure_reason(
+pub fn[T] SessionDriver::failure(
   self : SessionDriver[T],
 ) -> SessionDriverFailureReason? {
   self.failure_reason

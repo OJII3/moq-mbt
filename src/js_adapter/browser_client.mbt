@@ -67,7 +67,7 @@ fn browser_connect_internal(
 /// Start driving the session over WebTransport.
 pub fn BrowserClient::start(
   self : BrowserClient,
-) -> Result[Unit, @session.ClientSessionError] {
+) -> Result[Unit, @driver.SessionDriverFailureReason] {
   self.driver.start()
 }
 
