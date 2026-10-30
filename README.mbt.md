@@ -98,6 +98,23 @@ moon run src/cmd/track_probe -- joining-fetch 127.0.0.1 4443 /interop --insecure
 moon run src/cmd/track_probe -- datagram-smoke 127.0.0.1 4443 /interop --insecure
 ```
 
+#### MoQ Interop Runner client mode
+
+`track_probe` also provides the Draft 18 native-QUIC test-client interface for
+[`moq-interop-runner`](https://github.com/englishm/moq-interop-runner). It
+supports `setup-only`, `announce-only`, `publish-namespace-done`, and
+`subscribe-error`.
+
+```sh
+moon run src/cmd/track_probe -- --list
+RELAY_URL=moqt://127.0.0.1:4443/interop \
+  TLS_DISABLE_VERIFY=1 \
+  moon run src/cmd/track_probe -- --test setup-only
+```
+
+The Runner may pass the same settings as `--relay`, `--test`, and
+`--tls-disable-verify`. Results are written to stdout in TAP version 14 format.
+
 ### Browser Sample
 
 Start the local `moqtail` relay in one terminal:

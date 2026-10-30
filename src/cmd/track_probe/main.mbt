@@ -4,6 +4,10 @@ extern "C" fn exit(status : Int32) -> Unit = "exit"
 ///|
 fn main {
   let args = @env.args()
+  if interop_client_mode(args) {
+    run_interop_client(args)
+    return
+  }
   guard args.length() >= 2 else {
     eprintln(
       "usage: track_probe publish HOST PORT PATH NAMESPACE TRACK GROUPS OBJECTS_PER_GROUP [--datagrams] [--insecure] [--hold-open] [--wait-for-start]\n       track_probe subscribe HOST PORT PATH NAMESPACE TRACK GROUPS OBJECTS_PER_GROUP [--datagrams] [--insecure]\n       track_probe lifecycle HOST PORT PATH [--insecure]\n       track_probe namespace HOST PORT PATH [--insecure]\n       track_probe datagram-smoke HOST PORT PATH [--insecure]\n       track_probe fetch HOST PORT PATH NAMESPACE TRACK START_GROUP END_GROUP [--insecure]\n       track_probe joining-fetch HOST PORT PATH [--insecure]",
