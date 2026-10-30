@@ -127,6 +127,9 @@ docker run --rm \
   moq-mbt-interop-client:latest
 ```
 
+The image is published to `ghcr.io/ojii3/moq-mbt-interop-client` on pushes to
+`main` (`:latest`) and `v*` tags.
+
 The relay hostname must be reachable from the container's Docker network.
 
 ### Browser Sample
