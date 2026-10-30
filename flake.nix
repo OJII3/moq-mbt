@@ -65,6 +65,17 @@
             export PLAYWRIGHT_BROWSERS_PATH="${playwrightBrowsers}"
           '';
         };
+
+        devShells.interop-client = pkgs.mkShell {
+          packages = [
+            pkgs.libmsquic
+            pkgs.moonbit-bin.latest
+            pkgs.cacert
+          ];
+          shellHook = ''
+            export SSL_CERT_FILE="${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
+          '';
+        };
       };
     };
 }

@@ -115,6 +115,20 @@ RELAY_URL=moqt://127.0.0.1:4443/interop \
 The Runner may pass the same settings as `--relay`, `--test`, and
 `--tls-disable-verify`. Results are written to stdout in TAP version 14 format.
 
+Build the Runner-compatible Docker image from the repository root:
+
+```sh
+docker build -f docker/interop-client.Dockerfile -t moq-mbt-interop-client:latest .
+docker run --rm moq-mbt-interop-client:latest --list
+docker run --rm \
+  -e RELAY_URL=moqt://relay:4443/interop \
+  -e TESTCASE=setup-only \
+  -e TLS_DISABLE_VERIFY=1 \
+  moq-mbt-interop-client:latest
+```
+
+The relay hostname must be reachable from the container's Docker network.
+
 ### Browser Sample
 
 Start the local `moqtail` relay in one terminal:
