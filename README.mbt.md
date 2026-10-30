@@ -98,6 +98,40 @@ moon run src/cmd/track_probe -- joining-fetch 127.0.0.1 4443 /interop --insecure
 moon run src/cmd/track_probe -- datagram-smoke 127.0.0.1 4443 /interop --insecure
 ```
 
+#### MoQ Interop Runner client mode
+
+`track_probe` also provides the Draft 18 native-QUIC test-client interface for
+[`moq-interop-runner`](https://github.com/englishm/moq-interop-runner). It
+supports `setup-only`, `announce-only`, `publish-namespace-done`, and
+`subscribe-error`.
+
+```sh
+moon run src/cmd/track_probe -- --list
+RELAY_URL=moqt://127.0.0.1:4443/interop \
+  TLS_DISABLE_VERIFY=1 \
+  moon run src/cmd/track_probe -- --test setup-only
+```
+
+The Runner may pass the same settings as `--relay`, `--test`, and
+`--tls-disable-verify`. Results are written to stdout in TAP version 14 format.
+
+Build the Runner-compatible Docker image from the repository root:
+
+```sh
+docker build -f docker/interop-client.Dockerfile -t moq-mbt-interop-client:latest .
+docker run --rm moq-mbt-interop-client:latest --list
+docker run --rm \
+  -e RELAY_URL=moqt://relay:4443/interop \
+  -e TESTCASE=setup-only \
+  -e TLS_DISABLE_VERIFY=1 \
+  moq-mbt-interop-client:latest
+```
+
+The image is published to `ghcr.io/ojii3/moq-mbt-interop-client` on pushes to
+`main` (`:latest`) and `v*` tags.
+
+The relay hostname must be reachable from the container's Docker network.
+
 ### Browser Sample
 
 Start the local `moqtail` relay in one terminal:

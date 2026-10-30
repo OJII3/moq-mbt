@@ -339,6 +339,7 @@ fn setup_client(
   port : Int32,
   path : String,
   insecure : Bool,
+  timeout_ms~ : UInt64 = 10000UL,
 ) -> (@transport.Client, @session.ClientSession) raise {
   let authority = if host.contains(":") {
     "[\{host}]:\{port}"
@@ -366,7 +367,7 @@ fn setup_client(
   let mut setup_stream : Int64? = None
   let mut setup_received = false
   let mut setup_acknowledged = false
-  let deadline = @env.now() + 10000
+  let deadline = @env.now() + timeout_ms
   while @env.now() < deadline {
     match client.next_event(100) {
       Connected => {
@@ -408,7 +409,7 @@ fn setup_client(
         for notice in notices {
           match notice {
             @session.HandshakeComplete(setup) => {
-              println(
+              eprintln(
                 "MoQT Draft 18 SETUP complete (\{setup.options.length()} options)",
               )
               setup_received = true
