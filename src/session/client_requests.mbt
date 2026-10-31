@@ -316,9 +316,9 @@ fn ClientSession::receive_response(
           [
             EmitNotice(
               PublishAccepted(
-                request_id,
+                RequestId(request_id),
                 request.track,
-                request.track_alias.unwrap(),
+                TrackAlias(request.track_alias.unwrap()),
               ),
             ),
           ] +
@@ -357,12 +357,19 @@ fn ClientSession::receive_response(
             None => None
           }
           request.mark_accepted()
-          [EmitNotice(SubscribeEstablished(request_id, response.track_alias))]
+          [
+            EmitNotice(
+              SubscribeEstablished(
+                RequestId(request_id),
+                TrackAlias(response.track_alias),
+              ),
+            ),
+          ]
         }
         (Publishing, @protocol.RequestError(error)) if !request.is_accepted() => {
           request.mark_terminal()
           self.request_local_fin_actions(stream) +
-          [EmitNotice(PublishRejected(request_id, error))] +
+          [EmitNotice(PublishRejected(RequestId(request_id), error))] +
           self.fail_pending_joining_fetches(
             request_id, request_error_invalid_joining_request_id,
           )
@@ -370,7 +377,7 @@ fn ClientSession::receive_response(
         (Subscribing, @protocol.RequestError(error)) if !request.is_accepted() => {
           request.mark_terminal()
           self.request_local_fin_actions(stream) +
-          [EmitNotice(SubscribeRejected(request_id, error))]
+          [EmitNotice(SubscribeRejected(RequestId(request_id), error))]
         }
         (Publishing, @protocol.RequestUpdate(update)) if request.is_accepted() =>
           match self.receive_peer_subscription_update(stream, update) {
@@ -400,8 +407,8 @@ fn ClientSession::receive_response(
           [
             EmitNotice(
               SubscriptionUpdateAccepted(
-                request_id,
-                pending.request_id,
+                RequestId(request_id),
+                RequestId(pending.request_id),
                 response,
               ),
             ),
@@ -413,7 +420,11 @@ fn ClientSession::receive_response(
           request.update_failed = true
           [
             EmitNotice(
-              SubscriptionUpdateRejected(request_id, pending.request_id, error),
+              SubscriptionUpdateRejected(
+                RequestId(request_id),
+                RequestId(pending.request_id),
+                error,
+              ),
             ),
           ]
         }
@@ -490,7 +501,8 @@ fn ClientSession::receive_publish_done(
     None => []
   }
   match self.take_ready_publish_done(request_id) {
-    Some(done) => Ok(fin_actions + [EmitNotice(PublishDone(request_id, done))])
+    Some(done) =>
+      Ok(fin_actions + [EmitNotice(PublishDone(RequestId(request_id), done))])
     None => Ok(fin_actions)
   }
 }
@@ -637,9 +649,10 @@ fn ClientSession::note_request_local_fin(
 pub fn ClientSession::publish_track(
   self : ClientSession,
   track : @protocol.TrackName,
-  track_alias : UInt64,
+  track_alias : TrackAlias,
   properties~ : Bytes = b"",
-) -> Result[(UInt64, Array[SessionAction]), ClientSessionError] {
+) -> Result[(RequestId, Array[SessionAction]), ClientSessionError] {
+  let track_alias = track_alias.to_uint64()
   match self.ensure_new_request_allowed() {
     Ok(_) => ()
     Err(error) => return Err(error)
@@ -681,8 +694,10 @@ pub fn ClientSession::publish_track(
   self.published_requests.push(request_id)
   Ok(
     (
-      request_id,
-      self.finish_actions([OpenStream(Bidirectional, Request(request_id))]),
+      RequestId(request_id),
+      self.finish_actions([
+        OpenStream(Bidirectional, Request(RequestId(request_id))),
+      ]),
     ),
   )
 }
@@ -693,11 +708,11 @@ pub fn ClientSession::subscribe_track(
   self : ClientSession,
   track : @protocol.TrackName,
   parameters~ : Array[@protocol.MessageParameter] = [],
-) -> Result[(UInt64, Array[SessionAction]), ClientSessionError] {
+) -> Result[(RequestId, Array[SessionAction]), ClientSessionError] {
   match self.start_subscription_request(track, parameters) {
     Ok((request_id, actions)) => {
       self.remember_desired_subscription(track, parameters)
-      Ok((request_id, actions))
+      Ok((RequestId(request_id), actions))
     }
     Err(error) => Err(error)
   }
@@ -740,7 +755,9 @@ fn ClientSession::start_subscription_request(
   Ok(
     (
       request_id,
-      self.finish_actions([OpenStream(Bidirectional, Request(request_id))]),
+      self.finish_actions([
+        OpenStream(Bidirectional, Request(RequestId(request_id))),
+      ]),
     ),
   )
 }
@@ -751,8 +768,9 @@ fn ClientSession::start_subscription_request(
 /// PUBLISH_DONE. Calling this more than once has no effect.
 pub fn ClientSession::finish_subscription_updates(
   self : ClientSession,
-  request_id : UInt64,
+  request_id : RequestId,
 ) -> Result[Array[SessionAction], ClientSessionError] {
+  let request_id = request_id.to_uint64()
   match self.ensure_open() {
     Ok(_) => ()
     Err(error) => return Err(error)
@@ -784,15 +802,16 @@ pub fn ClientSession::finish_subscription_updates(
 /// Repeating cancellation after termination is a no-op.
 pub fn ClientSession::cancel_request(
   self : ClientSession,
-  request_id : UInt64,
+  request_id : RequestId,
 ) -> Result[Array[SessionAction], ClientSessionError] {
+  let request_id = request_id.to_uint64()
   match self.ensure_open() {
     Ok(_) => ()
     Err(error) => return Err(error)
   }
   match self.fetches.get(request_id) {
     Some(fetch) if fetch.locally_initiated =>
-      return self.cancel_fetch(request_id)
+      return self.cancel_fetch(RequestId(request_id))
     _ => ()
   }
   match self.requests.get(request_id) {
@@ -879,7 +898,7 @@ fn ClientSession::end_request_stream(
       return self.terminate_fetch(
         fetch,
         actions,
-        Some(EmitNotice(FetchCancelled(request_id, code))),
+        Some(EmitNotice(FetchCancelled(RequestId(request_id), code))),
         if fetch.locally_initiated {
           StopFetchData(code)
         } else {
@@ -968,7 +987,13 @@ fn ClientSession::end_request_stream(
   }
   if effects.notify_end {
     actions.push(
-      EmitNotice(SubscriptionEnded(request_id, stream, request.track)),
+      EmitNotice(
+        SubscriptionEnded(
+          RequestId(request_id),
+          StreamId(stream),
+          request.track,
+        ),
+      ),
     )
   }
   actions

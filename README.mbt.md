@@ -178,27 +178,27 @@ Add `OJII3/moq-mbt` to `moon.mod`:
 ### Browser Client API
 
 In MoonBit code built for JavaScript, create the SETUP value and pass it with
-the relay URL to `browser_connect`:
+the relay URL to `BrowserClient::connect`:
 
 ```moonbit
 let setup : @protocol.Setup = { options: [] }
-let client_result = @js_adapter.browser_connect(
+let client_result = @js_adapter.BrowserClient::connect(
   "https://relay.example/interop",
   setup,
 )
 ```
 
-`browser_connect` returns a `Result`; handle its error before using the client.
+`BrowserClient::connect` returns a `Result`; handle its error before using the client.
 Call `start()` to begin the session, then consume `next_notice()` until you
 receive `HandshakeComplete` before making requests through `session()`. Pass
 each request's returned actions to `dispatch()`, and continue reading notices
-to observe its result. `dispatch()` returns `Dispatched`, `QueueFull`,
+to observe its result. `dispatch()` returns `Accepted`, `QueueFull`,
 `TooLarge`, or `DriverFailed`; retain actions after `QueueFull` and retry after
 progress, and split batches after `TooLarge`. `next_notice()` resolves to
 `None` when the session ends.
 Call `close(code, reason)` when the application is done. For an explicitly
 trusted certificate hash, pass `certificate_hashes=hashes` to
-`browser_connect`. To restore subscriptions after reconnecting, pass
+`BrowserClient::connect`. To restore subscriptions after reconnecting, pass
 `desired_subscriptions=desired` to the same function.
 
 See [`src/js_adapter/README.md`](src/js_adapter/README.md) for the complete

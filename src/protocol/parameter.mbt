@@ -8,7 +8,10 @@ pub(all) struct TrackName {
 ///|
 /// Build a track name with a single namespace field, for the common
 /// `namespace/track` shape.
-pub fn TrackName::new(namespace_field : String, name : String) -> TrackName {
+pub fn TrackName::from_utf8_field(
+  namespace_field : String,
+  name : String,
+) -> TrackName {
   {
     namespace_fields: [@utf8.encode(namespace_field)],
     name: @utf8.encode(name),
@@ -17,7 +20,7 @@ pub fn TrackName::new(namespace_field : String, name : String) -> TrackName {
 
 ///|
 /// Build a track name from UTF-8 strings when the namespace has several fields.
-pub fn TrackName::from_namespace_fields(
+pub fn TrackName::from_utf8_fields(
   namespace_fields : Array[String],
   name : String,
 ) -> TrackName {
@@ -29,9 +32,10 @@ pub fn TrackName::from_namespace_fields(
 
 ///|
 /// Render the track name as `namespace/field/.../track` for logs and display.
-/// Byte fields that are not valid UTF-8 are decoded lossily; use the struct
-/// fields when exact bytes matter.
-pub fn TrackName::to_string(self : TrackName) -> String {
+/// This is not a canonical identifier: distinct namespace field splits can
+/// render to the same string. Byte fields that are not valid UTF-8 are decoded
+/// lossily; use the struct fields when exact bytes matter.
+pub fn TrackName::to_display_string(self : TrackName) -> String {
   let parts = self.namespace_fields.map(fn(field) { @utf8.decode_lossy(field) })
   parts.push(@utf8.decode_lossy(self.name))
   parts.join("/")

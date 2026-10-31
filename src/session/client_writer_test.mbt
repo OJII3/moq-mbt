@@ -3,7 +3,9 @@ fn writer_group_open(
   publisher : @session.ClientSession,
   group_id : UInt64,
 ) -> (@session.ObjectGroupWriter, UInt64) raise {
-  let (group, actions) = publisher.open_object_group(40, group_id).unwrap()
+  let (group, actions) = publisher
+    .open_object_group(@session.StreamId(40), group_id)
+    .unwrap()
   let token = match actions {
     [@session.OpenStream(@session.Unidirectional, @session.Object(token))] =>
       token

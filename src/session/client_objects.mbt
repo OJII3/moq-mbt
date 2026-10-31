@@ -314,7 +314,11 @@ fn ClientSession::receive_subgroup(
   } else {
     let request = self.requests.get(request_id).unwrap()
     if request.can_receive_object_data() {
-      Ok([EmitNotice(ObjectReceived(request_id, request.track, header, frames))])
+      Ok([
+        EmitNotice(
+          ObjectReceived(RequestId(request_id), request.track, header, frames),
+        ),
+      ])
     } else {
       Ok([])
     }
@@ -350,7 +354,11 @@ fn ClientSession::receive_object_datagram(
   if !request.can_receive_object_data() {
     return Ok([])
   }
-  Ok([EmitNotice(ObjectDatagramReceived(request_id, request.track, datagram))])
+  Ok([
+    EmitNotice(
+      ObjectDatagramReceived(RequestId(request_id), request.track, datagram),
+    ),
+  ])
 }
 
 ///|
@@ -358,9 +366,10 @@ fn ClientSession::receive_object_datagram(
 /// whether this endpoint accepted an inbound SUBSCRIBE or sent a PUBLISH.
 pub fn ClientSession::open_object_stream(
   self : ClientSession,
-  subscription_stream : Int64,
+  subscription_stream : StreamId,
   header : @protocol.SubgroupHeader,
 ) -> Result[Array[SessionAction], ClientSessionError] {
+  let subscription_stream = subscription_stream.to_int64()
   match self.ensure_open() {
     Ok(_) => ()
     Err(error) => return Err(error)
@@ -418,9 +427,10 @@ pub fn ClientSession::open_object_stream(
 /// Supply a fresh Clock event immediately before this timed operation.
 pub fn ClientSession::send_object(
   self : ClientSession,
-  stream : Int64,
+  stream : StreamId,
   frame : @protocol.SubgroupFrame,
 ) -> Result[Array[SessionAction], ClientSessionError] {
+  let stream = stream.to_int64()
   match self.ensure_open() {
     Ok(_) => ()
     Err(error) => return Err(error)
@@ -479,9 +489,10 @@ pub fn ClientSession::send_object(
 /// `DatagramLocalWriteFailed` notices refer to the same token.
 pub fn ClientSession::send_object_datagram(
   self : ClientSession,
-  subscription_stream : Int64,
+  subscription_stream : StreamId,
   datagram : @protocol.ObjectDatagram,
 ) -> Result[(UInt64, Array[SessionAction]), ClientSessionError] {
+  let subscription_stream = subscription_stream.to_int64()
   match self.ensure_open() {
     Ok(_) => ()
     Err(error) => return Err(error)
@@ -711,8 +722,9 @@ fn ClientSession::note_published_location(
 /// Supply a fresh Clock immediately beforehand to start the Subgroup timer.
 pub fn ClientSession::finish_object_stream(
   self : ClientSession,
-  stream : Int64,
+  stream : StreamId,
 ) -> Result[Array[SessionAction], ClientSessionError] {
+  let stream = stream.to_int64()
   match self.ensure_open() {
     Ok(_) => ()
     Err(error) => return Err(error)
@@ -745,10 +757,11 @@ pub fn ClientSession::finish_object_stream(
 /// Send PUBLISH_DONE after all object streams for this subscription finish.
 pub fn ClientSession::publish_done(
   self : ClientSession,
-  subscription_stream : Int64,
+  subscription_stream : StreamId,
   code : UInt64,
   reason : Bytes,
 ) -> Result[Array[SessionAction], ClientSessionError] {
+  let subscription_stream = subscription_stream.to_int64()
   match self.ensure_open() {
     Ok(_) => ()
     Err(error) => return Err(error)
@@ -807,7 +820,7 @@ pub fn ClientSession::publish_done(
   Ok(
     self.finish_actions([
       SendFin(subscription_stream, bytes),
-      EmitNotice(PublishDone(request_id, message)),
+      EmitNotice(PublishDone(RequestId(request_id), message)),
     ]),
   )
 }

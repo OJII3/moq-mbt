@@ -268,9 +268,12 @@ fn ClientSession::reject_local_request_for_goaway(
   }
   if effects.notify_end || !request.lifetime.end_notified {
     match request.kind {
-      Publishing => actions.push(EmitNotice(PublishRejected(request_id, error)))
+      Publishing =>
+        actions.push(EmitNotice(PublishRejected(RequestId(request_id), error)))
       Subscribing =>
-        actions.push(EmitNotice(SubscribeRejected(request_id, error)))
+        actions.push(
+          EmitNotice(SubscribeRejected(RequestId(request_id), error)),
+        )
     }
     request.lifetime.end_notified = true
   }
@@ -336,7 +339,7 @@ fn ClientSession::receive_control_goaway(
           [],
           Some(
             EmitNotice(
-              FetchFailed(request_id, {
+              FetchFailed(RequestId(request_id), {
                 code: request_error_going_away,
                 retry_interval: 0UL,
                 reason: b"",
@@ -376,7 +379,12 @@ fn ClientSession::receive_request_goaway(
   let request_id = self.request_stream_id(stream)
   [
     EmitNotice(
-      RequestGoAwayReceived(request_id, stream, message.uri, message.timeout_ms),
+      RequestGoAwayReceived(
+        RequestId(request_id),
+        StreamId(stream),
+        message.uri,
+        message.timeout_ms,
+      ),
     ),
   ]
 }

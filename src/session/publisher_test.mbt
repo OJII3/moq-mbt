@@ -30,7 +30,9 @@ fn publisher_frame(
 ///|
 fn publisher_announced() -> @session.ClientSession raise {
   let publisher = client_session_ready()
-  ignore(publisher.publish_track(publisher_track(), 1).unwrap())
+  ignore(
+    publisher.publish_track(publisher_track(), @session.TrackAlias(1)).unwrap(),
+  )
   ignore(
     publisher.receive(@session.StreamOpened(@session.Request(0), 20)).unwrap(),
   )
@@ -75,7 +77,7 @@ fn publisher_started() -> @session.ClientSession raise {
     ]),
   )
   assert_eq(
-    publisher.accept_subscription(40),
+    publisher.accept_subscription(@session.StreamId(40)),
     Ok([
       @session.SendChunk(40, b"\x04\x00\x02\x01\x00"),
       @session.EmitNotice(@session.SubscriptionAccepted(1, 40, 1)),
@@ -154,7 +156,9 @@ fn publisher_done_message(
 ///|
 test "publisher encodes one header and increasing object deltas" {
   let publisher = client_session_ready()
-  ignore(publisher.publish_track(publisher_track(), 1).unwrap())
+  ignore(
+    publisher.publish_track(publisher_track(), @session.TrackAlias(1)).unwrap(),
+  )
   assert_eq(
     client_send_bytes(
       publisher.receive(@session.StreamOpened(@session.Request(0), 20)).unwrap(),
@@ -195,18 +199,25 @@ test "publisher encodes one header and increasing object deltas" {
   )
   assert_eq(
     client_send_bytes(
-      publisher.send_object(50, publisher_frame(0, b"payload")).unwrap(),
+      publisher
+      .send_object(@session.StreamId(50), publisher_frame(0, b"payload"))
+      .unwrap(),
     ),
     b"\x00\x07payload",
   )
   assert_eq(
     client_send_bytes(
-      publisher.send_object(50, publisher_frame(2, b"second")).unwrap(),
+      publisher
+      .send_object(@session.StreamId(50), publisher_frame(2, b"second"))
+      .unwrap(),
     ),
     b"\x01\x06second",
   )
   assert_eq(
-    publisher.send_object(50, publisher_frame(2, b"duplicate")),
+    publisher.send_object(
+      @session.StreamId(50),
+      publisher_frame(2, b"duplicate"),
+    ),
     Err(@session.Track(@session.ObjectIdNotIncreasing)),
   )
   publisher_finish(publisher, 50, 2)
@@ -227,18 +238,22 @@ test "publisher counts empty and parallel streams per subscription" {
   ignore(publisher_open(publisher, 20, 62, header_a))
   assert_eq(
     client_send_bytes(
-      publisher.send_object(60, publisher_frame(3, b"a")).unwrap(),
+      publisher
+      .send_object(@session.StreamId(60), publisher_frame(3, b"a"))
+      .unwrap(),
     ),
     b"\x03\x01a",
   )
   assert_eq(
     client_send_bytes(
-      publisher.send_object(60, publisher_frame(4, b"b")).unwrap(),
+      publisher
+      .send_object(@session.StreamId(60), publisher_frame(4, b"b"))
+      .unwrap(),
     ),
     b"\x00\x01b",
   )
   assert_eq(
-    publisher.publish_done(40, 3, b""),
+    publisher.publish_done(@session.StreamId(40), 3, b""),
     Err(@session.Track(@session.ObjectStreamsStillOpen)),
   )
   publisher_finish(publisher, 60, 2)
@@ -273,7 +288,7 @@ test "publisher validates stream alias and allows only one publish done" {
     track_alias: 2,
   }
   assert_eq(
-    publisher.open_object_stream(20, invalid_header),
+    publisher.open_object_stream(@session.StreamId(20), invalid_header),
     Err(@session.Track(@session.AliasMismatch)),
   )
   assert_eq(publisher_done_message(publisher, 20), {
@@ -282,7 +297,7 @@ test "publisher validates stream alias and allows only one publish done" {
     reason: b"",
   })
   assert_eq(
-    publisher.publish_done(20, 3, b""),
+    publisher.publish_done(@session.StreamId(20), 3, b""),
     Err(@session.SubscriptionNotAccepted),
   )
 }
@@ -299,7 +314,9 @@ test "publisher keeps EndOfGroup status separate from header End of Group" {
     payload: b"",
   }
   let wire = header_bytes +
-    client_send_bytes(publisher.send_object(80, frame).unwrap())
+    client_send_bytes(
+      publisher.send_object(@session.StreamId(80), frame).unwrap(),
+    )
   let subscriber = subscriber_started()
   ignore(
     subscriber
@@ -329,12 +346,16 @@ test "publisher rejects duplicate object stream handles without replacing writer
   ignore(publisher_open(publisher, 20, 50, publisher_header(1, false)))
   assert_eq(
     client_send_bytes(
-      publisher.send_object(50, publisher_frame(3, b"a")).unwrap(),
+      publisher
+      .send_object(@session.StreamId(50), publisher_frame(3, b"a"))
+      .unwrap(),
     ),
     b"\x03\x01a",
   )
   let token = match
-    publisher.open_object_stream(20, publisher_header(2, false)).unwrap() {
+    publisher
+    .open_object_stream(@session.StreamId(20), publisher_header(2, false))
+    .unwrap() {
     [@session.OpenStream(@session.Unidirectional, @session.Object(token))] =>
       token
     _ => fail("expected object stream request")
@@ -345,7 +366,9 @@ test "publisher rejects duplicate object stream handles without replacing writer
   )
   assert_eq(
     client_send_bytes(
-      publisher.send_object(50, publisher_frame(4, b"b")).unwrap(),
+      publisher
+      .send_object(@session.StreamId(50), publisher_frame(4, b"b"))
+      .unwrap(),
     ),
     b"\x00\x01b",
   )

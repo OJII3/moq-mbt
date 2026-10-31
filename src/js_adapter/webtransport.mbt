@@ -43,7 +43,7 @@ pub struct WebTransportConnection {
 /// MOQT URI, its path and query are preserved while replacing `moqt:` with
 /// `https:`. An empty hash list uses the browser's default Web PKI validation;
 /// supplying SHA-256 hashes pins the server certificate.
-pub fn webtransport_connect(
+pub fn WebTransportConnection::connect(
   moqt_uri : String,
   certificate_hashes~ : Array[@arraybuffer.Uint8Array] = [],
 ) -> Result[WebTransportConnection, String] {

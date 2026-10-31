@@ -146,7 +146,7 @@ fn ClientSession::object_stream_committed(
       let subscription_stream = outgoing.subscription_stream
       self.close_outgoing_object_stream(stream)
       Ok(
-        [EmitNotice(ObjectStreamSendFinished(stream))] +
+        [EmitNotice(ObjectStreamSendFinished(StreamId(stream)))] +
         self.finish_failed_subscription(subscription_stream),
       )
     }

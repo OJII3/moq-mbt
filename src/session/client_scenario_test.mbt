@@ -3,9 +3,9 @@ test "GOAWAY, pending update, cancellation, and late object events stay ordered"
   let subscriber = subscriber_started()
   let forward_off = [forward_parameter(0)]
   let (update_id, actions) = subscriber
-    .update_subscription(0, forward_off)
+    .update_subscription(@session.RequestId(0), forward_off)
     .unwrap()
-  assert_eq(update_id, 2UL)
+  assert_eq(update_id, @session.RequestId(2UL))
   assert_eq(actions, [
     @session.SendChunk(30, request_update_bytes(update_id, forward_off)),
   ])
@@ -124,7 +124,7 @@ test "Datagram send completion is separate from peer Object delivery" {
   let publisher = publisher_started()
   let object = update_datagram(1, 7, b"peer-sample")
   assert_eq(
-    publisher.send_object_datagram(20, object),
+    publisher.send_object_datagram(@session.StreamId(20), object),
     Ok(
       (
         0UL,

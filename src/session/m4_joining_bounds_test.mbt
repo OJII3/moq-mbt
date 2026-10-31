@@ -17,10 +17,10 @@ test "Joining FETCH accepts group IDs above 2^62" {
       ),
     ),
   )
-  ignore(publisher.accept_subscription(40).unwrap())
+  ignore(publisher.accept_subscription(@session.StreamId(40)).unwrap())
   ignore(
     publisher
-    .open_object_stream(40, {
+    .open_object_stream(@session.StreamId(40), {
       track_alias: 7UL,
       group_id,
       subgroup_id_mode: @protocol.Zero,
@@ -34,7 +34,7 @@ test "Joining FETCH accepts group IDs above 2^62" {
   ignore(publisher.receive(@session.StreamOpened(@session.Object(0UL), 30)))
   ignore(
     publisher
-    .send_object(30, {
+    .send_object(@session.StreamId(30), {
       object_id: 0xffffffffffffffffUL,
       status: @protocol.Normal,
       properties: b"",
@@ -92,7 +92,13 @@ test "local Joining FETCH accepts data above the old group limit" {
       @session.EmitNotice(@session.SubscribeEstablished(subscription_id, 7UL)),
     ]),
   )
-  let (fetch_id, _) = client.fetch_relative(subscription_id, 0UL, []).unwrap()
+  let (fetch_id, _) = client
+    .fetch_joining_relative(
+      subscription_request_id=subscription_id.to_uint64(),
+      groups_back=0UL,
+      parameters=[],
+    )
+    .unwrap()
   ignore(client.receive(@session.StreamOpened(@session.Request(fetch_id), 22)))
   let data_stream : Int64 = 30
   ignore(
@@ -109,7 +115,7 @@ test "local Joining FETCH accepts data above the old group limit" {
     properties: b"",
     payload: b"live",
   }
-  let data = @protocol.encode_fetch_header({ request_id: fetch_id, }) +
+  let data = @protocol.encode_fetch_header({ request_id: fetch_id.to_uint64(), }) +
     @protocol.FetchDataEncoder::new(@protocol.Ascending)
     .encode(@protocol.FetchDataObject(object))
     .unwrap()

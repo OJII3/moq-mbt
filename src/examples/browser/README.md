@@ -22,6 +22,6 @@ base64; the adapter passes that hash through the browser's certificate pinning
 option. Leave the field empty for a certificate trusted by the browser.
 
 The adapter keeps browser APIs out of module initialization. The library facade
-offers `@js_adapter.browser_connect(url, setup)`, `start()`, `session()`,
+offers `@js_adapter.BrowserClient::connect(url, setup)`, `start()`, `session()`,
 `dispatch()`, `next_notice()`, and explicit `close()` operations. See
 [`src/js_adapter/README.md`](../../js_adapter/README.md) for the adapter API.

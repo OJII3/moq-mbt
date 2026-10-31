@@ -79,21 +79,28 @@ test "ClientSession shares even request IDs across tracks and routes interleaved
   let track_b = client_track(b"audio")
   let track_c = client_track(b"captions")
 
-  let (publish_a, open_publish_a) = publisher.publish_track(track_a, 1).unwrap()
-  let (publish_b, open_publish_b) = publisher.publish_track(track_b, 2).unwrap()
-  assert_eq(publish_a, 0UL)
-  assert_eq(publish_b, 2UL)
+  let (publish_a, open_publish_a) = publisher
+    .publish_track(track_a, @session.TrackAlias(1))
+    .unwrap()
+  let (publish_b, open_publish_b) = publisher
+    .publish_track(track_b, @session.TrackAlias(2))
+    .unwrap()
+  assert_eq(publish_a, @session.RequestId(0UL))
+  assert_eq(publish_b, @session.RequestId(2UL))
   assert_eq(open_publish_a, [
     @session.OpenStream(@session.Bidirectional, @session.Request(0)),
   ])
   assert_eq(open_publish_b, [
     @session.OpenStream(@session.Bidirectional, @session.Request(2)),
   ])
-  assert_eq(publisher.publish_track(track_c, 1), Err(@session.AliasInUse))
+  assert_eq(
+    publisher.publish_track(track_c, @session.TrackAlias(1)),
+    Err(@session.AliasInUse),
+  )
   let (mixed_request, mixed_actions) = publisher
     .subscribe_track(track_b)
     .unwrap()
-  assert_eq(mixed_request, 4UL)
+  assert_eq(mixed_request, @session.RequestId(4UL))
   assert_eq(mixed_actions, [
     @session.OpenStream(@session.Bidirectional, @session.Request(4)),
   ])
@@ -217,7 +224,7 @@ test "ClientSession shares even request IDs across tracks and routes interleaved
   )
 
   assert_eq(
-    publisher.accept_subscription(40),
+    publisher.accept_subscription(@session.StreamId(40)),
     Ok([
       @session.SendChunk(
         40,
@@ -231,7 +238,7 @@ test "ClientSession shares even request IDs across tracks and routes interleaved
     ]),
   )
   assert_eq(
-    publisher.accept_subscription(42),
+    publisher.accept_subscription(@session.StreamId(42)),
     Ok([
       @session.SendChunk(
         42,
@@ -276,11 +283,11 @@ test "ClientSession shares even request IDs across tracks and routes interleaved
   let subscriber_header_a = client_subgroup_header(10, 5)
   let subscriber_header_b = client_subgroup_header(20, 7)
   assert_eq(
-    publisher.open_object_stream(40, header_a),
+    publisher.open_object_stream(@session.StreamId(40), header_a),
     Ok([@session.OpenStream(@session.Unidirectional, @session.Object(0))]),
   )
   assert_eq(
-    publisher.open_object_stream(42, header_b),
+    publisher.open_object_stream(@session.StreamId(42), header_b),
     Ok([@session.OpenStream(@session.Unidirectional, @session.Object(1))]),
   )
   assert_eq(
@@ -327,16 +334,16 @@ test "ClientSession shares even request IDs across tracks and routes interleaved
   let frame_a1 = client_object(1, b"a1")
   let frame_b1 = client_object(1, b"b1")
   let object_a0 = client_send_bytes(
-    publisher.send_object(50, frame_a0).unwrap(),
+    publisher.send_object(@session.StreamId(50), frame_a0).unwrap(),
   )
   let object_b0 = client_send_bytes(
-    publisher.send_object(52, frame_b0).unwrap(),
+    publisher.send_object(@session.StreamId(52), frame_b0).unwrap(),
   )
   let object_a1 = client_send_bytes(
-    publisher.send_object(50, frame_a1).unwrap(),
+    publisher.send_object(@session.StreamId(50), frame_a1).unwrap(),
   )
   let object_b1 = client_send_bytes(
-    publisher.send_object(52, frame_b1).unwrap(),
+    publisher.send_object(@session.StreamId(52), frame_b1).unwrap(),
   )
   assert_eq(
     subscriber.receive(@session.StreamData(60, object_a0)),
@@ -381,8 +388,14 @@ test "ClientSession shares even request IDs across tracks and routes interleaved
     ]),
   )
 
-  assert_eq(publisher.finish_object_stream(50), Ok([@session.SendFin(50, b"")]))
-  assert_eq(publisher.finish_object_stream(52), Ok([@session.SendFin(52, b"")]))
+  assert_eq(
+    publisher.finish_object_stream(@session.StreamId(50)),
+    Ok([@session.SendFin(50, b"")]),
+  )
+  assert_eq(
+    publisher.finish_object_stream(@session.StreamId(52)),
+    Ok([@session.SendFin(52, b"")]),
+  )
   for _ in 0..<3 {
     assert_eq(
       publisher.receive(@session.SendCompleted(50, @session.Sent)),
@@ -410,7 +423,7 @@ test "ClientSession shares even request IDs across tracks and routes interleaved
     Ok([@session.EmitNotice(@session.ObjectStreamSendFinished(52))]),
   )
   assert_eq(
-    publisher.publish_done(40, 3, b""),
+    publisher.publish_done(@session.StreamId(40), 3, b""),
     Ok([
       @session.SendFin(
         40,
@@ -422,7 +435,7 @@ test "ClientSession shares even request IDs across tracks and routes interleaved
     ]),
   )
   assert_eq(
-    publisher.publish_done(42, 3, b""),
+    publisher.publish_done(@session.StreamId(42), 3, b""),
     Ok([
       @session.SendFin(
         42,
@@ -575,7 +588,7 @@ test "peer request ID parity accepts distinct odd IDs" {
     )
   }
   assert_eq(
-    publisher.accept_subscription(40),
+    publisher.accept_subscription(@session.StreamId(40)),
     Ok([
       @session.SendChunk(
         40,
@@ -589,7 +602,7 @@ test "peer request ID parity accepts distinct odd IDs" {
     ]),
   )
   assert_eq(
-    publisher.accept_subscription(41),
+    publisher.accept_subscription(@session.StreamId(41)),
     Ok([
       @session.SendChunk(
         41,
@@ -608,8 +621,10 @@ test "peer request ID parity accepts distinct odd IDs" {
 test "ClientSession sends Objects and PUBLISH_DONE on a local PUBLISH stream" {
   let publisher = client_session_ready()
   let track = client_track(b"video")
-  let (request_id, _) = publisher.publish_track(track, 1).unwrap()
-  assert_eq(request_id, 0UL)
+  let (request_id, _) = publisher
+    .publish_track(track, @session.TrackAlias(1))
+    .unwrap()
+  assert_eq(request_id, @session.RequestId(0UL))
   assert_eq(
     publisher.receive(@session.StreamOpened(@session.Request(0), 20)),
     Ok([
@@ -645,7 +660,7 @@ test "ClientSession sends Objects and PUBLISH_DONE on a local PUBLISH stream" {
 
   let header = client_subgroup_header(1, 7)
   assert_eq(
-    publisher.open_object_stream(20, header),
+    publisher.open_object_stream(@session.StreamId(20), header),
     Ok([@session.OpenStream(@session.Unidirectional, @session.Object(0))]),
   )
   assert_eq(
@@ -653,12 +668,16 @@ test "ClientSession sends Objects and PUBLISH_DONE on a local PUBLISH stream" {
     Ok([@session.SendChunk(22, @protocol.encode_subgroup_header(header))]),
   )
   assert_true(
-    match publisher.send_object(22, client_object(0, b"payload")) {
+    match
+      publisher.send_object(@session.StreamId(22), client_object(0, b"payload")) {
       Ok([@session.SendChunk(22, bytes)]) => !bytes.is_empty()
       _ => false
     },
   )
-  assert_eq(publisher.finish_object_stream(22), Ok([@session.SendFin(22, b"")]))
+  assert_eq(
+    publisher.finish_object_stream(@session.StreamId(22)),
+    Ok([@session.SendFin(22, b"")]),
+  )
   assert_eq(
     publisher.receive(@session.SendCompleted(22, @session.Sent)),
     Ok([@session.EmitNotice(@session.StreamSendFinished(22, @session.Sent))]),
@@ -676,7 +695,7 @@ test "ClientSession sends Objects and PUBLISH_DONE on a local PUBLISH stream" {
     Ok([@session.EmitNotice(@session.ObjectStreamSendFinished(22))]),
   )
   assert_eq(
-    publisher.publish_done(20, 3, b""),
+    publisher.publish_done(@session.StreamId(20), 3, b""),
     Ok([
       @session.SendFin(
         20,
@@ -693,8 +712,10 @@ test "ClientSession sends Objects and PUBLISH_DONE on a local PUBLISH stream" {
 test "ClientSession ends inbound subscriptions when request streams terminate" {
   let publisher = client_session_ready()
   let track = client_track(b"video")
-  let (publish_id, _) = publisher.publish_track(track, 1).unwrap()
-  assert_eq(publish_id, 0UL)
+  let (publish_id, _) = publisher
+    .publish_track(track, @session.TrackAlias(1))
+    .unwrap()
+  assert_eq(publish_id, @session.RequestId(0UL))
   assert_eq(
     publisher.receive(@session.StreamOpened(@session.Request(0), 20)),
     Ok([
@@ -742,7 +763,7 @@ test "ClientSession ends inbound subscriptions when request streams terminate" {
     Ok([@session.EmitNotice(@session.SubscriptionRequested(1, 40, track))]),
   )
   assert_eq(
-    publisher.accept_subscription(40),
+    publisher.accept_subscription(@session.StreamId(40)),
     Ok([
       @session.SendChunk(
         40,
@@ -758,7 +779,7 @@ test "ClientSession ends inbound subscriptions when request streams terminate" {
 
   let header = client_subgroup_header(1, 7)
   assert_eq(
-    publisher.open_object_stream(40, header),
+    publisher.open_object_stream(@session.StreamId(40), header),
     Ok([@session.OpenStream(@session.Unidirectional, @session.Object(0))]),
   )
   assert_eq(
@@ -779,11 +800,11 @@ test "ClientSession ends inbound subscriptions when request streams terminate" {
     ]),
   )
   assert_eq(
-    publisher.open_object_stream(40, header),
+    publisher.open_object_stream(@session.StreamId(40), header),
     Err(@session.SubscriptionNotAccepted),
   )
   assert_eq(
-    publisher.send_object(50, client_object(0, b"late")),
+    publisher.send_object(@session.StreamId(50), client_object(0, b"late")),
     Err(@session.UnknownStream),
   )
 
@@ -801,7 +822,7 @@ test "ClientSession ends inbound subscriptions when request streams terminate" {
     Ok([@session.EmitNotice(@session.SubscriptionRequested(3, 42, track))]),
   )
   assert_eq(
-    publisher.accept_subscription(42),
+    publisher.accept_subscription(@session.StreamId(42)),
     Ok([
       @session.SendChunk(
         42,
@@ -815,7 +836,7 @@ test "ClientSession ends inbound subscriptions when request streams terminate" {
     ]),
   )
   assert_eq(
-    publisher.open_object_stream(42, header),
+    publisher.open_object_stream(@session.StreamId(42), header),
     Ok([@session.OpenStream(@session.Unidirectional, @session.Object(1))]),
   )
   assert_eq(
@@ -841,7 +862,7 @@ test "ClientSession stops incoming object streams when a subscription request en
   let subscriber = client_session_ready()
   let track = client_track(b"video")
   let (request_id, _) = subscriber.subscribe_track(track).unwrap()
-  assert_eq(request_id, 0UL)
+  assert_eq(request_id, @session.RequestId(0UL))
   assert_eq(
     subscriber.receive(@session.StreamOpened(@session.Request(0), 30)),
     Ok([
@@ -993,7 +1014,10 @@ test "ClientSession releases a completed subscription alias" {
 test "ClientSession ends local PUBLISH subscriptions on STOP_SENDING" {
   let publisher = client_session_ready()
   let track = client_track(b"video")
-  assert_eq(publisher.publish_track(track, 1).unwrap().0, 0UL)
+  assert_eq(
+    publisher.publish_track(track, @session.TrackAlias(1)).unwrap().0,
+    0UL,
+  )
   assert_eq(
     publisher.receive(@session.StreamOpened(@session.Request(0), 20)),
     Ok([
@@ -1029,7 +1053,7 @@ test "ClientSession ends local PUBLISH subscriptions on STOP_SENDING" {
 
   let header = client_subgroup_header(1, 7)
   assert_eq(
-    publisher.open_object_stream(20, header),
+    publisher.open_object_stream(@session.StreamId(20), header),
     Ok([@session.OpenStream(@session.Unidirectional, @session.Object(0))]),
   )
   assert_eq(
@@ -1050,11 +1074,11 @@ test "ClientSession ends local PUBLISH subscriptions on STOP_SENDING" {
     ]),
   )
   assert_eq(
-    publisher.open_object_stream(20, header),
+    publisher.open_object_stream(@session.StreamId(20), header),
     Err(@session.SubscriptionNotAccepted),
   )
   assert_eq(
-    publisher.send_object(50, client_object(0, b"late")),
+    publisher.send_object(@session.StreamId(50), client_object(0, b"late")),
     Err(@session.UnknownStream),
   )
 }

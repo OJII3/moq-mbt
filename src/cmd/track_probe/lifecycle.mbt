@@ -82,7 +82,8 @@ fn lifecycle_request_stream(
 ) -> Int64 raise {
   for (purpose, stream) in opened {
     match purpose {
-      @session.Request(opened_id) if opened_id == request_id => return stream
+      @session.Request(opened_id) if opened_id.to_uint64() == request_id =>
+        return stream
       _ => ()
     }
   }
@@ -247,7 +248,8 @@ fn LifecycleState::observe_publisher(
     match notice {
       @session.PublishRejected(_, _) => fail("PUBLISH rejected")
       @session.SubscriptionUpdateRequested(request_id, update_id, stream, _, _) => {
-        guard request_id == self.publish_a || request_id == self.publish_b else {
+        guard request_id.to_uint64() == self.publish_a ||
+          request_id.to_uint64() == self.publish_b else {
           fail("subscription update targeted an unknown lifecycle track")
         }
         let response : @protocol.RequestOkMessage = {
@@ -269,7 +271,7 @@ fn LifecycleState::observe_publisher(
         }
       }
       @session.ObjectStreamSendFinished(stream) =>
-        match self.object_stream_requests.get(stream) {
+        match self.object_stream_requests.get(stream.to_int64()) {
           Some(request_id) if request_id == self.publish_a =>
             self.finished_a_streams = self.finished_a_streams + 1UL
           Some(request_id) if request_id == self.publish_b =>
@@ -277,15 +279,16 @@ fn LifecycleState::observe_publisher(
           _ => fail("unknown lifecycle object stream finished")
         }
       @session.StreamSendFinished(stream, completion) if self.done_b_sent &&
-        stream == self.publish_stream_b => {
+        stream.to_int64() == self.publish_stream_b => {
         guard completion == @session.Sent else {
           fail("track B PUBLISH_DONE send was canceled")
         }
-        if !peer.driver.has_pending_sends(stream) {
+        if !peer.driver.has_pending_sends(stream.to_int64()) {
           self.done_b_send_completed = true
         }
       }
-      @session.PublishDone(request_id, done) if request_id == self.publish_b => {
+      @session.PublishDone(request_id, done) if request_id.to_uint64() ==
+        self.publish_b => {
         guard done.stream_count == 2UL else {
           fail("track B PUBLISH_DONE reported an unexpected stream count")
         }
@@ -308,10 +311,10 @@ fn wait_lifecycle_publishes(
   while !(accepted_a && accepted_b) && @env.now() < deadline {
     for notice in lifecycle_poll(publisher, 20) {
       match notice {
-        @session.PublishAccepted(request_id, _, _) if request_id == publish_a =>
-          accepted_a = true
-        @session.PublishAccepted(request_id, _, _) if request_id == publish_b =>
-          accepted_b = true
+        @session.PublishAccepted(request_id, _, _) if request_id.to_uint64() ==
+          publish_a => accepted_a = true
+        @session.PublishAccepted(request_id, _, _) if request_id.to_uint64() ==
+          publish_b => accepted_b = true
         @session.PublishRejected(_, _) => fail("PUBLISH rejected")
         @session.SessionEnded(_) => fail("publisher session ended")
         _ => ()
@@ -330,25 +333,25 @@ fn LifecycleState::observe_subscriber(
 ) -> Unit raise {
   for notice in notices {
     match notice {
-      @session.SubscribeEstablished(request_id, track_alias_value) if request_id ==
+      @session.SubscribeEstablished(request_id, track_alias_value) if request_id.to_uint64() ==
         self.subscribe_a => {
-        self.alias_a = Some(track_alias_value)
+        self.alias_a = Some(track_alias_value.to_uint64())
         self.subscribed_a = true
         eprintln("SUBSCRIBE track A accepted (alias \{track_alias_value})")
       }
-      @session.SubscribeEstablished(request_id, track_alias_value) if request_id ==
+      @session.SubscribeEstablished(request_id, track_alias_value) if request_id.to_uint64() ==
         self.subscribe_b => {
-        self.alias_b = Some(track_alias_value)
+        self.alias_b = Some(track_alias_value.to_uint64())
         self.subscribed_b = true
         eprintln("SUBSCRIBE track B accepted (alias \{track_alias_value})")
       }
       @session.SubscribeRejected(_, _) => fail("SUBSCRIBE rejected")
-      @session.SubscriptionUpdateAccepted(request_id, update_id, _) if request_id ==
+      @session.SubscriptionUpdateAccepted(request_id, update_id, _) if request_id.to_uint64() ==
         self.subscribe_a =>
-        if self.update_off == Some(update_id) {
+        if self.update_off == Some(update_id.to_uint64()) {
           self.update_off_accepted = true
           println("REQUEST_UPDATE FORWARD=0 accepted")
-        } else if self.update_on == Some(update_id) {
+        } else if self.update_on == Some(update_id.to_uint64()) {
           self.update_on_accepted = true
           println("REQUEST_UPDATE FORWARD=1 accepted")
         } else {
@@ -357,10 +360,10 @@ fn LifecycleState::observe_subscriber(
       @session.SubscriptionUpdateRejected(_, _, _) =>
         fail("REQUEST_UPDATE rejected")
       @session.ObjectReceived(request_id, _, header, frames) => {
-        let is_a = request_id == self.subscribe_a
+        let is_a = request_id.to_uint64() == self.subscribe_a
         let track_alias_value = if is_a {
           self.alias_a.unwrap()
-        } else if request_id == self.subscribe_b {
+        } else if request_id.to_uint64() == self.subscribe_b {
           self.alias_b.unwrap()
         } else {
           fail("Object arrived on an unknown subscription")
@@ -397,21 +400,22 @@ fn LifecycleState::observe_subscriber(
         }
       }
       @session.GroupFinished(request_id, group_id) =>
-        if request_id == self.subscribe_a && group_id == 0UL {
+        if request_id.to_uint64() == self.subscribe_a && group_id == 0UL {
           self.finished_a0 = true
-        } else if request_id == self.subscribe_b && group_id == 0UL {
+        } else if request_id.to_uint64() == self.subscribe_b && group_id == 0UL {
           self.finished_b0 = true
-        } else if request_id == self.subscribe_b && group_id == 1UL {
+        } else if request_id.to_uint64() == self.subscribe_b && group_id == 1UL {
           self.finished_b1 = true
         } else {
           fail("received an unexpected lifecycle Group end")
         }
-      @session.SubscriptionEnded(request_id, _, _) if request_id ==
+      @session.SubscriptionEnded(request_id, _, _) if request_id.to_uint64() ==
         self.subscribe_a => {
         self.cancelled_a = true
         println("Track A subscription cancelled")
       }
-      @session.PublishDone(request_id, done) if request_id == self.subscribe_b => {
+      @session.PublishDone(request_id, done) if request_id.to_uint64() ==
+        self.subscribe_b => {
         guard done.stream_count == 2UL else {
           fail("track B PUBLISH_DONE reported an unexpected stream count")
         }
@@ -492,7 +496,7 @@ fn send_lifecycle_group(
     drive_session_result(
       peer.client,
       peer.session,
-      peer.session.send_object(object_stream, frame),
+      peer.session.send_object(StreamId(object_stream), frame),
       peer.driver,
     ),
   )
@@ -526,6 +530,7 @@ pub fn run_lifecycle(
   let (publish_a, publish_a_actions) = publisher_session
     .publish_track(lifecycle_track("lifecycle-a"), 1UL)
     .unwrap()
+  let publish_a = publish_a.to_uint64()
   let (_, publish_a_opened) = drive_session_actions(
     publisher_client,
     publisher_session,
@@ -536,6 +541,7 @@ pub fn run_lifecycle(
   let (publish_b, publish_b_actions) = publisher_session
     .publish_track(lifecycle_track("lifecycle-b"), 2UL)
     .unwrap()
+  let publish_b = publish_b.to_uint64()
   let (_, publish_b_opened) = drive_session_actions(
     publisher_client,
     publisher_session,
@@ -558,6 +564,7 @@ pub fn run_lifecycle(
   let (subscribe_a, subscribe_a_actions) = subscriber_session
     .subscribe_track(lifecycle_track("lifecycle-a"))
     .unwrap()
+  let subscribe_a = subscribe_a.to_uint64()
   let (_, subscribe_a_opened) = drive_session_actions(
     subscriber_client,
     subscriber_session,
@@ -570,6 +577,7 @@ pub fn run_lifecycle(
   let (subscribe_b, subscribe_b_actions) = subscriber_session
     .subscribe_track(lifecycle_track("lifecycle-b"))
     .unwrap()
+  let subscribe_b = subscribe_b.to_uint64()
   ignore(
     drive_session_actions(
       subscriber_client,
@@ -612,9 +620,11 @@ pub fn run_lifecycle(
   println("SUBSCRIBE tracks A and B accepted")
 
   let (update_off, update_off_actions) = subscriber_session
-    .update_subscription(subscribe_a, [@protocol.forward_parameter(false)])
+    .update_subscription(RequestId(subscribe_a), [
+      @protocol.forward_parameter(false),
+    ])
     .unwrap()
-  state.update_off = Some(update_off)
+  state.update_off = Some(update_off.to_uint64())
   let (update_off_notices, _) = drive_session_result(
     subscriber_client,
     subscriber_session,
@@ -636,9 +646,11 @@ pub fn run_lifecycle(
   wait_lifecycle_stage(publisher, subscriber, state, TrackBGroup0)
 
   let (update_on, update_on_actions) = subscriber_session
-    .update_subscription(subscribe_a, [@protocol.forward_parameter(true)])
+    .update_subscription(RequestId(subscribe_a), [
+      @protocol.forward_parameter(true),
+    ])
     .unwrap()
-  state.update_on = Some(update_on)
+  state.update_on = Some(update_on.to_uint64())
   let (update_on_notices, _) = drive_session_result(
     subscriber_client,
     subscriber_session,
@@ -659,7 +671,8 @@ pub fn run_lifecycle(
   )
   wait_lifecycle_stage(publisher, subscriber, state, TrackAGroup0)
 
-  let cancel_actions = match subscriber_session.cancel_request(subscribe_a) {
+  let cancel_actions = match
+    subscriber_session.cancel_request(RequestId(subscribe_a)) {
     Ok(actions) => actions
     Err(error) => fail("track A cancellation failed: \{error.to_repr()}")
   }

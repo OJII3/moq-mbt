@@ -21,7 +21,7 @@ fn handle_subscriber_notices(
   for notice in notices {
     match notice {
       @session.SubscribeEstablished(_, track_alias) => {
-        state.track_alias = Some(track_alias)
+        state.track_alias = Some(track_alias.to_uint64())
         eprintln("SUBSCRIBE_OK received")
         println("Subscription accepted (track alias \{track_alias})")
       }
@@ -73,7 +73,7 @@ fn handle_subscriber_notices(
         guard state.expect_datagram else {
           fail("received unexpected Object Datagram")
         }
-        guard request_id == state.request_id else {
+        guard request_id.to_uint64() == state.request_id else {
           fail("Object Datagram arrived on an unexpected subscription")
         }
         guard state.track_alias is Some(track_alias) &&
@@ -188,6 +188,7 @@ fn run_subscriber(
       { kind: 4UL, value: @protocol.VarInt(10000UL), },
     ])
     .unwrap()
+  let request_id = request_id.to_uint64()
   let (notices, opened) = drive_session_actions(
     client, session, actions, driver,
   )
@@ -208,8 +209,8 @@ fn run_subscriber(
   let mut request_stream : Int64? = None
   for (purpose, stream) in opened {
     match purpose {
-      @session.Request(opened_request_id) if opened_request_id == request_id =>
-        request_stream = Some(stream)
+      @session.Request(opened_request_id) if opened_request_id.to_uint64() ==
+        request_id => request_stream = Some(stream)
       _ => ()
     }
   }

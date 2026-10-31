@@ -151,7 +151,7 @@ fn serve_publisher_fetch(
   session : @session.ClientSession,
   driver : SessionActionDriver,
   state : PublisherProbeState,
-  request_id : UInt64,
+  request_id : @session.RequestId,
   track : @protocol.TrackName,
   start : @protocol.FetchLocation,
   end : @protocol.FetchLocation,
@@ -290,12 +290,12 @@ fn handle_publisher_notices(
         )
       @session.SessionEnded(end) => fail("session ended: \{end.to_repr()}")
       @session.ObjectStreamSendFinished(stream) =>
-        match state.object_stream_groups.get(stream) {
+        match state.object_stream_groups.get(stream.to_int64()) {
           Some(group_id) => {
-            guard state.finished_object_streams.get(stream) is None else {
+            guard state.finished_object_streams.get(stream.to_int64()) is None else {
               fail("object stream finished more than once")
             }
-            state.finished_object_streams[stream] = true
+            state.finished_object_streams[stream.to_int64()] = true
             state.finished_stream_count = state.finished_stream_count + 1UL
             println("Group stream finished (group \{group_id})")
           }

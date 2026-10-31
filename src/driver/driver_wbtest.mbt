@@ -404,11 +404,11 @@ test "driver rejects queue overflow atomically and permits abort" {
     max_pending_bytes: 4L,
   }
   let driver = SessionDriver::new(transport, session, config)
-  assert_eq(driver.dispatch([@session.SendChunk(4L, b"1234")]), Dispatched)
+  assert_eq(driver.dispatch([@session.SendChunk(4L, b"1234")]), Accepted)
   assert_eq(driver.dispatch([@session.SendChunk(5L, b"x")]), QueueFull)
   assert_eq(driver.dispatch([@session.SendChunk(5L, b"12345")]), TooLarge)
   assert_eq(driver.pending_action_count(), 1)
-  assert_eq(driver.dispatch([@session.AbortSend(4L, 2UL)]), Dispatched)
+  assert_eq(driver.dispatch([@session.AbortSend(4L, 2UL)]), Accepted)
   assert_eq(driver.pending_action_count(), 0)
   assert_eq(transport.aborts, [(4L, 2UL)])
 }
@@ -420,7 +420,7 @@ test "driver chunks writes and attaches fin only to final chunk" {
     ..driver_config(1, 1, 1),
     max_send_chunk_bytes: 3,
   })
-  assert_eq(driver.dispatch([@session.SendFin(4L, b"1234567")]), Dispatched)
+  assert_eq(driver.dispatch([@session.SendFin(4L, b"1234567")]), Accepted)
   assert_eq(transport.sends, [(4L, b"123", false)])
   let (_, done) = transport.send_callbacks.remove(0)
   done(Written)
@@ -442,7 +442,7 @@ test "driver handles synchronous chunk completion without stalling" {
     ..driver_config(1, 1, 1),
     max_send_chunk_bytes: 3,
   })
-  assert_eq(driver.dispatch([@session.SendFin(4L, b"1234567")]), Dispatched)
+  assert_eq(driver.dispatch([@session.SendFin(4L, b"1234567")]), Accepted)
   assert_eq(transport.sends.length(), 3)
   assert_eq(driver.pending_action_count(), 0)
 }
@@ -459,7 +459,7 @@ test "driver keeps later writes behind every chunk of the same stream" {
       @session.SendChunk(4L, b"1234567"),
       @session.SendFin(4L, b"end"),
     ]),
-    Dispatched,
+    Accepted,
   )
   assert_eq(transport.sends, [(4L, b"123", false)])
   let (_, done) = transport.send_callbacks.remove(0)
@@ -488,7 +488,7 @@ test "driver abort discards even following writes in the same batch" {
       @session.AbortSend(4L, 2UL),
       @session.SendFin(4L, b"never"),
     ]),
-    Dispatched,
+    Accepted,
   )
   assert_eq(transport.sends.length(), 0)
   assert_eq(driver.pending_action_count(), 0)
@@ -506,7 +506,7 @@ test "driver expires queued object writes using the latest clock value" {
   driver.set_clock(fn() { 10UL })
   assert_eq(
     driver.dispatch([@session.SendObjectChunk(4L, b"body", 20UL)]),
-    Dispatched,
+    Accepted,
   )
   assert_eq(transport.sends.length(), 1)
   transport.send_acceptance = Accepted
@@ -525,14 +525,14 @@ test "driver applies queued abort before earlier data and preserves other stream
     driver_session(),
     driver_config(1, 4, 1),
   )
-  assert_eq(driver.dispatch([@session.SendChunk(4L, b"queued")]), Dispatched)
+  assert_eq(driver.dispatch([@session.SendChunk(4L, b"queued")]), Accepted)
   transport.send_acceptance = Accepted
   assert_eq(
     driver.dispatch([
       @session.SendChunk(5L, b"other"),
       @session.AbortSend(4L, 2UL),
     ]),
-    Dispatched,
+    Accepted,
   )
   assert_eq(transport.sends, [(4L, b"queued", false), (5L, b"other", false)])
   assert_eq(transport.aborts, [(4L, 2UL)])
@@ -548,7 +548,7 @@ test "driver handles terminal transport event before retrying queued data" {
     driver_session(),
     driver_config(1, 4, 1),
   )
-  assert_eq(driver.dispatch([@session.SendChunk(4L, b"queued")]), Dispatched)
+  assert_eq(driver.dispatch([@session.SendChunk(4L, b"queued")]), Accepted)
   transport.send_acceptance = Accepted
   driver.receive(@session.TransportFailed(-10L))
   assert_eq(transport.sends.length(), 1)

@@ -24,7 +24,7 @@ fn delivery_publisher() -> @session.ClientSession raise {
     )
     .unwrap(),
   )
-  ignore(publisher.accept_subscription(40).unwrap())
+  ignore(publisher.accept_subscription(@session.StreamId(40)).unwrap())
   publisher
 }
 
@@ -119,7 +119,10 @@ test "datagram uses smaller nonzero timeout and clock never rewinds" {
   ignore(publisher.receive(@session.Clock(100UL)).unwrap())
   ignore(publisher.receive(@session.Clock(90UL)).unwrap())
   let (_, actions) = publisher
-    .send_object_datagram(40, update_datagram(1UL, 0UL, b"payload"))
+    .send_object_datagram(
+      @session.StreamId(40),
+      update_datagram(1UL, 0UL, b"payload"),
+    )
     .unwrap()
   assert_true(actions[0] is @session.SendObjectDatagram(_, _, 110UL))
 }
@@ -132,7 +135,7 @@ test "default transport capability refuses outgoing subgroups" {
     abort_after_fin=false,
   )
   assert_true(
-    publisher.open_object_group(40, 0UL)
+    publisher.open_object_group(@session.StreamId(40), 0UL)
     is Err(@session.DeliveryTimeoutUnsupported),
   )
   publisher.set_stream_delivery_capability(
@@ -140,7 +143,7 @@ test "default transport capability refuses outgoing subgroups" {
     abort_after_fin=false,
   )
   assert_true(
-    publisher.open_object_group(40, 0UL)
+    publisher.open_object_group(@session.StreamId(40), 0UL)
     is Err(@session.DeliveryTimeoutUnsupported),
   )
 }

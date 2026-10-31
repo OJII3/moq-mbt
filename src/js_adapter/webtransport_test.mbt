@@ -2,7 +2,7 @@
 async test "WebTransport connection and session lifecycle" {
   ffi_install_fake_webtransport("moqt-18", false, false)
   let connection = match
-    @js_adapter.webtransport_connect("moqt://example.test/live?q=1") {
+    @js_adapter.WebTransportConnection::connect("moqt://example.test/live?q=1") {
     Ok(connection) => connection
     Err(message) => fail(message)
   }
@@ -21,7 +21,7 @@ async test "WebTransport connection and session lifecycle" {
 
   ffi_install_fake_webtransport("not-moqt-18", false, false)
   let mismatch = match
-    @js_adapter.webtransport_connect("moqt://example.test/mismatch") {
+    @js_adapter.WebTransportConnection::connect("moqt://example.test/mismatch") {
     Ok(connection) => connection
     Err(message) => fail(message)
   }
@@ -38,7 +38,7 @@ async test "WebTransport connection and session lifecycle" {
 
   ffi_install_fake_webtransport("moqt-18", false, true)
   let failed = match
-    @js_adapter.webtransport_connect("moqt://example.test/failure") {
+    @js_adapter.WebTransportConnection::connect("moqt://example.test/failure") {
     Ok(connection) => connection
     Err(message) => fail(message)
   }
@@ -49,7 +49,7 @@ async test "WebTransport connection and session lifecycle" {
 
   ffi_install_fake_webtransport("moqt-18", true, false)
   let pending = match
-    @js_adapter.webtransport_connect("moqt://example.test/path") {
+    @js_adapter.WebTransportConnection::connect("moqt://example.test/path") {
     Ok(connection) => connection
     Err(message) => fail(message)
   }
@@ -71,26 +71,28 @@ async test "WebTransport connection and session lifecycle" {
   ffi_install_fake_webtransport("moqt-18", false, false)
   ffi_remove_fake_webtransport()
   assert_true(
-    @js_adapter.webtransport_connect("moqt://example.test/unavailable")
+    @js_adapter.WebTransportConnection::connect(
+      "moqt://example.test/unavailable",
+    )
     is Err(_),
   )
   ffi_install_fake_webtransport("moqt-18", false, false)
   let https_connection = match
-    @js_adapter.webtransport_connect("https://example.test/path") {
+    @js_adapter.WebTransportConnection::connect("https://example.test/path") {
     Ok(connection) => connection
     Err(message) => fail(message)
   }
   assert_true(https_connection.close(0L, "done") is Ok(_))
   assert_true(https_connection.closed().wait() is LocalClose)
   let validation = match
-    @js_adapter.webtransport_connect("moqt://example.test/path") {
+    @js_adapter.WebTransportConnection::connect("moqt://example.test/path") {
     Ok(connection) => connection
     Err(message) => fail(message)
   }
   assert_true(validation.close(-1L, "") is Err(_))
   assert_true(validation.close(0L, "界".repeat(342)) is Err(_))
   let _with_hash = match
-    @js_adapter.webtransport_connect("moqt://example.test/local", certificate_hashes=[
+    @js_adapter.WebTransportConnection::connect("moqt://example.test/local", certificate_hashes=[
       @js_adapter.bytes_to_uint8array(b"test hash"),
     ]) {
     Ok(connection) => connection
@@ -99,7 +101,7 @@ async test "WebTransport connection and session lifecycle" {
   assert_eq(ffi_fake_certificate_hash_algorithm(), "sha-256")
   ffi_install_fake_webtransport("moqt-18", false, false)
   let connection = match
-    @js_adapter.webtransport_connect("moqt://example.test/streams") {
+    @js_adapter.WebTransportConnection::connect("moqt://example.test/streams") {
     Ok(connection) => connection
     Err(message) => fail(message)
   }
@@ -276,7 +278,9 @@ async test "WebTransport connection and session lifecycle" {
 
   ffi_install_fake_webtransport("moqt-18", false, false)
   let capped_connection = match
-    @js_adapter.webtransport_connect("moqt://example.test/active-limit") {
+    @js_adapter.WebTransportConnection::connect(
+      "moqt://example.test/active-limit",
+    ) {
     Ok(connection) => connection
     Err(message) => fail(message)
   }
@@ -296,7 +300,7 @@ async test "WebTransport connection and session lifecycle" {
 
   ffi_install_fake_webtransport("moqt-18", false, false)
   let pending_connection = match
-    @js_adapter.webtransport_connect("moqt://example.test/open-race") {
+    @js_adapter.WebTransportConnection::connect("moqt://example.test/open-race") {
     Ok(connection) => connection
     Err(message) => fail(message)
   }
@@ -322,7 +326,7 @@ async test "WebTransport connection and session lifecycle" {
   }
   ffi_install_fake_webtransport("moqt-18", false, false)
   let connection = match
-    @js_adapter.webtransport_connect("moqt://example.test/datagrams") {
+    @js_adapter.WebTransportConnection::connect("moqt://example.test/datagrams") {
     Ok(connection) => connection
     Err(message) => fail(message)
   }
@@ -422,7 +426,9 @@ async test "WebTransport connection and session lifecycle" {
   ffi_install_fake_webtransport("moqt-18", false, false)
   ffi_fake_disable_next_datagrams()
   let unavailable = match
-    @js_adapter.webtransport_connect("moqt://example.test/no-datagrams") {
+    @js_adapter.WebTransportConnection::connect(
+      "moqt://example.test/no-datagrams",
+    ) {
     Ok(connection) => connection
     Err(message) => fail(message)
   }
@@ -436,7 +442,7 @@ async test "WebTransport connection and session lifecycle" {
 
   ffi_install_fake_webtransport("moqt-18", false, false)
   let blocked = match
-    @js_adapter.webtransport_connect(
+    @js_adapter.WebTransportConnection::connect(
       "moqt://example.test/datagram-backpressure",
     ) {
     Ok(connection) => connection
@@ -468,7 +474,7 @@ async test "WebTransport connection and session lifecycle" {
 async fn webtransport_session_driver_routes_setup() -> Unit {
   ffi_install_fake_webtransport("moqt-18", false, false)
   let connection = match
-    @js_adapter.webtransport_connect("moqt://example.test/session") {
+    @js_adapter.WebTransportConnection::connect("moqt://example.test/session") {
     Ok(connection) => connection
     Err(message) => fail(message)
   }
@@ -498,7 +504,9 @@ async fn webtransport_session_driver_routes_setup() -> Unit {
 async fn webtransport_session_driver_reports_close() -> Unit {
   ffi_install_fake_webtransport("moqt-18", false, false)
   let connection = match
-    @js_adapter.webtransport_connect("moqt://example.test/session-close") {
+    @js_adapter.WebTransportConnection::connect(
+      "moqt://example.test/session-close",
+    ) {
     Ok(connection) => connection
     Err(message) => fail(message)
   }
@@ -530,7 +538,9 @@ async fn webtransport_session_driver_reports_close() -> Unit {
 
   ffi_install_fake_webtransport("moqt-18", false, false)
   let failed_connection = match
-    @js_adapter.webtransport_connect("moqt://example.test/session-failure") {
+    @js_adapter.WebTransportConnection::connect(
+      "moqt://example.test/session-failure",
+    ) {
     Ok(connection) => connection
     Err(message) => fail(message)
   }
@@ -569,7 +579,9 @@ async fn webtransport_session_driver_finishes_after_callback_failure() -> Unit {
   ffi_install_fake_webtransport("moqt-18", false, false)
   ffi_fake_reject_stream_opens()
   let connection = match
-    @js_adapter.webtransport_connect("moqt://example.test/open-failure") {
+    @js_adapter.WebTransportConnection::connect(
+      "moqt://example.test/open-failure",
+    ) {
     Ok(connection) => connection
     Err(message) => fail(message)
   }

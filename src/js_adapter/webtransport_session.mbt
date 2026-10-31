@@ -117,9 +117,9 @@ pub struct WebTransportSessionDriver {
   priv driver : @driver.SessionDriver[WebTransportTransport]
   notices : Array[@session.SessionNotice]
   notice_waiters : Array[(@session.SessionNotice?) -> Unit]
-  opened_streams : Array[(@session.ClientStreamPurpose, Int64)]
+  opened_streams : Array[(@session.ClientStreamPurpose, @session.StreamId)]
   opened_stream_waiters : Array[
-    ((@session.ClientStreamPurpose, Int64)?) -> Unit,
+    ((@session.ClientStreamPurpose, @session.StreamId)?) -> Unit,
   ]
   mut active : Bool
   mut clock_timer : Int32?
@@ -225,7 +225,7 @@ pub fn WebTransportSessionDriver::start(
             match self.driver.session().start() {
               Ok(actions) =>
                 match self.driver.dispatch(actions) {
-                  Dispatched => ()
+                  Accepted => ()
                   QueueFull | TooLarge | DriverFailed => {
                     self.receive_event(@session.TransportFailed(-7L))
                     self.fail_close()
@@ -294,7 +294,7 @@ pub fn WebTransportSessionDriver::next_notice(
 /// code retain the transport reference needed by later session operations.
 pub fn WebTransportSessionDriver::next_opened_stream(
   self : WebTransportSessionDriver,
-) -> @js.Promise[(@session.ClientStreamPurpose, Int64)?] {
+) -> @js.Promise[(@session.ClientStreamPurpose, @session.StreamId)?] {
   self.flush()
   if self.opened_streams.length() > 0 {
     let stream = self.opened_streams[0]
@@ -327,7 +327,7 @@ fn WebTransportSessionDriver::flush(self : WebTransportSessionDriver) -> Unit {
 fn WebTransportSessionDriver::notify_opened_stream(
   self : WebTransportSessionDriver,
   purpose : @session.ClientStreamPurpose,
-  stream : Int64,
+  stream : @session.StreamId,
 ) -> Unit {
   if self.opened_stream_waiters.length() > 0 {
     let waiter = self.opened_stream_waiters[0]

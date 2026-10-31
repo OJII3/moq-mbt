@@ -88,29 +88,37 @@ fn ClientSession::terminate_fetch(
 /// backward from the subscription's Joining Location group. The local API
 /// takes SUBSCRIBE IDs; a peer FETCH can also reference this endpoint's local
 /// PUBLISH ID when that PUBLISH established the subscription.
-pub fn ClientSession::fetch_relative(
+pub fn ClientSession::fetch_joining_relative(
   self : ClientSession,
-  subscription_request_id : UInt64,
-  groups_back : UInt64,
-  parameters : Array[@protocol.MessageParameter],
-) -> Result[(UInt64, Array[SessionAction]), ClientSessionError] {
-  self.send_joining_fetch(
-    subscription_request_id, groups_back, true, parameters,
-  )
+  subscription_request_id~ : UInt64,
+  groups_back~ : UInt64,
+  parameters~ : Array[@protocol.MessageParameter] = [],
+) -> Result[(RequestId, Array[SessionAction]), ClientSessionError] {
+  match
+    self.send_joining_fetch(
+      subscription_request_id, groups_back, true, parameters,
+    ) {
+    Ok((request_id, actions)) => Ok((RequestId(request_id), actions))
+    Err(error) => Err(error)
+  }
 }
 
 ///|
 /// Start a FETCH from an absolute group through the subscription's Joining
 /// Location group.
-pub fn ClientSession::fetch_absolute(
+pub fn ClientSession::fetch_joining_absolute(
   self : ClientSession,
-  subscription_request_id : UInt64,
-  start_group : UInt64,
-  parameters : Array[@protocol.MessageParameter],
-) -> Result[(UInt64, Array[SessionAction]), ClientSessionError] {
-  self.send_joining_fetch(
-    subscription_request_id, start_group, false, parameters,
-  )
+  subscription_request_id~ : UInt64,
+  start_group~ : UInt64,
+  parameters~ : Array[@protocol.MessageParameter] = [],
+) -> Result[(RequestId, Array[SessionAction]), ClientSessionError] {
+  match
+    self.send_joining_fetch(
+      subscription_request_id, start_group, false, parameters,
+    ) {
+    Ok((request_id, actions)) => Ok((RequestId(request_id), actions))
+    Err(error) => Err(error)
+  }
 }
 
 ///|
@@ -181,7 +189,9 @@ fn ClientSession::send_joining_fetch(
   Ok(
     (
       request_id,
-      self.finish_actions([OpenStream(Bidirectional, Request(request_id))]),
+      self.finish_actions([
+        OpenStream(Bidirectional, Request(RequestId(request_id))),
+      ]),
     ),
   )
 }
@@ -216,7 +226,9 @@ fn ClientSession::receive_joining_fetch(
               }
               return Ok([
                 SendFin(stream, bytes),
-                EmitNotice(FetchRejected(request_id, stream, error)),
+                EmitNotice(
+                  FetchRejected(RequestId(request_id), StreamId(stream), error),
+                ),
               ])
             }
           }
@@ -230,7 +242,9 @@ fn ClientSession::receive_joining_fetch(
           }
           return Ok([
             SendFin(stream, bytes),
-            EmitNotice(FetchRejected(request_id, stream, error)),
+            EmitNotice(
+              FetchRejected(RequestId(request_id), StreamId(stream), error),
+            ),
           ])
         }
       }
@@ -244,7 +258,7 @@ fn ClientSession::receive_joining_fetch(
     }
     return Ok([
       SendFin(stream, bytes),
-      EmitNotice(FetchRejected(request_id, stream, error)),
+      EmitNotice(FetchRejected(RequestId(request_id), StreamId(stream), error)),
     ])
   }
   let publisher = self.requests.get(publisher_request_id).unwrap()
@@ -256,7 +270,7 @@ fn ClientSession::receive_joining_fetch(
     }
     return Ok([
       SendFin(stream, bytes),
-      EmitNotice(FetchRejected(request_id, stream, error)),
+      EmitNotice(FetchRejected(RequestId(request_id), StreamId(stream), error)),
     ])
   }
   let fetch = new_client_fetch(
@@ -319,7 +333,11 @@ fn ClientSession::resolve_joining_fetch(
     self.terminate_fetch(
       fetch,
       [SendFin(stream, bytes)],
-      Some(EmitNotice(FetchRejected(request_id, stream, error))),
+      Some(
+        EmitNotice(
+          FetchRejected(RequestId(request_id), StreamId(stream), error),
+        ),
+      ),
       RemoveFetchData,
     )
   }
@@ -357,8 +375,8 @@ fn ClientSession::resolve_joining_fetch(
   [
     EmitNotice(
       FetchRequested(
-        request_id,
-        stream,
+        RequestId(request_id),
+        StreamId(stream),
         fetch.track,
         start,
         end,
@@ -424,7 +442,11 @@ fn ClientSession::fail_pending_joining_fetches(
           action in self.terminate_fetch(
             fetch,
             [SendFin(stream, bytes)],
-            Some(EmitNotice(FetchRejected(request_id, stream, error))),
+            Some(
+              EmitNotice(
+                FetchRejected(RequestId(request_id), StreamId(stream), error),
+              ),
+            ),
             RemoveFetchData,
           ) {
           actions.push(action)
@@ -484,7 +506,11 @@ fn ClientSession::expire_pending_joining_fetches(
       action in self.terminate_fetch(
         fetch,
         [SendFin(stream, bytes)],
-        Some(EmitNotice(FetchRejected(request_id, stream, error))),
+        Some(
+          EmitNotice(
+            FetchRejected(RequestId(request_id), StreamId(stream), error),
+          ),
+        ),
         RemoveFetchData,
       ) {
       actions.push(action)

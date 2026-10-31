@@ -3,8 +3,9 @@
 /// FETCH requests so applications do not need to keep their own reverse map.
 pub fn ClientSession::track_for_request(
   self : ClientSession,
-  request_id : UInt64,
+  request_id : RequestId,
 ) -> @protocol.TrackName? {
+  let request_id = request_id.to_uint64()
   match self.requests.get(request_id) {
     Some(request) => Some(request.track)
     None =>
@@ -20,8 +21,9 @@ pub fn ClientSession::track_for_request(
 /// peer SUBSCRIBE requests and local PUBLISH requests are covered.
 pub fn ClientSession::subscription_track(
   self : ClientSession,
-  subscription_stream : Int64,
+  subscription_stream : StreamId,
 ) -> @protocol.TrackName? {
+  let subscription_stream = subscription_stream.to_int64()
   match self.inbound_subscriptions.get(subscription_stream) {
     Some(inbound) =>
       match self.requests.get(inbound.publisher_request_id) {
@@ -30,7 +32,7 @@ pub fn ClientSession::subscription_track(
       }
     None =>
       match self.request_streams.get(subscription_stream) {
-        Some(request_id) => self.track_for_request(request_id)
+        Some(request_id) => self.track_for_request(RequestId(request_id))
         None => None
       }
   }
@@ -40,10 +42,14 @@ pub fn ClientSession::subscription_track(
 /// The Track Alias assigned to a local PUBLISH or SUBSCRIBE request.
 pub fn ClientSession::track_alias_for_request(
   self : ClientSession,
-  request_id : UInt64,
-) -> UInt64? {
-  match self.requests.get(request_id) {
-    Some(request) => request.track_alias
+  request_id : RequestId,
+) -> TrackAlias? {
+  match self.requests.get(request_id.to_uint64()) {
+    Some(request) =>
+      match request.track_alias {
+        Some(value) => Some(TrackAlias(value))
+        None => None
+      }
     None => None
   }
 }

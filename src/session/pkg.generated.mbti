@@ -23,60 +23,60 @@ pub fn ClientHandshake::version(Self) -> Version
 pub struct ClientSession {
   // private fields
 }
-pub fn ClientSession::accept_fetch(Self, UInt64, @protocol.FetchOkMessage) -> Result[Array[SessionAction], ClientSessionError]
-pub fn ClientSession::accept_fetch_update(Self, UInt64, UInt64) -> Result[Array[SessionAction], ClientSessionError]
-pub fn ClientSession::accept_namespace_publication(Self, Int64) -> Result[Array[SessionAction], ClientSessionError]
-pub fn ClientSession::accept_namespace_subscription(Self, Int64, Array[@protocol.TrackNamespace]) -> Result[Array[SessionAction], ClientSessionError]
-pub fn ClientSession::accept_namespace_subscription_update(Self, Int64, UInt64, @protocol.RequestOkMessage) -> Result[Array[SessionAction], ClientSessionError]
-pub fn ClientSession::accept_namespace_update(Self, Int64, UInt64, @protocol.RequestOkMessage) -> Result[Array[SessionAction], ClientSessionError]
-pub fn ClientSession::accept_subscription(Self, Int64) -> Result[Array[SessionAction], ClientSessionError]
-pub fn ClientSession::accept_subscription_update(Self, Int64, UInt64, @protocol.RequestOkMessage) -> Result[Array[SessionAction], ClientSessionError]
-pub fn ClientSession::cancel_fetch(Self, UInt64) -> Result[Array[SessionAction], ClientSessionError]
-pub fn ClientSession::cancel_request(Self, UInt64) -> Result[Array[SessionAction], ClientSessionError]
+pub fn ClientSession::accept_fetch(Self, RequestId, @protocol.FetchOkMessage) -> Result[Array[SessionAction], ClientSessionError]
+pub fn ClientSession::accept_fetch_update(Self, RequestId, RequestId) -> Result[Array[SessionAction], ClientSessionError]
+pub fn ClientSession::accept_namespace_publication(Self, StreamId) -> Result[Array[SessionAction], ClientSessionError]
+pub fn ClientSession::accept_namespace_subscription(Self, StreamId, Array[@protocol.TrackNamespace]) -> Result[Array[SessionAction], ClientSessionError]
+pub fn ClientSession::accept_namespace_subscription_update(Self, StreamId, RequestId, @protocol.RequestOkMessage) -> Result[Array[SessionAction], ClientSessionError]
+pub fn ClientSession::accept_namespace_update(Self, StreamId, RequestId, @protocol.RequestOkMessage) -> Result[Array[SessionAction], ClientSessionError]
+pub fn ClientSession::accept_subscription(Self, StreamId) -> Result[Array[SessionAction], ClientSessionError]
+pub fn ClientSession::accept_subscription_update(Self, StreamId, RequestId, @protocol.RequestOkMessage) -> Result[Array[SessionAction], ClientSessionError]
+pub fn ClientSession::cancel_fetch(Self, RequestId) -> Result[Array[SessionAction], ClientSessionError]
+pub fn ClientSession::cancel_request(Self, RequestId) -> Result[Array[SessionAction], ClientSessionError]
 pub fn ClientSession::close(Self, UInt64, Bytes) -> Array[SessionAction]
 pub fn ClientSession::desired_subscriptions(Self) -> Array[DesiredSubscription]
-pub fn ClientSession::fetch_absolute(Self, UInt64, UInt64, Array[@protocol.MessageParameter]) -> Result[(UInt64, Array[SessionAction]), ClientSessionError]
-pub fn ClientSession::fetch_relative(Self, UInt64, UInt64, Array[@protocol.MessageParameter]) -> Result[(UInt64, Array[SessionAction]), ClientSessionError]
-pub fn ClientSession::fetch_track(Self, @protocol.TrackName, @protocol.FetchLocation, @protocol.FetchLocation, Array[@protocol.MessageParameter]) -> Result[(UInt64, Array[SessionAction]), ClientSessionError]
-pub fn ClientSession::finish_fetch(Self, UInt64) -> Result[Array[SessionAction], ClientSessionError]
-pub fn ClientSession::finish_object_stream(Self, Int64) -> Result[Array[SessionAction], ClientSessionError]
-pub fn ClientSession::finish_subscription_updates(Self, UInt64) -> Result[Array[SessionAction], ClientSessionError]
+pub fn ClientSession::fetch_joining_absolute(Self, subscription_request_id~ : UInt64, start_group~ : UInt64, parameters? : Array[@protocol.MessageParameter]) -> Result[(RequestId, Array[SessionAction]), ClientSessionError]
+pub fn ClientSession::fetch_joining_relative(Self, subscription_request_id~ : UInt64, groups_back~ : UInt64, parameters? : Array[@protocol.MessageParameter]) -> Result[(RequestId, Array[SessionAction]), ClientSessionError]
+pub fn ClientSession::fetch_track(Self, @protocol.TrackName, @protocol.FetchLocation, @protocol.FetchLocation, Array[@protocol.MessageParameter]) -> Result[(RequestId, Array[SessionAction]), ClientSessionError]
+pub fn ClientSession::finish_fetch(Self, RequestId) -> Result[Array[SessionAction], ClientSessionError]
+pub fn ClientSession::finish_object_stream(Self, StreamId) -> Result[Array[SessionAction], ClientSessionError]
+pub fn ClientSession::finish_subscription_updates(Self, RequestId) -> Result[Array[SessionAction], ClientSessionError]
 pub fn ClientSession::forget_desired_subscriptions(Self, @protocol.TrackName) -> Unit
 pub fn ClientSession::max_datagram_length(Self) -> Int
 pub fn ClientSession::new(Version, @protocol.Setup, desired_subscriptions? : Array[DesiredSubscription], max_object_buffer_bytes? : UInt64) -> Result[Self, @protocol.CodecError]
-pub fn ClientSession::open_object_group(Self, Int64, UInt64, end_of_group? : Bool, has_properties? : Bool) -> Result[(ObjectGroupWriter, Array[SessionAction]), ClientSessionError]
-pub fn ClientSession::open_object_stream(Self, Int64, @protocol.SubgroupHeader) -> Result[Array[SessionAction], ClientSessionError]
+pub fn ClientSession::open_object_group(Self, StreamId, UInt64, end_of_group? : Bool, has_properties? : Bool) -> Result[(ObjectGroupWriter, Array[SessionAction]), ClientSessionError]
+pub fn ClientSession::open_object_stream(Self, StreamId, @protocol.SubgroupHeader) -> Result[Array[SessionAction], ClientSessionError]
 pub fn ClientSession::publish_application_namespace(Self, @protocol.TrackNamespace) -> Result[Array[SessionAction], ClientSessionError]
-pub fn ClientSession::publish_done(Self, Int64, UInt64, Bytes) -> Result[Array[SessionAction], ClientSessionError]
-pub fn ClientSession::publish_namespace(Self, @protocol.TrackNamespace, Array[@protocol.MessageParameter]) -> Result[(UInt64, Array[SessionAction]), ClientSessionError]
-pub fn ClientSession::publish_track(Self, @protocol.TrackName, UInt64, properties? : Bytes) -> Result[(UInt64, Array[SessionAction]), ClientSessionError]
+pub fn ClientSession::publish_done(Self, StreamId, UInt64, Bytes) -> Result[Array[SessionAction], ClientSessionError]
+pub fn ClientSession::publish_namespace(Self, @protocol.TrackNamespace, Array[@protocol.MessageParameter]) -> Result[(RequestId, Array[SessionAction]), ClientSessionError]
+pub fn ClientSession::publish_track(Self, @protocol.TrackName, TrackAlias, properties? : Bytes) -> Result[(RequestId, Array[SessionAction]), ClientSessionError]
 pub fn ClientSession::receive(Self, SessionEvent) -> Result[Array[SessionAction], ClientSessionError]
-pub fn ClientSession::reject_fetch(Self, UInt64, @protocol.RequestErrorMessage) -> Result[Array[SessionAction], ClientSessionError]
-pub fn ClientSession::reject_fetch_update(Self, UInt64, UInt64, @protocol.RequestErrorMessage) -> Result[Array[SessionAction], ClientSessionError]
-pub fn ClientSession::reject_namespace_publication(Self, Int64, @protocol.RequestErrorMessage) -> Result[Array[SessionAction], ClientSessionError]
-pub fn ClientSession::reject_namespace_subscription(Self, Int64, @protocol.RequestErrorMessage) -> Result[Array[SessionAction], ClientSessionError]
-pub fn ClientSession::reject_namespace_subscription_update(Self, Int64, UInt64, @protocol.RequestErrorMessage) -> Result[Array[SessionAction], ClientSessionError]
-pub fn ClientSession::reject_namespace_update(Self, Int64, UInt64, @protocol.RequestErrorMessage) -> Result[Array[SessionAction], ClientSessionError]
-pub fn ClientSession::reject_subscription(Self, Int64, @protocol.RequestErrorMessage) -> Result[Array[SessionAction], ClientSessionError]
-pub fn ClientSession::reject_subscription_update(Self, Int64, UInt64, @protocol.RequestErrorMessage) -> Result[Array[SessionAction], ClientSessionError]
-pub fn ClientSession::send_fetch_object(Self, UInt64, @protocol.FetchObject) -> Result[Array[SessionAction], ClientSessionError]
-pub fn ClientSession::send_fetch_range_end(Self, UInt64, @protocol.FetchRangeEnd) -> Result[Array[SessionAction], ClientSessionError]
+pub fn ClientSession::reject_fetch(Self, RequestId, @protocol.RequestErrorMessage) -> Result[Array[SessionAction], ClientSessionError]
+pub fn ClientSession::reject_fetch_update(Self, RequestId, RequestId, @protocol.RequestErrorMessage) -> Result[Array[SessionAction], ClientSessionError]
+pub fn ClientSession::reject_namespace_publication(Self, StreamId, @protocol.RequestErrorMessage) -> Result[Array[SessionAction], ClientSessionError]
+pub fn ClientSession::reject_namespace_subscription(Self, StreamId, @protocol.RequestErrorMessage) -> Result[Array[SessionAction], ClientSessionError]
+pub fn ClientSession::reject_namespace_subscription_update(Self, StreamId, RequestId, @protocol.RequestErrorMessage) -> Result[Array[SessionAction], ClientSessionError]
+pub fn ClientSession::reject_namespace_update(Self, StreamId, RequestId, @protocol.RequestErrorMessage) -> Result[Array[SessionAction], ClientSessionError]
+pub fn ClientSession::reject_subscription(Self, StreamId, @protocol.RequestErrorMessage) -> Result[Array[SessionAction], ClientSessionError]
+pub fn ClientSession::reject_subscription_update(Self, StreamId, RequestId, @protocol.RequestErrorMessage) -> Result[Array[SessionAction], ClientSessionError]
+pub fn ClientSession::send_fetch_object(Self, RequestId, @protocol.FetchObject) -> Result[Array[SessionAction], ClientSessionError]
+pub fn ClientSession::send_fetch_range_end(Self, RequestId, @protocol.FetchRangeEnd) -> Result[Array[SessionAction], ClientSessionError]
 pub fn ClientSession::send_goaway(Self, UInt64) -> Result[Array[SessionAction], ClientSessionError]
-pub fn ClientSession::send_object(Self, Int64, @protocol.SubgroupFrame) -> Result[Array[SessionAction], ClientSessionError]
-pub fn ClientSession::send_object_datagram(Self, Int64, @protocol.ObjectDatagram) -> Result[(UInt64, Array[SessionAction]), ClientSessionError]
+pub fn ClientSession::send_object(Self, StreamId, @protocol.SubgroupFrame) -> Result[Array[SessionAction], ClientSessionError]
+pub fn ClientSession::send_object_datagram(Self, StreamId, @protocol.ObjectDatagram) -> Result[(UInt64, Array[SessionAction]), ClientSessionError]
 pub fn ClientSession::send_object_datagram_for_track(Self, @protocol.TrackName, @protocol.ObjectDatagram) -> Result[(Array[UInt64], Array[SessionAction]), ClientSessionError]
 pub fn ClientSession::set_stream_delivery_capability(Self, committed~ : Bool, abort_after_fin~ : Bool) -> Unit
 pub fn ClientSession::start(Self) -> Result[Array[SessionAction], ClientSessionError]
 pub fn ClientSession::state(Self) -> ClientSessionState
-pub fn ClientSession::subscribe_namespace(Self, @protocol.TrackNamespace) -> Result[(UInt64, Array[SessionAction]), ClientSessionError]
-pub fn ClientSession::subscribe_track(Self, @protocol.TrackName, parameters? : Array[@protocol.MessageParameter]) -> Result[(UInt64, Array[SessionAction]), ClientSessionError]
-pub fn ClientSession::subscription_track(Self, Int64) -> @protocol.TrackName?
-pub fn ClientSession::track_alias_for_request(Self, UInt64) -> UInt64?
-pub fn ClientSession::track_for_request(Self, UInt64) -> @protocol.TrackName?
-pub fn ClientSession::update_fetch(Self, UInt64, Array[@protocol.MessageParameter]) -> Result[(UInt64, Array[SessionAction]), ClientSessionError]
-pub fn ClientSession::update_namespace_subscription(Self, UInt64, @protocol.TrackNamespace) -> Result[(UInt64, Array[SessionAction]), ClientSessionError]
-pub fn ClientSession::update_published_namespace(Self, UInt64, Array[@protocol.MessageParameter]) -> Result[(UInt64, Array[SessionAction]), ClientSessionError]
-pub fn ClientSession::update_subscription(Self, UInt64, Array[@protocol.MessageParameter]) -> Result[(UInt64, Array[SessionAction]), ClientSessionError]
+pub fn ClientSession::subscribe_namespace(Self, @protocol.TrackNamespace) -> Result[(RequestId, Array[SessionAction]), ClientSessionError]
+pub fn ClientSession::subscribe_track(Self, @protocol.TrackName, parameters? : Array[@protocol.MessageParameter]) -> Result[(RequestId, Array[SessionAction]), ClientSessionError]
+pub fn ClientSession::subscription_track(Self, StreamId) -> @protocol.TrackName?
+pub fn ClientSession::track_alias_for_request(Self, RequestId) -> TrackAlias?
+pub fn ClientSession::track_for_request(Self, RequestId) -> @protocol.TrackName?
+pub fn ClientSession::update_fetch(Self, RequestId, Array[@protocol.MessageParameter]) -> Result[(RequestId, Array[SessionAction]), ClientSessionError]
+pub fn ClientSession::update_namespace_subscription(Self, RequestId, @protocol.TrackNamespace) -> Result[(RequestId, Array[SessionAction]), ClientSessionError]
+pub fn ClientSession::update_published_namespace(Self, RequestId, Array[@protocol.MessageParameter]) -> Result[(RequestId, Array[SessionAction]), ClientSessionError]
+pub fn ClientSession::update_subscription(Self, RequestId, Array[@protocol.MessageParameter]) -> Result[(RequestId, Array[SessionAction]), ClientSessionError]
 pub fn ClientSession::withdraw_application_namespace(Self, @protocol.TrackNamespace) -> Result[Array[SessionAction], ClientSessionError]
 
 pub(all) enum ClientSessionEnd {
@@ -143,9 +143,9 @@ pub fn ClientStreamDirection::to_repr(Self) -> @debug.Repr
 
 pub(all) enum ClientStreamPurpose {
   Control
-  Request(UInt64)
+  Request(RequestId)
   Object(UInt64)
-  FetchData(UInt64)
+  FetchData(RequestId)
 } derive(Eq, @debug.Debug)
 pub fn ClientStreamPurpose::equal(Self, Self) -> Bool
 pub fn ClientStreamPurpose::not_equal(Self, Self) -> Bool
@@ -196,6 +196,17 @@ pub struct ObjectWriter {
 pub fn ObjectWriter::finish(Self) -> Result[Array[SessionAction], ClientSessionError]
 pub fn ObjectWriter::write(Self, Bytes) -> Result[Array[SessionAction], ClientSessionError]
 
+pub(all) struct RequestId(UInt64) derive(Eq, Hash, @debug.Debug)
+pub fn RequestId::equal(Self, Self) -> Bool
+pub fn RequestId::hash(Self) -> Int
+pub fn RequestId::hash_combine(Self, Hasher) -> Unit
+pub fn RequestId::not_equal(Self, Self) -> Bool
+pub fn RequestId::output(Self, &Logger) -> Unit
+pub fn RequestId::to_repr(Self) -> @debug.Repr
+pub fn RequestId::to_string(Self) -> String
+pub fn RequestId::to_uint64(Self) -> UInt64
+pub impl Show for RequestId
+
 pub(all) enum SendCompletion {
   Sent
   Reset
@@ -244,65 +255,87 @@ pub fn SessionEvent::to_repr(Self) -> @debug.Repr
 pub(all) enum SessionNotice {
   HandshakeComplete(@protocol.Setup)
   ControlMessageReceived(@protocol.ControlMessage)
-  PublishAccepted(UInt64, @protocol.TrackName, UInt64)
-  PublishRejected(UInt64, @protocol.RequestErrorMessage)
-  SubscribeEstablished(UInt64, UInt64)
-  SubscribeRejected(UInt64, @protocol.RequestErrorMessage)
-  SubscriptionRequested(UInt64, Int64, @protocol.TrackName)
-  FetchRequested(UInt64, Int64, @protocol.TrackName, @protocol.FetchLocation, @protocol.FetchLocation, Array[@protocol.MessageParameter])
-  FetchAccepted(UInt64, Int64)
-  FetchResponseAccepted(UInt64, Int64, @protocol.FetchOkMessage)
-  FetchRejected(UInt64, Int64, @protocol.RequestErrorMessage)
-  FetchObjectReceived(UInt64, @protocol.FetchObject)
-  FetchRangeEnded(UInt64, @protocol.FetchRangeEnd)
-  FetchEndOfTrack(UInt64)
-  FetchFinished(UInt64)
-  FetchFailed(UInt64, @protocol.RequestErrorMessage)
-  FetchCancelled(UInt64, UInt64)
-  FetchReset(UInt64, Int64, UInt64)
-  FetchUpdateRequested(UInt64, UInt64, Int64, Array[@protocol.MessageParameter])
-  FetchUpdateAccepted(UInt64, UInt64, @protocol.RequestOkMessage)
-  FetchUpdateRejected(UInt64, UInt64, @protocol.RequestErrorMessage)
-  NamespacePublicationRequested(UInt64, Int64, @protocol.TrackNamespace, Array[@protocol.MessageParameter])
-  NamespacePublicationAccepted(UInt64, Int64)
-  NamespacePublicationRejected(UInt64, Int64, @protocol.RequestErrorMessage)
-  NamespaceUpdateRequested(UInt64, UInt64, Int64, Array[@protocol.MessageParameter])
-  NamespaceUpdateAccepted(UInt64, UInt64, @protocol.RequestOkMessage)
-  NamespaceUpdateRejected(UInt64, UInt64, @protocol.RequestErrorMessage)
-  NamespaceWithdrawn(UInt64, Int64)
-  NamespaceAcceptanceRevoked(UInt64, Int64)
-  NamespaceSubscriptionRequested(UInt64, Int64, @protocol.TrackNamespace)
-  NamespaceSubscriptionEstablished(UInt64, Int64)
-  NamespaceSubscriptionRejected(UInt64, Int64, @protocol.RequestErrorMessage)
-  NamespaceDiscovered(UInt64, @protocol.TrackNamespace)
-  NamespaceNoLongerAvailable(UInt64, @protocol.TrackNamespace)
-  NamespaceSubscriptionEnded(UInt64, Int64)
-  NamespaceSubscriptionUpdateRequested(UInt64, UInt64, Int64, @protocol.TrackNamespace)
-  NamespaceSubscriptionUpdateAccepted(UInt64, UInt64, @protocol.RequestOkMessage)
-  NamespaceSubscriptionUpdateRejected(UInt64, UInt64, @protocol.RequestErrorMessage)
-  SubscriptionAccepted(UInt64, Int64, UInt64)
-  SubscriptionRejected(UInt64, Int64)
-  SubscriptionUpdateRequested(UInt64, UInt64, Int64, Array[@protocol.MessageParameter], Array[@protocol.MessageParameter])
-  SubscriptionUpdateApplied(UInt64, UInt64, Int64, Array[@protocol.MessageParameter])
-  SubscriptionUpdateAccepted(UInt64, UInt64, @protocol.RequestOkMessage)
-  SubscriptionUpdateRejected(UInt64, UInt64, @protocol.RequestErrorMessage)
-  SubscriptionEnded(UInt64, Int64, @protocol.TrackName)
-  ObjectReceived(UInt64, @protocol.TrackName, @protocol.SubgroupHeader, Array[@protocol.SubgroupFrame])
-  ObjectDatagramReceived(UInt64, @protocol.TrackName, @protocol.ObjectDatagram)
-  ObjectStreamReset(UInt64, Int64)
-  ObjectStreamSendFinished(Int64)
-  GroupFinished(UInt64, UInt64)
-  PublishDone(UInt64, @protocol.PublishDoneMessage)
-  StreamSendFinished(Int64, SendCompletion)
+  PublishAccepted(RequestId, @protocol.TrackName, TrackAlias)
+  PublishRejected(RequestId, @protocol.RequestErrorMessage)
+  SubscribeEstablished(RequestId, TrackAlias)
+  SubscribeRejected(RequestId, @protocol.RequestErrorMessage)
+  SubscriptionRequested(RequestId, StreamId, @protocol.TrackName)
+  FetchRequested(RequestId, StreamId, @protocol.TrackName, @protocol.FetchLocation, @protocol.FetchLocation, Array[@protocol.MessageParameter])
+  FetchAccepted(RequestId, StreamId)
+  FetchResponseAccepted(RequestId, StreamId, @protocol.FetchOkMessage)
+  FetchRejected(RequestId, StreamId, @protocol.RequestErrorMessage)
+  FetchObjectReceived(RequestId, @protocol.FetchObject)
+  FetchRangeEnded(RequestId, @protocol.FetchRangeEnd)
+  FetchEndOfTrack(RequestId)
+  FetchFinished(RequestId)
+  FetchFailed(RequestId, @protocol.RequestErrorMessage)
+  FetchCancelled(RequestId, UInt64)
+  FetchReset(RequestId, StreamId, UInt64)
+  FetchUpdateRequested(RequestId, RequestId, StreamId, Array[@protocol.MessageParameter])
+  FetchUpdateAccepted(RequestId, RequestId, @protocol.RequestOkMessage)
+  FetchUpdateRejected(RequestId, RequestId, @protocol.RequestErrorMessage)
+  NamespacePublicationRequested(RequestId, StreamId, @protocol.TrackNamespace, Array[@protocol.MessageParameter])
+  NamespacePublicationAccepted(RequestId, StreamId)
+  NamespacePublicationRejected(RequestId, StreamId, @protocol.RequestErrorMessage)
+  NamespaceUpdateRequested(RequestId, RequestId, StreamId, Array[@protocol.MessageParameter])
+  NamespaceUpdateAccepted(RequestId, RequestId, @protocol.RequestOkMessage)
+  NamespaceUpdateRejected(RequestId, RequestId, @protocol.RequestErrorMessage)
+  NamespaceWithdrawn(RequestId, StreamId)
+  NamespaceAcceptanceRevoked(RequestId, StreamId)
+  NamespaceSubscriptionRequested(RequestId, StreamId, @protocol.TrackNamespace)
+  NamespaceSubscriptionEstablished(RequestId, StreamId)
+  NamespaceSubscriptionRejected(RequestId, StreamId, @protocol.RequestErrorMessage)
+  NamespaceDiscovered(RequestId, @protocol.TrackNamespace)
+  NamespaceNoLongerAvailable(RequestId, @protocol.TrackNamespace)
+  NamespaceSubscriptionEnded(RequestId, StreamId)
+  NamespaceSubscriptionUpdateRequested(RequestId, RequestId, StreamId, @protocol.TrackNamespace)
+  NamespaceSubscriptionUpdateAccepted(RequestId, RequestId, @protocol.RequestOkMessage)
+  NamespaceSubscriptionUpdateRejected(RequestId, RequestId, @protocol.RequestErrorMessage)
+  SubscriptionAccepted(RequestId, StreamId, TrackAlias)
+  SubscriptionRejected(RequestId, StreamId)
+  SubscriptionUpdateRequested(RequestId, RequestId, StreamId, Array[@protocol.MessageParameter], Array[@protocol.MessageParameter])
+  SubscriptionUpdateApplied(RequestId, RequestId, StreamId, Array[@protocol.MessageParameter])
+  SubscriptionUpdateAccepted(RequestId, RequestId, @protocol.RequestOkMessage)
+  SubscriptionUpdateRejected(RequestId, RequestId, @protocol.RequestErrorMessage)
+  SubscriptionEnded(RequestId, StreamId, @protocol.TrackName)
+  ObjectReceived(RequestId, @protocol.TrackName, @protocol.SubgroupHeader, Array[@protocol.SubgroupFrame])
+  ObjectDatagramReceived(RequestId, @protocol.TrackName, @protocol.ObjectDatagram)
+  ObjectStreamReset(RequestId, StreamId)
+  ObjectStreamSendFinished(StreamId)
+  GroupFinished(RequestId, UInt64)
+  PublishDone(RequestId, @protocol.PublishDoneMessage)
+  StreamSendFinished(StreamId, SendCompletion)
   DatagramQueued(UInt64)
   DatagramLocalWriteFailed(UInt64, Int64)
   ControlGoAwayReceived(Bytes, UInt64, UInt64)
-  RequestGoAwayReceived(UInt64, Int64, Bytes, UInt64)
+  RequestGoAwayReceived(RequestId, StreamId, Bytes, UInt64)
   SessionEnded(ClientSessionEnd)
 } derive(Eq, @debug.Debug)
 pub fn SessionNotice::equal(Self, Self) -> Bool
 pub fn SessionNotice::not_equal(Self, Self) -> Bool
 pub fn SessionNotice::to_repr(Self) -> @debug.Repr
+
+pub(all) struct StreamId(Int64) derive(Eq, Hash, @debug.Debug)
+pub fn StreamId::equal(Self, Self) -> Bool
+pub fn StreamId::hash(Self) -> Int
+pub fn StreamId::hash_combine(Self, Hasher) -> Unit
+pub fn StreamId::not_equal(Self, Self) -> Bool
+pub fn StreamId::output(Self, &Logger) -> Unit
+pub fn StreamId::to_int64(Self) -> Int64
+pub fn StreamId::to_repr(Self) -> @debug.Repr
+pub fn StreamId::to_string(Self) -> String
+pub impl Show for StreamId
+
+pub(all) struct TrackAlias(UInt64) derive(Eq, Hash, @debug.Debug)
+pub fn TrackAlias::equal(Self, Self) -> Bool
+pub fn TrackAlias::hash(Self) -> Int
+pub fn TrackAlias::hash_combine(Self, Hasher) -> Unit
+pub fn TrackAlias::not_equal(Self, Self) -> Bool
+pub fn TrackAlias::output(Self, &Logger) -> Unit
+pub fn TrackAlias::to_repr(Self) -> @debug.Repr
+pub fn TrackAlias::to_string(Self) -> String
+pub fn TrackAlias::to_uint64(Self) -> UInt64
+pub impl Show for TrackAlias
 
 pub(all) enum TrackSessionError {
   InvalidControlMessage

@@ -43,8 +43,22 @@ test "GROUP_ORDER Byte values are accepted for standalone and joining FETCH" {
       ),
     ),
   )
-  assert_true(joined.fetch_relative(0UL, 2UL, descending) is Ok(_))
-  assert_true(joined.fetch_absolute(0UL, 8UL, descending) is Ok(_))
+  assert_true(
+    joined.fetch_joining_relative(
+      subscription_request_id=0UL,
+      groups_back=2UL,
+      parameters=descending,
+    )
+    is Ok(_),
+  )
+  assert_true(
+    joined.fetch_joining_absolute(
+      subscription_request_id=0UL,
+      start_group=8UL,
+      parameters=descending,
+    )
+    is Ok(_),
+  )
 }
 
 ///|
@@ -113,7 +127,7 @@ test "peer FETCH GROUP_ORDER Byte selects descending object order" {
   )
 
   let encoder = @protocol.FetchDataEncoder::new(@protocol.Descending)
-  let data = @protocol.encode_fetch_header({ request_id: local_id, }) +
+  let data = @protocol.encode_fetch_header({ request_id: local_id.to_uint64(), }) +
     encoder.encode(@protocol.FetchDataObject(object)).unwrap() +
     encoder
     .encode(@protocol.FetchDataObject({ ..object, group_id: 1UL, }))
@@ -150,7 +164,9 @@ test "FETCH data stream FIN prevents another stream for the same request" {
   ignore(
     client.receive(@session.InboundStreamStarted(30, @session.Unidirectional)),
   )
-  let header = @protocol.encode_fetch_header({ request_id, })
+  let header = @protocol.encode_fetch_header({
+    request_id: request_id.to_uint64(),
+  })
   assert_eq(client.receive(@session.StreamData(30, header)), Ok([]))
   assert_eq(client.receive(@session.InboundStreamFinished(30)), Ok([]))
 

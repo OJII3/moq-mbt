@@ -11,7 +11,11 @@ test "ClientSession buffers interleaved fragmented PUBLISH and SUBSCRIBE respons
   }).unwrap()
   for split = 1; split < publish_ok.length(); split = split + 1 {
     let session = client_session_ready()
-    ignore(session.publish_track(client_track(b"video"), 1).unwrap())
+    ignore(
+      session
+      .publish_track(client_track(b"video"), @session.TrackAlias(1))
+      .unwrap(),
+    )
     ignore(session.subscribe_track(client_track(b"audio")).unwrap())
     ignore(
       session.receive(@session.StreamOpened(@session.Request(0), 20)).unwrap(),
@@ -100,7 +104,11 @@ test "ClientSession rejects a second initial response after either request is ac
 ///|
 test "ClientSession routes fragmented request rejections by request kind" {
   let session = client_session_ready()
-  ignore(session.publish_track(client_track(b"video"), 1).unwrap())
+  ignore(
+    session
+    .publish_track(client_track(b"video"), @session.TrackAlias(1))
+    .unwrap(),
+  )
   ignore(session.subscribe_track(client_track(b"audio")).unwrap())
   ignore(
     session.receive(@session.StreamOpened(@session.Request(0), 20)).unwrap(),

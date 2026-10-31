@@ -4,7 +4,7 @@ test "cancellation before Request stream open closes the delayed stream without 
   let (request_id, _) = subscriber
     .subscribe_track(client_track(b"video"))
     .unwrap()
-  assert_eq(request_id, 0UL)
+  assert_eq(request_id, @session.RequestId(0UL))
   assert_eq(subscriber.cancel_request(request_id), Ok([]))
   assert_eq(subscriber.cancel_request(request_id), Ok([]))
   assert_eq(
@@ -42,7 +42,7 @@ test "cancellation closes pending local and peer requests before acceptance" {
       @session.SendChunk(
         30,
         @protocol.encode_subscribe({
-          request_id: local_request_id,
+          request_id: local_request_id.to_uint64(),
           track: client_track(b"video"),
           parameters: [],
         }).unwrap(),
@@ -115,7 +115,10 @@ test "cancellation closes pending local and peer requests before acceptance" {
       @session.EmitNotice(@session.SubscriptionEnded(1UL, 40, track)),
     ]),
   )
-  assert_eq(publisher.accept_subscription(40), Err(@session.UnexpectedMessage))
+  assert_eq(
+    publisher.accept_subscription(@session.StreamId(40)),
+    Err(@session.UnexpectedMessage),
+  )
 }
 
 ///|
@@ -189,8 +192,9 @@ test "cancellation of a peer SUBSCRIBE is idempotent and leaves its PUBLISH acti
     ),
     Ok([@session.EmitNotice(@session.SubscriptionRequested(1, 40, track))]),
   )
-  ignore(publisher.accept_subscription(40).unwrap())
-  let token = match publisher.open_object_stream(40, header).unwrap() {
+  ignore(publisher.accept_subscription(@session.StreamId(40)).unwrap())
+  let token = match
+    publisher.open_object_stream(@session.StreamId(40), header).unwrap() {
     [@session.OpenStream(@session.Unidirectional, @session.Object(token))] =>
       token
     _ => fail("expected object stream request")
@@ -200,7 +204,8 @@ test "cancellation of a peer SUBSCRIBE is idempotent and leaves its PUBLISH acti
     .receive(@session.StreamOpened(@session.Object(token), 50))
     .unwrap(),
   )
-  let pending_token = match publisher.open_object_stream(40, header).unwrap() {
+  let pending_token = match
+    publisher.open_object_stream(@session.StreamId(40), header).unwrap() {
     [@session.OpenStream(@session.Unidirectional, @session.Object(token))] =>
       token
     _ => fail("expected pending object stream request")
@@ -226,11 +231,11 @@ test "cancellation of a peer SUBSCRIBE is idempotent and leaves its PUBLISH acti
     Ok([@session.AbortSend(51, 1UL)]),
   )
   assert_eq(
-    publisher.open_object_stream(40, header),
+    publisher.open_object_stream(@session.StreamId(40), header),
     Err(@session.SubscriptionNotAccepted),
   )
   assert_eq(
-    publisher.open_object_stream(20, header),
+    publisher.open_object_stream(@session.StreamId(20), header),
     Ok([@session.OpenStream(@session.Unidirectional, @session.Object(2))]),
   )
 }
@@ -242,7 +247,9 @@ fn cancellation_publish_track(
   track_alias : UInt64,
   stream : Int64,
 ) -> UInt64 raise {
-  let (request_id, _) = publisher.publish_track(track, track_alias).unwrap()
+  let (request_id, _) = publisher
+    .publish_track(track, @session.TrackAlias(track_alias))
+    .unwrap()
   ignore(
     publisher
     .receive(@session.StreamOpened(@session.Request(request_id), stream))
@@ -257,11 +264,15 @@ fn cancellation_publish_track(
     ),
     Ok([
       @session.EmitNotice(
-        @session.PublishAccepted(request_id, track, track_alias),
+        @session.PublishAccepted(
+          request_id,
+          track,
+          @session.TrackAlias(track_alias),
+        ),
       ),
     ]),
   )
-  request_id
+  request_id.to_uint64()
 }
 
 ///|
@@ -337,7 +348,7 @@ fn request_lifetime_fixture(
       ),
       Ok([@session.EmitNotice(@session.SubscribeEstablished(request_id, 10UL))]),
     )
-    return (session, request_id, 20)
+    return (session, request_id.to_uint64(), 20)
   }
   let parent_id = cancellation_publish_track(session, track, 1UL, 20)
   ignore(parent_id)
@@ -357,7 +368,8 @@ test "cancelling a local PUBLISH tears down its subscriptions but preserves othe
   cancellation_accept_peer_subscription(publisher, 1UL, 40, first_track, 1UL)
   cancellation_accept_peer_subscription(publisher, 3UL, 42, second_track, 2UL)
   let first_header = client_subgroup_header(1UL, 1UL)
-  let token = match publisher.open_object_stream(40, first_header).unwrap() {
+  let token = match
+    publisher.open_object_stream(@session.StreamId(40), first_header).unwrap() {
     [@session.OpenStream(@session.Unidirectional, @session.Object(token))] =>
       token
     _ => fail("expected object stream request")
@@ -383,7 +395,7 @@ test "cancelling a local PUBLISH tears down its subscriptions but preserves othe
   )
   let second_header = client_subgroup_header(2UL, 2UL)
   let second_token = match
-    publisher.open_object_stream(42, second_header).unwrap() {
+    publisher.open_object_stream(@session.StreamId(42), second_header).unwrap() {
     [@session.OpenStream(@session.Unidirectional, @session.Object(token))] =>
       token
     _ => fail("unrelated track subscription should remain active")
@@ -394,7 +406,11 @@ test "cancelling a local PUBLISH tears down its subscriptions but preserves othe
     .unwrap(),
   )
   assert_true(
-    publisher.send_object(52, client_object(0UL, b"still active")) is Ok(_),
+    publisher.send_object(
+      @session.StreamId(52),
+      client_object(0UL, b"still active"),
+    )
+    is Ok(_),
   )
 }
 
