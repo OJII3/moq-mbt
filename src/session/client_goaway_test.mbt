@@ -11,14 +11,16 @@ fn client_goaway_control(
 test "client control GOAWAY sends an empty URI and rejects late peer requests" {
   let publisher = client_session_ready()
   let track = client_track(b"video")
-  let (publish_id, _) = publisher.publish_track(track, 1).unwrap()
+  let (publish_id, _) = publisher
+    .publish_track(track, @session.TrackAlias(1))
+    .unwrap()
   assert_eq(
     publisher.receive(@session.StreamOpened(@session.Request(publish_id), 20)),
     Ok([
       @session.SendChunk(
         20,
         @protocol.encode_publish({
-          request_id: publish_id,
+          request_id: publish_id.to_uint64(),
           track,
           track_alias: 1UL,
           parameters: [],
@@ -62,7 +64,7 @@ test "client control GOAWAY sends an empty URI and rejects late peer requests" {
     Ok([@session.EmitNotice(@session.SubscriptionRequested(1UL, 30, track))]),
   )
   assert_eq(
-    publisher.accept_subscription(30),
+    publisher.accept_subscription(@session.StreamId(30)),
     Ok([
       @session.SendChunk(
         30,
@@ -117,7 +119,7 @@ test "client control GOAWAY sends an empty URI and rejects late peer requests" {
     reason: b"",
   }
   assert_eq(
-    publisher.publish_done(30, 3UL, b""),
+    publisher.publish_done(@session.StreamId(30), 3UL, b""),
     Ok([
       @session.SendFin(30, @protocol.encode_publish_done(done).unwrap()),
       @session.EmitNotice(@session.PublishDone(1UL, done)),
@@ -157,14 +159,16 @@ test "client control GOAWAY sends an empty URI and rejects late peer requests" {
 test "peer REQUEST_UPDATE after control GOAWAY is rejected and ends that subscription" {
   let publisher = client_session_ready()
   let track = client_track(b"video")
-  let (publish_id, _) = publisher.publish_track(track, 1UL).unwrap()
+  let (publish_id, _) = publisher
+    .publish_track(track, @session.TrackAlias(1UL))
+    .unwrap()
   assert_eq(
     publisher.receive(@session.StreamOpened(@session.Request(publish_id), 20)),
     Ok([
       @session.SendChunk(
         20,
         @protocol.encode_publish({
-          request_id: publish_id,
+          request_id: publish_id.to_uint64(),
           track,
           track_alias: 1UL,
           parameters: [],
@@ -204,7 +208,7 @@ test "peer REQUEST_UPDATE after control GOAWAY is rejected and ends that subscri
     ),
     Ok([@session.EmitNotice(@session.SubscriptionRequested(1UL, 30, track))]),
   )
-  ignore(publisher.accept_subscription(30).unwrap())
+  ignore(publisher.accept_subscription(@session.StreamId(30)).unwrap())
   ignore(publisher.receive(@session.SendCompleted(30, @session.Sent)))
   assert_eq(
     publisher.send_goaway(0UL),
@@ -309,7 +313,7 @@ test "received control GOAWAY rejects pending boundary requests and blocks new r
     Err(@session.SessionDraining),
   )
   assert_eq(
-    subscriber.publish_track(client_track(b"camera"), 9UL),
+    subscriber.publish_track(client_track(b"camera"), @session.TrackAlias(9UL)),
     Err(@session.SessionDraining),
   )
   assert_eq(
@@ -378,7 +382,7 @@ test "request GOAWAY is scoped to its stream and resets after its deadline" {
       @session.SendChunk(
         20,
         @protocol.encode_subscribe({
-          request_id,
+          request_id: request_id.to_uint64(),
           track: client_track(b"video"),
           parameters: [],
         }).unwrap(),
@@ -446,7 +450,7 @@ test "request GOAWAY timeout zero does not reset and duplicate GOAWAY is a viola
       @session.SendChunk(
         20,
         @protocol.encode_subscribe({
-          request_id,
+          request_id: request_id.to_uint64(),
           track: client_track(b"video"),
           parameters: [],
         }).unwrap(),
@@ -541,7 +545,9 @@ test "zero GOAWAY timeout does not expire a request and drain waits for sends" {
 ///|
 test "sent control GOAWAY times out while requests remain" {
   let publisher = client_session_ready()
-  let (_, _) = publisher.publish_track(client_track(b"video"), 1UL).unwrap()
+  let (_, _) = publisher
+    .publish_track(client_track(b"video"), @session.TrackAlias(1UL))
+    .unwrap()
   assert_eq(
     publisher.send_goaway(10UL),
     Ok([@session.SendChunk(10, client_goaway_control(1UL, 10UL, b""))]),
@@ -566,7 +572,11 @@ test "existing object delivery continues during session drain" {
     Ok([
       @session.SendChunk(
         20,
-        @protocol.encode_subscribe({ request_id, track, parameters: [], }).unwrap(),
+        @protocol.encode_subscribe({
+          request_id: request_id.to_uint64(),
+          track,
+          parameters: [],
+        }).unwrap(),
       ),
     ]),
   )

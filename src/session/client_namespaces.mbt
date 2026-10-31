@@ -69,8 +69,8 @@ fn ClientSession::receive_peer_namespace_publication(
   Ok([
     EmitNotice(
       NamespacePublicationRequested(
-        message.request_id,
-        stream,
+        RequestId(message.request_id),
+        StreamId(stream),
         message.track_namespace,
         message.parameters,
       ),
@@ -202,7 +202,7 @@ pub fn ClientSession::publish_namespace(
   self : ClientSession,
   track_namespace : @protocol.TrackNamespace,
   parameters : Array[@protocol.MessageParameter],
-) -> Result[(UInt64, Array[SessionAction]), ClientSessionError] {
+) -> Result[(RequestId, Array[SessionAction]), ClientSessionError] {
   match self.ensure_new_request_allowed() {
     Ok(_) => ()
     Err(error) => return Err(error)
@@ -227,8 +227,10 @@ pub fn ClientSession::publish_namespace(
   }
   Ok(
     (
-      request_id,
-      self.finish_actions([OpenStream(Bidirectional, Request(request_id))]),
+      RequestId(request_id),
+      self.finish_actions([
+        OpenStream(Bidirectional, Request(RequestId(request_id))),
+      ]),
     ),
   )
 }
@@ -237,9 +239,10 @@ pub fn ClientSession::publish_namespace(
 /// Update parameters on an accepted local PUBLISH_NAMESPACE request.
 pub fn ClientSession::update_published_namespace(
   self : ClientSession,
-  request_id : UInt64,
+  request_id : RequestId,
   parameters : Array[@protocol.MessageParameter],
-) -> Result[(UInt64, Array[SessionAction]), ClientSessionError] {
+) -> Result[(RequestId, Array[SessionAction]), ClientSessionError] {
+  let request_id = request_id.to_uint64()
   match self.ensure_open() {
     Ok(_) => ()
     Err(error) => return Err(error)
@@ -273,15 +276,16 @@ pub fn ClientSession::update_published_namespace(
   }
   request.pending_local_update_id = Some(update_id)
   request.pending_local_update_parameters = parameters
-  Ok((update_id, self.finish_actions([SendChunk(stream, bytes)])))
+  Ok((RequestId(update_id), self.finish_actions([SendChunk(stream, bytes)])))
 }
 
 ///|
 /// Accept a peer PUBLISH_NAMESPACE after application authorization.
 pub fn ClientSession::accept_namespace_publication(
   self : ClientSession,
-  stream : Int64,
+  stream : StreamId,
 ) -> Result[Array[SessionAction], ClientSessionError] {
+  let stream = stream.to_int64()
   match self.ensure_open() {
     Ok(_) => ()
     Err(error) => return Err(error)
@@ -306,7 +310,9 @@ pub fn ClientSession::accept_namespace_publication(
   Ok(
     self.finish_actions([
       SendChunk(stream, bytes),
-      EmitNotice(NamespacePublicationAccepted(request_id, stream)),
+      EmitNotice(
+        NamespacePublicationAccepted(RequestId(request_id), StreamId(stream)),
+      ),
     ]),
   )
 }
@@ -315,9 +321,10 @@ pub fn ClientSession::accept_namespace_publication(
 /// Reject a peer PUBLISH_NAMESPACE with REQUEST_ERROR and FIN.
 pub fn ClientSession::reject_namespace_publication(
   self : ClientSession,
-  stream : Int64,
+  stream : StreamId,
   error : @protocol.RequestErrorMessage,
 ) -> Result[Array[SessionAction], ClientSessionError] {
+  let stream = stream.to_int64()
   match self.ensure_open() {
     Ok(_) => ()
     Err(error) => return Err(error)
@@ -340,7 +347,13 @@ pub fn ClientSession::reject_namespace_publication(
   Ok(
     self.finish_actions([
       SendFin(stream, bytes),
-      EmitNotice(NamespacePublicationRejected(request_id, stream, error)),
+      EmitNotice(
+        NamespacePublicationRejected(
+          RequestId(request_id),
+          StreamId(stream),
+          error,
+        ),
+      ),
     ]),
   )
 }
@@ -349,10 +362,12 @@ pub fn ClientSession::reject_namespace_publication(
 /// Accept the next peer REQUEST_UPDATE for a namespace publication.
 pub fn ClientSession::accept_namespace_update(
   self : ClientSession,
-  stream : Int64,
-  update_id : UInt64,
+  stream : StreamId,
+  update_id : RequestId,
   response : @protocol.RequestOkMessage,
 ) -> Result[Array[SessionAction], ClientSessionError] {
+  let stream = stream.to_int64()
+  let update_id = update_id.to_uint64()
   match self.ensure_open() {
     Ok(_) => ()
     Err(error) => return Err(error)
@@ -387,7 +402,13 @@ pub fn ClientSession::accept_namespace_update(
   Ok(
     self.finish_actions([
       SendChunk(stream, bytes),
-      EmitNotice(NamespaceUpdateAccepted(request_id, update_id, response)),
+      EmitNotice(
+        NamespaceUpdateAccepted(
+          RequestId(request_id),
+          RequestId(update_id),
+          response,
+        ),
+      ),
     ]),
   )
 }
@@ -396,10 +417,12 @@ pub fn ClientSession::accept_namespace_update(
 /// Reject the next peer REQUEST_UPDATE and end the namespace request.
 pub fn ClientSession::reject_namespace_update(
   self : ClientSession,
-  stream : Int64,
-  update_id : UInt64,
+  stream : StreamId,
+  update_id : RequestId,
   error : @protocol.RequestErrorMessage,
 ) -> Result[Array[SessionAction], ClientSessionError] {
+  let stream = stream.to_int64()
+  let update_id = update_id.to_uint64()
   match self.ensure_open() {
     Ok(_) => ()
     Err(error) => return Err(error)
@@ -431,7 +454,13 @@ pub fn ClientSession::reject_namespace_update(
   let responses : Array[SessionAction] = [SendFin(stream, bytes)]
   for rejected_id in rejected_updates {
     responses.push(
-      EmitNotice(NamespaceUpdateRejected(request_id, rejected_id, error)),
+      EmitNotice(
+        NamespaceUpdateRejected(
+          RequestId(request_id),
+          RequestId(rejected_id),
+          error,
+        ),
+      ),
     )
   }
   Ok(self.finish_actions(responses + actions))
@@ -476,7 +505,12 @@ fn ClientSession::receive_namespace_response(
         (NamespacePending, @protocol.RequestOk(_)) => {
           request.state = NamespaceAccepted
           let actions : Array[SessionAction] = [
-            EmitNotice(NamespacePublicationAccepted(request_id, stream)),
+            EmitNotice(
+              NamespacePublicationAccepted(
+                RequestId(request_id),
+                StreamId(stream),
+              ),
+            ),
           ]
           match self.broadcast_namespace_available(request.track_namespace) {
             Ok(extra) =>
@@ -491,7 +525,15 @@ fn ClientSession::receive_namespace_response(
           request.state = NamespaceTerminal
           request.pending_updates = []
           self.request_local_fin_actions(stream) +
-          [EmitNotice(NamespacePublicationRejected(request_id, stream, error))]
+          [
+            EmitNotice(
+              NamespacePublicationRejected(
+                RequestId(request_id),
+                StreamId(stream),
+                error,
+              ),
+            ),
+          ]
         }
         (NamespaceAccepted, @protocol.RequestOk(response)) if request.pending_local_update_id
           is Some(update_id) => {
@@ -501,7 +543,15 @@ fn ClientSession::receive_namespace_response(
             request.pending_local_update_parameters,
           )
           request.pending_local_update_parameters = []
-          [EmitNotice(NamespaceUpdateAccepted(request_id, update_id, response))]
+          [
+            EmitNotice(
+              NamespaceUpdateAccepted(
+                RequestId(request_id),
+                RequestId(update_id),
+                response,
+              ),
+            ),
+          ]
         }
         (NamespaceAccepted, @protocol.RequestError(error)) if request.pending_local_update_id
           is Some(update_id) => {
@@ -509,7 +559,15 @@ fn ClientSession::receive_namespace_response(
           request.state = NamespaceTerminal
           request.ignore_late_bytes = true
           self.end_request_stream(stream, Cancel(1UL)) +
-          [EmitNotice(NamespaceUpdateRejected(request_id, update_id, error))]
+          [
+            EmitNotice(
+              NamespaceUpdateRejected(
+                RequestId(request_id),
+                RequestId(update_id),
+                error,
+              ),
+            ),
+          ]
         }
         (NamespaceAccepted, @protocol.GoAwayRequest(goaway)) =>
           self.receive_request_goaway(stream, goaway)
@@ -569,7 +627,11 @@ fn ClientSession::receive_peer_namespace_update(
         [
           SendFin(stream, bytes),
           EmitNotice(
-            NamespaceUpdateRejected(request_id, update.request_id, error),
+            NamespaceUpdateRejected(
+              RequestId(request_id),
+              RequestId(update.request_id),
+              error,
+            ),
           ),
         ] +
         actions,
@@ -580,9 +642,9 @@ fn ClientSession::receive_peer_namespace_update(
   Ok([
     EmitNotice(
       NamespaceUpdateRequested(
-        request_id,
-        update.request_id,
-        stream,
+        RequestId(request_id),
+        RequestId(update.request_id),
+        StreamId(stream),
         update.parameters,
       ),
     ),
@@ -658,9 +720,17 @@ fn ClientSession::end_namespace_request(
       }
       let publisher_withdrew = request.locally_initiated == local_cancel
       if publisher_withdrew {
-        actions.push(EmitNotice(NamespaceWithdrawn(request_id, stream)))
+        actions.push(
+          EmitNotice(
+            NamespaceWithdrawn(RequestId(request_id), StreamId(stream)),
+          ),
+        )
       } else {
-        actions.push(EmitNotice(NamespaceAcceptanceRevoked(request_id, stream)))
+        actions.push(
+          EmitNotice(
+            NamespaceAcceptanceRevoked(RequestId(request_id), StreamId(stream)),
+          ),
+        )
       }
     }
   }
@@ -761,12 +831,16 @@ fn ClientSession::reject_namespace_requests_for_goaway(
         }
         actions.push(
           EmitNotice(
-            NamespacePublicationRejected(request_id, stream, {
-              code: request_error_going_away,
-              retry_interval: 0UL,
-              reason: b"",
-              redirect: b"",
-            }),
+            NamespacePublicationRejected(
+              RequestId(request_id),
+              StreamId(stream),
+              {
+                code: request_error_going_away,
+                retry_interval: 0UL,
+                reason: b"",
+                redirect: b"",
+              },
+            ),
           ),
         )
       }

@@ -1,9 +1,12 @@
 ///|
 fn request_update_bytes(
-  request_id : UInt64,
+  request_id : @session.RequestId,
   parameters : Array[@protocol.MessageParameter],
 ) -> Bytes {
-  @protocol.encode_request_update({ request_id, parameters, }).unwrap()
+  @protocol.encode_request_update({
+    request_id: request_id.to_uint64(),
+    parameters,
+  }).unwrap()
 }
 
 ///|
@@ -44,14 +47,16 @@ test "subscriber keeps its request stream open and matches one update response" 
   let subscriber = subscriber_started()
   let parameters = [forward_parameter(0)]
   let (update_id, actions) = subscriber
-    .update_subscription(0, parameters)
+    .update_subscription(@session.RequestId(0), parameters)
     .unwrap()
-  assert_eq(update_id, 2UL)
+  assert_eq(update_id, @session.RequestId(2UL))
   assert_eq(actions, [
     @session.SendChunk(30, request_update_bytes(update_id, parameters)),
   ])
   assert_eq(
-    subscriber.update_subscription(0, [subscriber_priority_parameter(4)]),
+    subscriber.update_subscription(@session.RequestId(0), [
+      subscriber_priority_parameter(4),
+    ]),
     Err(@session.RequestUpdatePending),
   )
   assert_eq(
@@ -72,7 +77,9 @@ test "subscriber keeps its request stream open and matches one update response" 
   )
   assert_eq(
     subscriber
-    .update_subscription(0, [subscriber_priority_parameter(4)])
+    .update_subscription(@session.RequestId(0), [
+      subscriber_priority_parameter(4),
+    ])
     .unwrap().0,
     4UL,
   )
@@ -84,7 +91,7 @@ test "Joining FETCH can follow a pending Forward State 0 to 1 update" {
   let (off_id, _) = subscriber
     .update_subscription(0UL, [forward_parameter(0)])
     .unwrap()
-  assert_eq(off_id, 2UL)
+  assert_eq(off_id, @session.RequestId(2UL))
   ignore(
     subscriber.receive(
       @session.StreamData(
@@ -100,14 +107,16 @@ test "Joining FETCH can follow a pending Forward State 0 to 1 update" {
   let (on_id, _) = subscriber
     .update_subscription(0UL, [forward_parameter(1)])
     .unwrap()
-  assert_eq(on_id, 4UL)
-  let (fetch_id, actions) = subscriber.fetch_relative(0UL, 2UL, []).unwrap()
-  assert_eq(fetch_id, 6UL)
+  assert_eq(on_id, @session.RequestId(4UL))
+  let (fetch_id, actions) = subscriber
+    .fetch_joining_relative(subscription_request_id=0UL, groups_back=2UL, parameters=[])
+    .unwrap()
+  assert_eq(fetch_id, @session.RequestId(6UL))
   assert_eq(actions, [
     @session.OpenStream(@session.Bidirectional, @session.Request(6UL)),
   ])
   let fetch : @protocol.FetchMessage = {
-    request_id: fetch_id,
+    request_id: fetch_id.to_uint64(),
     fetch_type: @protocol.RelativeJoiningFetch(0UL, 2UL),
     parameters: [],
   }
@@ -184,8 +193,10 @@ test "datagrams and subgroup objects use the accepted subscription FORWARD state
     ]),
   )
 
-  let (disable_id, _) = subscriber.update_subscription(0, forward_off).unwrap()
-  assert_eq(disable_id, 2UL)
+  let (disable_id, _) = subscriber
+    .update_subscription(@session.RequestId(0), forward_off)
+    .unwrap()
+  assert_eq(disable_id, @session.RequestId(2UL))
   assert_eq(
     subscriber.receive(
       @session.StreamData(
@@ -229,8 +240,10 @@ test "datagrams and subgroup objects use the accepted subscription FORWARD state
     Ok([]),
   )
 
-  let (enable_id, _) = subscriber.update_subscription(0, forward_on).unwrap()
-  assert_eq(enable_id, 4UL)
+  let (enable_id, _) = subscriber
+    .update_subscription(@session.RequestId(0), forward_on)
+    .unwrap()
+  assert_eq(enable_id, @session.RequestId(4UL))
   ignore(
     subscriber
     .receive(
@@ -263,7 +276,7 @@ test "publisher datagram send obeys the same FORWARD update and alias checks" {
   let publisher = publisher_started()
   let datagram = update_datagram(1, 2, b"payload")
   assert_eq(
-    publisher.send_object_datagram(20, datagram),
+    publisher.send_object_datagram(@session.StreamId(20), datagram),
     Ok(
       (
         0UL,
@@ -279,7 +292,7 @@ test "publisher datagram send obeys the same FORWARD update and alias checks" {
   )
   let forward_off = [forward_parameter(0)]
   assert_eq(
-    publisher.send_object_datagram(40, datagram),
+    publisher.send_object_datagram(@session.StreamId(40), datagram),
     Ok(
       (
         1UL,
@@ -303,9 +316,17 @@ test "publisher datagram send obeys the same FORWARD update and alias checks" {
       ),
     ]),
   )
-  ignore(publisher.accept_subscription_update(40, 3, update_ok()).unwrap())
+  ignore(
+    publisher
+    .accept_subscription_update(
+      @session.StreamId(40),
+      @session.RequestId(3),
+      update_ok(),
+    )
+    .unwrap(),
+  )
   assert_eq(
-    publisher.send_object_datagram(40, datagram),
+    publisher.send_object_datagram(@session.StreamId(40), datagram),
     Err(@session.SubscriptionNotAccepted),
   )
   let forward_on = [forward_parameter(1)]
@@ -319,9 +340,17 @@ test "publisher datagram send obeys the same FORWARD update and alias checks" {
       ),
     ]),
   )
-  ignore(publisher.accept_subscription_update(40, 5, update_ok()).unwrap())
+  ignore(
+    publisher
+    .accept_subscription_update(
+      @session.StreamId(40),
+      @session.RequestId(5),
+      update_ok(),
+    )
+    .unwrap(),
+  )
   assert_eq(
-    publisher.send_object_datagram(40, datagram),
+    publisher.send_object_datagram(@session.StreamId(40), datagram),
     Ok(
       (
         2UL,
@@ -336,7 +365,10 @@ test "publisher datagram send obeys the same FORWARD update and alias checks" {
     ),
   )
   assert_eq(
-    publisher.send_object_datagram(40, update_datagram(99, 2, b"payload")),
+    publisher.send_object_datagram(
+      @session.StreamId(40),
+      update_datagram(99, 2, b"payload"),
+    ),
     Err(@session.Track(@session.AliasMismatch)),
   )
 }
@@ -354,7 +386,7 @@ test "Joining FETCH waits for REQUEST_UPDATE Forward transition and keeps its ra
     publisher.receive(@session.InboundStreamStarted(40, @session.Bidirectional)),
   )
   ignore(publisher.receive(@session.StreamData(40, first_subscribe)))
-  ignore(publisher.accept_subscription(40).unwrap())
+  ignore(publisher.accept_subscription(@session.StreamId(40)).unwrap())
   let header : @protocol.SubgroupHeader = {
     track_alias: 1UL,
     group_id: 10UL,
@@ -364,9 +396,13 @@ test "Joining FETCH waits for REQUEST_UPDATE Forward transition and keeps its ra
     first_object: true,
     has_properties: false,
   }
-  ignore(publisher.open_object_stream(40, header).unwrap())
+  ignore(publisher.open_object_stream(@session.StreamId(40), header).unwrap())
   ignore(publisher.receive(@session.StreamOpened(@session.Object(0UL), 30)))
-  ignore(publisher.send_object(30, publisher_frame(3UL, b"object")).unwrap())
+  ignore(
+    publisher
+    .send_object(@session.StreamId(30), publisher_frame(3UL, b"object"))
+    .unwrap(),
+  )
 
   let second_subscribe = @protocol.encode_subscribe({
     request_id: 3UL,
@@ -377,7 +413,7 @@ test "Joining FETCH waits for REQUEST_UPDATE Forward transition and keeps its ra
     publisher.receive(@session.InboundStreamStarted(42, @session.Bidirectional)),
   )
   ignore(publisher.receive(@session.StreamData(42, second_subscribe)))
-  ignore(publisher.accept_subscription(42).unwrap())
+  ignore(publisher.accept_subscription(@session.StreamId(42)).unwrap())
   let update = @protocol.encode_request_update({
     request_id: 5UL,
     parameters: [forward_parameter(1)],
@@ -604,7 +640,7 @@ test "unknown, malformed, and post-cancel datagrams do not reach the application
   )
   let canceled = subscriber_started()
   assert_eq(
-    canceled.cancel_request(0),
+    canceled.cancel_request(@session.RequestId(0)),
     Ok([
       @session.AbortSend(30, 1),
       @session.StopReceiving(30, 1),
@@ -635,14 +671,19 @@ test "unknown, malformed, and post-cancel datagrams do not reach the application
   assert_eq(malformed.receive(@session.DatagramReceived(b"\x02\x04")), Ok([]))
   assert_eq(malformed.receive(@session.DatagramReceived(b"invalid")), Ok([]))
   assert_eq(malformed.state(), @session.Closed)
-  assert_eq(malformed.cancel_request(0), Err(@session.SessionClosed))
+  assert_eq(
+    malformed.cancel_request(@session.RequestId(0)),
+    Err(@session.SessionClosed),
+  )
 }
 
 ///|
 test "publisher accepts incremental queued updates and preserves omitted parameters" {
   let publisher = publisher_started()
   let token = match
-    publisher.open_object_stream(40, publisher_header(1, false)).unwrap() {
+    publisher
+    .open_object_stream(@session.StreamId(40), publisher_header(1, false))
+    .unwrap() {
     [@session.OpenStream(@session.Unidirectional, @session.Object(token))] =>
       token
     _ => fail("expected object stream")
@@ -671,15 +712,23 @@ test "publisher accepts incremental queued updates and preserves omitted paramet
     ]),
   )
   assert_eq(
-    publisher.publish_done(40, 3, b""),
+    publisher.publish_done(@session.StreamId(40), 3, b""),
     Err(@session.RequestUpdatePending),
   )
   assert_eq(
-    publisher.accept_subscription_update(40, 5, update_ok()),
+    publisher.accept_subscription_update(
+      @session.StreamId(40),
+      @session.RequestId(5),
+      update_ok(),
+    ),
     Err(@session.RequestUpdatePending),
   )
   assert_eq(
-    publisher.accept_subscription_update(40, 3, update_ok()),
+    publisher.accept_subscription_update(
+      @session.StreamId(40),
+      @session.RequestId(3),
+      update_ok(),
+    ),
     Ok([
       @session.SendChunk(
         40,
@@ -699,11 +748,18 @@ test "publisher accepts incremental queued updates and preserves omitted paramet
     Ok([@session.EmitNotice(@session.StreamSendFinished(50, @session.Reset))]),
   )
   assert_eq(
-    publisher.open_object_stream(40, publisher_header(1, false)),
+    publisher.open_object_stream(
+      @session.StreamId(40),
+      publisher_header(1, false),
+    ),
     Err(@session.SubscriptionNotAccepted),
   )
   assert_eq(
-    publisher.accept_subscription_update(40, 5, update_ok()),
+    publisher.accept_subscription_update(
+      @session.StreamId(40),
+      @session.RequestId(5),
+      update_ok(),
+    ),
     Ok([
       @session.SendChunk(
         40,
@@ -735,7 +791,11 @@ test "publisher accepts incremental queued updates and preserves omitted paramet
     ]),
   )
   assert_eq(
-    publisher.accept_subscription_update(40, 7, update_ok()),
+    publisher.accept_subscription_update(
+      @session.StreamId(40),
+      @session.RequestId(7),
+      update_ok(),
+    ),
     Ok([
       @session.SendChunk(
         40,
@@ -753,7 +813,10 @@ test "publisher accepts incremental queued updates and preserves omitted paramet
     ]),
   )
   assert_eq(
-    publisher.open_object_stream(40, publisher_header(1, false)),
+    publisher.open_object_stream(
+      @session.StreamId(40),
+      publisher_header(1, false),
+    ),
     Ok([@session.OpenStream(@session.Unidirectional, @session.Object(1))]),
   )
 }
@@ -807,7 +870,9 @@ test "subscriber parses every split of a peer update on the established stream" 
 test "rejected update terminates its subscription after active object streams stop" {
   let publisher = publisher_started()
   let token = match
-    publisher.open_object_stream(40, publisher_header(1, false)).unwrap() {
+    publisher
+    .open_object_stream(@session.StreamId(40), publisher_header(1, false))
+    .unwrap() {
     [@session.OpenStream(@session.Unidirectional, @session.Object(token))] =>
       token
     _ => fail("expected object stream")
@@ -830,7 +895,11 @@ test "rejected update terminates its subscription after active object streams st
     redirect: b"",
   }
   assert_eq(
-    publisher.reject_subscription_update(40, 3, error),
+    publisher.reject_subscription_update(
+      @session.StreamId(40),
+      @session.RequestId(3),
+      error,
+    ),
     Ok([
       @session.SendChunk(40, @protocol.encode_request_error(error).unwrap()),
       @session.AbortSend(50, 0),
@@ -859,7 +928,9 @@ test "rejected update terminates its subscription after active object streams st
 test "cancellation supersedes a pending UPDATE_FAILED PUBLISH_DONE without aborting twice" {
   let publisher = publisher_started()
   let token = match
-    publisher.open_object_stream(40, publisher_header(1, false)).unwrap() {
+    publisher
+    .open_object_stream(@session.StreamId(40), publisher_header(1, false))
+    .unwrap() {
     [@session.OpenStream(@session.Unidirectional, @session.Object(token))] =>
       token
     _ => fail("expected object stream")
@@ -881,7 +952,11 @@ test "cancellation supersedes a pending UPDATE_FAILED PUBLISH_DONE without abort
     redirect: b"",
   }
   assert_eq(
-    publisher.reject_subscription_update(40, 3, error),
+    publisher.reject_subscription_update(
+      @session.StreamId(40),
+      @session.RequestId(3),
+      error,
+    ),
     Ok([
       @session.SendChunk(40, @protocol.encode_request_error(error).unwrap()),
       @session.AbortSend(50, 0),
@@ -910,7 +985,9 @@ test "cancellation supersedes a pending UPDATE_FAILED PUBLISH_DONE without abort
 test "cancellation can supersede a pending UPDATE_FAILED PUBLISH_DONE on local PUBLISH" {
   let publisher = publisher_announced()
   let token = match
-    publisher.open_object_stream(20, publisher_header(1, false)).unwrap() {
+    publisher
+    .open_object_stream(@session.StreamId(20), publisher_header(1, false))
+    .unwrap() {
     [@session.OpenStream(@session.Unidirectional, @session.Object(token))] =>
       token
     _ => fail("expected object stream")
@@ -935,7 +1012,11 @@ test "cancellation can supersede a pending UPDATE_FAILED PUBLISH_DONE on local P
     redirect: b"",
   }
   assert_eq(
-    publisher.reject_subscription_update(20, 3, error),
+    publisher.reject_subscription_update(
+      @session.StreamId(20),
+      @session.RequestId(3),
+      error,
+    ),
     Ok([
       @session.SendChunk(20, @protocol.encode_request_error(error).unwrap()),
       @session.AbortSend(50, 0),
@@ -965,7 +1046,7 @@ test "cancellation can supersede a pending UPDATE_FAILED PUBLISH_DONE on local P
 test "failed local update requires UPDATE_FAILED PUBLISH_DONE" {
   let subscriber = subscriber_started()
   let (update_id, _) = subscriber
-    .update_subscription(0, [forward_parameter(0)])
+    .update_subscription(@session.RequestId(0), [forward_parameter(0)])
     .unwrap()
   let error : @protocol.RequestErrorMessage = {
     code: 1,
@@ -991,7 +1072,7 @@ test "failed local update requires UPDATE_FAILED PUBLISH_DONE" {
     ]),
   )
   assert_eq(
-    subscriber.update_subscription(0, []),
+    subscriber.update_subscription(@session.RequestId(0), []),
     Err(@session.SubscriptionNotAccepted),
   )
 }
@@ -1000,7 +1081,9 @@ test "failed local update requires UPDATE_FAILED PUBLISH_DONE" {
 test "UPDATE_FAILED PUBLISH_DONE counts an Object stream opened after rejection" {
   let publisher = publisher_started()
   let token = match
-    publisher.open_object_stream(40, publisher_header(1, false)).unwrap() {
+    publisher
+    .open_object_stream(@session.StreamId(40), publisher_header(1, false))
+    .unwrap() {
     [@session.OpenStream(@session.Unidirectional, @session.Object(token))] =>
       token
     _ => fail("expected pending Object stream")
@@ -1017,7 +1100,11 @@ test "UPDATE_FAILED PUBLISH_DONE counts an Object stream opened after rejection"
     redirect: b"",
   }
   assert_eq(
-    publisher.reject_subscription_update(40, 3, error),
+    publisher.reject_subscription_update(
+      @session.StreamId(40),
+      @session.RequestId(3),
+      error,
+    ),
     Ok([@session.SendChunk(40, @protocol.encode_request_error(error).unwrap())]),
   )
   let done : @protocol.PublishDoneMessage = {
@@ -1039,7 +1126,9 @@ test "UPDATE_FAILED PUBLISH_DONE counts an Object stream opened after rejection"
 test "Object stream opened after forwarding is paused counts toward later PUBLISH_DONE" {
   let publisher = publisher_started()
   let token = match
-    publisher.open_object_stream(40, publisher_header(1, false)).unwrap() {
+    publisher
+    .open_object_stream(@session.StreamId(40), publisher_header(1, false))
+    .unwrap() {
     [@session.OpenStream(@session.Unidirectional, @session.Object(token))] =>
       token
     _ => fail("expected pending Object stream")
@@ -1052,7 +1141,15 @@ test "Object stream opened after forwarding is paused counts toward later PUBLIS
     .receive(@session.StreamData(40, request_update_bytes(3, pause)))
     .unwrap(),
   )
-  ignore(publisher.accept_subscription_update(40, 3, update_ok()).unwrap())
+  ignore(
+    publisher
+    .accept_subscription_update(
+      @session.StreamId(40),
+      @session.RequestId(3),
+      update_ok(),
+    )
+    .unwrap(),
+  )
   assert_eq(
     publisher.receive(@session.StreamOpened(@session.Object(token), 50)),
     Ok([@session.AbortSend(50, 0UL)]),
@@ -1063,7 +1160,7 @@ test "Object stream opened after forwarding is paused counts toward later PUBLIS
     reason: b"",
   }
   assert_eq(
-    publisher.publish_done(40, done.code, done.reason),
+    publisher.publish_done(@session.StreamId(40), done.code, done.reason),
     Ok([
       @session.SendFin(40, @protocol.encode_publish_done(done).unwrap()),
       @session.EmitNotice(@session.PublishDone(1UL, done)),
@@ -1086,7 +1183,11 @@ test "request FIN closes the update direction without ending the local PUBLISH s
     ]),
   )
   assert_eq(
-    publisher.accept_subscription_update(20, 1, update_ok()),
+    publisher.accept_subscription_update(
+      @session.StreamId(20),
+      @session.RequestId(1),
+      update_ok(),
+    ),
     Ok([
       @session.SendChunk(
         20,
@@ -1103,7 +1204,10 @@ test "request FIN closes the update direction without ending the local PUBLISH s
   let inbound = publisher_started()
   assert_eq(inbound.receive(@session.InboundStreamFinished(40)), Ok([]))
   assert_eq(
-    inbound.open_object_stream(40, publisher_header(1, false)),
+    inbound.open_object_stream(
+      @session.StreamId(40),
+      publisher_header(1, false),
+    ),
     Ok([@session.OpenStream(@session.Unidirectional, @session.Object(0))]),
   )
   assert_eq(
@@ -1122,7 +1226,7 @@ test "datagrams route across aliases without ordered object ID state" {
     name: b"audio",
   }
   let (request_b, actions) = subscriber.subscribe_track(track_b).unwrap()
-  assert_eq(request_b, 2UL)
+  assert_eq(request_b, @session.RequestId(2UL))
   assert_eq(actions, [
     @session.OpenStream(@session.Bidirectional, @session.Request(2)),
   ])
@@ -1410,7 +1514,7 @@ test "object datagram sending reports local capability and maximum length" {
     Ok([]),
   )
   assert_eq(
-    publisher.send_object_datagram(40, datagram),
+    publisher.send_object_datagram(@session.StreamId(40), datagram),
     Err(@session.DatagramSendUnavailable),
   )
   assert_eq(
@@ -1423,7 +1527,7 @@ test "object datagram sending reports local capability and maximum length" {
     Ok([]),
   )
   assert_eq(
-    publisher.send_object_datagram(40, datagram),
+    publisher.send_object_datagram(@session.StreamId(40), datagram),
     Ok(
       (
         0UL,
@@ -1444,7 +1548,7 @@ test "object datagram sending reports local capability and maximum length" {
     Ok([]),
   )
   assert_eq(
-    publisher.send_object_datagram(40, datagram),
+    publisher.send_object_datagram(@session.StreamId(40), datagram),
     Err(@session.DatagramTooLarge(encoded.length(), encoded.length() - 1)),
   )
 }
@@ -1464,7 +1568,9 @@ test "datagram send failure reports its token without closing the session" {
     Ok([]),
   )
   assert_eq(publisher.max_datagram_length(), encoded.length())
-  let (token, actions) = publisher.send_object_datagram(40, datagram).unwrap()
+  let (token, actions) = publisher
+    .send_object_datagram(@session.StreamId(40), datagram)
+    .unwrap()
   assert_eq(token, 0UL)
   assert_eq(actions, [
     @session.SendDatagram(0UL, encoded),
@@ -1475,7 +1581,10 @@ test "datagram send failure reports its token without closing the session" {
     Ok([@session.EmitNotice(@session.DatagramLocalWriteFailed(token, -4L))]),
   )
   assert_eq(publisher.state(), @session.Active)
-  assert_eq(publisher.send_object_datagram(40, datagram).unwrap().0, 1UL)
+  assert_eq(
+    publisher.send_object_datagram(@session.StreamId(40), datagram).unwrap().0,
+    1UL,
+  )
 }
 
 ///|
@@ -1483,7 +1592,7 @@ test "datagram-only publisher completion reports zero opened Object streams" {
   let publisher = publisher_started()
   let datagram = update_datagram(1, 2, b"payload")
   assert_eq(
-    publisher.send_object_datagram(40, datagram),
+    publisher.send_object_datagram(@session.StreamId(40), datagram),
     Ok(
       (
         0UL,
@@ -1503,7 +1612,7 @@ test "datagram-only publisher completion reports zero opened Object streams" {
     reason: b"",
   }
   assert_eq(
-    publisher.publish_done(40, done.code, done.reason),
+    publisher.publish_done(@session.StreamId(40), done.code, done.reason),
     Ok([
       @session.SendFin(40, @protocol.encode_publish_done(done).unwrap()),
       @session.EmitNotice(@session.PublishDone(1, done)),

@@ -268,7 +268,13 @@ fn take_driver_events(
   Array[(@session.ClientStreamPurpose, Int64)],
 ) {
   match driver.inner {
-    Some(inner) => (inner.take_notices(), inner.take_opened_streams())
+    Some(inner) =>
+      (
+        inner.take_notices(),
+        inner
+        .take_opened_streams()
+        .map(fn(entry) { (entry.0, entry.1.to_int64()) }),
+      )
     None => ([], [])
   }
 }
@@ -285,14 +291,17 @@ fn drive_session_actions(
 ) raise {
   let inner = driver.ensure(client, session)
   match inner.dispatch(initial) {
-    @driver.Dispatched => ()
+    @driver.Accepted => ()
     result => fail("driver rejected actions: \{result.to_repr()}")
   }
   match inner.failure() {
     Some(error) => fail("client session error: \{error.to_repr()}")
     None => ()
   }
-  (inner.take_notices(), inner.take_opened_streams())
+  (
+    inner.take_notices(),
+    inner.take_opened_streams().map(fn(entry) { (entry.0, entry.1.to_int64()) }),
+  )
 }
 
 ///|

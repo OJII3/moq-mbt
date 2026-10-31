@@ -3,6 +3,7 @@ import {
   "mizchi/js_web/streams",
   "mizchi/js_builtin/arraybuffer",
   "moonbitlang/core/encoding/utf8",
+  "moonbitlang/core/debug",
   "OJII3/moq-mbt/protocol",
   "OJII3/moq-mbt/session",
   "OJII3/moq-mbt/driver",

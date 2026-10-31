@@ -81,7 +81,7 @@ pub fn ClientSession::fetch_track(
   start : @protocol.FetchLocation,
   end : @protocol.FetchLocation,
   parameters : Array[@protocol.MessageParameter],
-) -> Result[(UInt64, Array[SessionAction]), ClientSessionError] {
+) -> Result[(RequestId, Array[SessionAction]), ClientSessionError] {
   match self.ensure_new_request_allowed() {
     Ok(_) => ()
     Err(error) => return Err(error)
@@ -124,8 +124,10 @@ pub fn ClientSession::fetch_track(
   )
   Ok(
     (
-      request_id,
-      self.finish_actions([OpenStream(Bidirectional, Request(request_id))]),
+      RequestId(request_id),
+      self.finish_actions([
+        OpenStream(Bidirectional, Request(RequestId(request_id))),
+      ]),
     ),
   )
 }
@@ -134,9 +136,10 @@ pub fn ClientSession::fetch_track(
 /// Accept a peer's standalone FETCH and open its single Object stream.
 pub fn ClientSession::accept_fetch(
   self : ClientSession,
-  request_id : UInt64,
+  request_id : RequestId,
   response : @protocol.FetchOkMessage,
 ) -> Result[Array[SessionAction], ClientSessionError] {
+  let request_id = request_id.to_uint64()
   let fetch = match self.fetches.get(request_id) {
     Some(value) if !value.locally_initiated && value.state == FetchPending =>
       value
@@ -163,8 +166,8 @@ pub fn ClientSession::accept_fetch(
   Ok(
     self.finish_actions([
       SendChunk(stream, bytes),
-      EmitNotice(FetchAccepted(request_id, stream)),
-      OpenStream(Unidirectional, FetchData(request_id)),
+      EmitNotice(FetchAccepted(RequestId(request_id), StreamId(stream))),
+      OpenStream(Unidirectional, FetchData(RequestId(request_id))),
     ]),
   )
 }
@@ -173,9 +176,10 @@ pub fn ClientSession::accept_fetch(
 /// Reject a peer FETCH before sending data.
 pub fn ClientSession::reject_fetch(
   self : ClientSession,
-  request_id : UInt64,
+  request_id : RequestId,
   error : @protocol.RequestErrorMessage,
 ) -> Result[Array[SessionAction], ClientSessionError] {
+  let request_id = request_id.to_uint64()
   let fetch = match self.fetches.get(request_id) {
     Some(value) if !value.locally_initiated && value.state == FetchPending =>
       value
@@ -193,7 +197,13 @@ pub fn ClientSession::reject_fetch(
         fetch,
         [],
         Some(
-          EmitNotice(FetchRejected(request_id, fetch.stream.unwrap(), error)),
+          EmitNotice(
+            FetchRejected(
+              RequestId(request_id),
+              StreamId(fetch.stream.unwrap()),
+              error,
+            ),
+          ),
         ),
         RemoveFetchData,
       ),
@@ -205,9 +215,10 @@ pub fn ClientSession::reject_fetch(
 /// Send an Object on an accepted peer FETCH.
 pub fn ClientSession::send_fetch_object(
   self : ClientSession,
-  request_id : UInt64,
+  request_id : RequestId,
   object : @protocol.FetchObject,
 ) -> Result[Array[SessionAction], ClientSessionError] {
+  let request_id = request_id.to_uint64()
   let fetch = match self.fetches.get(request_id) {
     Some(value) if !value.locally_initiated && value.state == FetchAccepted =>
       value
@@ -237,9 +248,10 @@ pub fn ClientSession::send_fetch_object(
 /// Send an explicit unknown or nonexistent range marker on a peer FETCH.
 pub fn ClientSession::send_fetch_range_end(
   self : ClientSession,
-  request_id : UInt64,
+  request_id : RequestId,
   range_end : @protocol.FetchRangeEnd,
 ) -> Result[Array[SessionAction], ClientSessionError] {
+  let request_id = request_id.to_uint64()
   let fetch = match self.fetches.get(request_id) {
     Some(value) if !value.locally_initiated && value.state == FetchAccepted =>
       value
@@ -273,8 +285,9 @@ pub fn ClientSession::send_fetch_range_end(
 /// End the Fetch data stream. The receiver reports success only after this FIN.
 pub fn ClientSession::finish_fetch(
   self : ClientSession,
-  request_id : UInt64,
+  request_id : RequestId,
 ) -> Result[Array[SessionAction], ClientSessionError] {
+  let request_id = request_id.to_uint64()
   let fetch = match self.fetches.get(request_id) {
     Some(value) if !value.locally_initiated && value.state == FetchAccepted =>
       value
@@ -298,8 +311,9 @@ pub fn ClientSession::finish_fetch(
 /// Cancel a local standalone FETCH.
 pub fn ClientSession::cancel_fetch(
   self : ClientSession,
-  request_id : UInt64,
+  request_id : RequestId,
 ) -> Result[Array[SessionAction], ClientSessionError] {
+  let request_id = request_id.to_uint64()
   let fetch = match self.fetches.get(request_id) {
     Some(value) if value.locally_initiated => value
     _ => return Err(UnknownRequest)
@@ -325,7 +339,7 @@ pub fn ClientSession::cancel_fetch(
       self.terminate_fetch(
         fetch,
         actions,
-        Some(EmitNotice(FetchCancelled(request_id, 1UL))),
+        Some(EmitNotice(FetchCancelled(RequestId(request_id), 1UL))),
         StopFetchData(1UL),
       ),
     ),
@@ -336,9 +350,10 @@ pub fn ClientSession::cancel_fetch(
 /// Send a permitted REQUEST_UPDATE on an active Fetch request.
 pub fn ClientSession::update_fetch(
   self : ClientSession,
-  request_id : UInt64,
+  request_id : RequestId,
   parameters : Array[@protocol.MessageParameter],
-) -> Result[(UInt64, Array[SessionAction]), ClientSessionError] {
+) -> Result[(RequestId, Array[SessionAction]), ClientSessionError] {
+  let request_id = request_id.to_uint64()
   match self.ensure_new_request_allowed() {
     Ok(_) => ()
     Err(error) => return Err(error)
@@ -364,7 +379,7 @@ pub fn ClientSession::update_fetch(
   fetch.pending_update_id = Some(update_id)
   fetch.pending_update_parameters = parameters
   ignore(self.allocate_request_id())
-  Ok((update_id, self.finish_actions([SendChunk(stream, encoded)])))
+  Ok((RequestId(update_id), self.finish_actions([SendChunk(stream, encoded)])))
 }
 
 ///|
@@ -378,7 +393,7 @@ fn ClientSession::complete_inbound_fetch_if_ready(
     return self.terminate_fetch(
       fetch,
       [],
-      Some(EmitNotice(FetchFinished(fetch.request_id))),
+      Some(EmitNotice(FetchFinished(RequestId(fetch.request_id)))),
       KeepFetchData,
     )
   }
@@ -482,7 +497,15 @@ fn ClientSession::reset_inbound_fetch_data(
     self.terminate_fetch(
       fetch,
       [],
-      Some(EmitNotice(FetchReset(inbound.request_id, stream, error_code))),
+      Some(
+        EmitNotice(
+          FetchReset(
+            RequestId(inbound.request_id),
+            StreamId(stream),
+            error_code,
+          ),
+        ),
+      ),
       RemoveFetchData,
     ),
   )
@@ -520,7 +543,9 @@ fn ClientSession::receive_fetch_data(
               return Err(InvalidFetchRange)
             }
             actions.push(
-              EmitNotice(FetchObjectReceived(data.request_id, object)),
+              EmitNotice(
+                FetchObjectReceived(RequestId(data.request_id), object),
+              ),
             )
           }
           @protocol.FetchDataRangeEnd(range_end) => {
@@ -532,7 +557,7 @@ fn ClientSession::receive_fetch_data(
               return Err(InvalidFetchRange)
             }
             actions.push(
-              EmitNotice(FetchRangeEnded(data.request_id, range_end)),
+              EmitNotice(FetchRangeEnded(RequestId(data.request_id), range_end)),
             )
           }
         }
@@ -643,11 +668,17 @@ fn ClientSession::receive_fetch_response(
           fetch.end_of_track = response.end_of_track == 1
           fetch.state = FetchAccepted
           let values : Array[SessionAction] = [
-            EmitNotice(FetchAccepted(request_id, stream)),
-            EmitNotice(FetchResponseAccepted(request_id, stream, response)),
+            EmitNotice(FetchAccepted(RequestId(request_id), StreamId(stream))),
+            EmitNotice(
+              FetchResponseAccepted(
+                RequestId(request_id),
+                StreamId(stream),
+                response,
+              ),
+            ),
           ]
           if fetch.end_of_track {
-            values.push(EmitNotice(FetchEndOfTrack(request_id)))
+            values.push(EmitNotice(FetchEndOfTrack(RequestId(request_id))))
           }
           values + self.complete_inbound_fetch_if_ready(fetch)
         }
@@ -655,7 +686,7 @@ fn ClientSession::receive_fetch_response(
           self.terminate_fetch(
             fetch,
             [],
-            Some(EmitNotice(FetchFailed(request_id, error))),
+            Some(EmitNotice(FetchFailed(RequestId(request_id), error))),
             StopFetchData(error.code),
           )
         @protocol.RequestUpdate(update) if !fetch.locally_initiated &&
@@ -692,9 +723,9 @@ fn ClientSession::receive_fetch_response(
           [
             EmitNotice(
               FetchUpdateRequested(
-                request_id,
-                update.request_id,
-                stream,
+                RequestId(request_id),
+                RequestId(update.request_id),
+                StreamId(stream),
                 update.parameters,
               ),
             ),
@@ -711,14 +742,30 @@ fn ClientSession::receive_fetch_response(
             fetch.pending_update_parameters,
           )
           fetch.pending_update_parameters = []
-          [EmitNotice(FetchUpdateAccepted(request_id, update_id, response))]
+          [
+            EmitNotice(
+              FetchUpdateAccepted(
+                RequestId(request_id),
+                RequestId(update_id),
+                response,
+              ),
+            ),
+          ]
         }
         @protocol.RequestError(error) if fetch.locally_initiated &&
           fetch.pending_update_id is Some(_) => {
           let update_id = fetch.pending_update_id.unwrap()
           fetch.pending_update_id = None
           fetch.pending_update_parameters = []
-          [EmitNotice(FetchUpdateRejected(request_id, update_id, error))]
+          [
+            EmitNotice(
+              FetchUpdateRejected(
+                RequestId(request_id),
+                RequestId(update_id),
+                error,
+              ),
+            ),
+          ]
         }
         @protocol.GoAwayRequest(goaway) =>
           self.receive_request_goaway(stream, goaway)
@@ -739,9 +786,11 @@ fn ClientSession::receive_fetch_response(
 ///|
 pub fn ClientSession::accept_fetch_update(
   self : ClientSession,
-  request_id : UInt64,
-  update_id : UInt64,
+  request_id : RequestId,
+  update_id : RequestId,
 ) -> Result[Array[SessionAction], ClientSessionError] {
+  let request_id = request_id.to_uint64()
+  let update_id = update_id.to_uint64()
   let fetch = match self.fetches.get(request_id) {
     Some(value) if !value.locally_initiated && value.state == FetchAccepted =>
       value
@@ -772,10 +821,12 @@ pub fn ClientSession::accept_fetch_update(
 ///|
 pub fn ClientSession::reject_fetch_update(
   self : ClientSession,
-  request_id : UInt64,
-  update_id : UInt64,
+  request_id : RequestId,
+  update_id : RequestId,
   error : @protocol.RequestErrorMessage,
 ) -> Result[Array[SessionAction], ClientSessionError] {
+  let request_id = request_id.to_uint64()
+  let update_id = update_id.to_uint64()
   let fetch = match self.fetches.get(request_id) {
     Some(value) if !value.locally_initiated && value.state == FetchAccepted =>
       value
@@ -798,7 +849,7 @@ pub fn ClientSession::reject_fetch_update(
       self.terminate_fetch(
         fetch,
         actions,
-        Some(EmitNotice(FetchFailed(request_id, error))),
+        Some(EmitNotice(FetchFailed(RequestId(request_id), error))),
         AbortFetchData(error.code),
       ),
     ),

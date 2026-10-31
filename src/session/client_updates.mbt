@@ -112,7 +112,13 @@ fn ClientSession::receive_peer_subscription_update(
     for update_id in rejected_updates {
       actions.push(SendChunk(stream, bytes))
       actions.push(
-        EmitNotice(SubscriptionUpdateRejected(request_id, update_id, error)),
+        EmitNotice(
+          SubscriptionUpdateRejected(
+            RequestId(request_id),
+            RequestId(update_id),
+            error,
+          ),
+        ),
       )
     }
     for action in self.stop_subscription_object_sends(stream, 0UL) {
@@ -140,9 +146,9 @@ fn ClientSession::receive_peer_subscription_update(
   Ok([
     EmitNotice(
       SubscriptionUpdateRequested(
-        request_id,
-        message.request_id,
-        stream,
+        RequestId(request_id),
+        RequestId(message.request_id),
+        StreamId(stream),
         message.parameters,
         effective_parameters,
       ),
@@ -155,9 +161,10 @@ fn ClientSession::receive_peer_subscription_update(
 /// can be pending because its response carries no Request ID.
 pub fn ClientSession::update_subscription(
   self : ClientSession,
-  request_id : UInt64,
+  request_id : RequestId,
   parameters : Array[@protocol.MessageParameter],
-) -> Result[(UInt64, Array[SessionAction]), ClientSessionError] {
+) -> Result[(RequestId, Array[SessionAction]), ClientSessionError] {
+  let request_id = request_id.to_uint64()
   match self.ensure_new_request_allowed() {
     Ok(_) => ()
     Err(error) => return Err(error)
@@ -199,17 +206,19 @@ pub fn ClientSession::update_subscription(
     ),
     filter_updated: subscription_filter_parameter(parameters) is Some(_),
   })
-  Ok((update_id, self.finish_actions([SendChunk(stream, bytes)])))
+  Ok((RequestId(update_id), self.finish_actions([SendChunk(stream, bytes)])))
 }
 
 ///|
 /// Accept the next peer update waiting on a published subscription.
 pub fn ClientSession::accept_subscription_update(
   self : ClientSession,
-  stream : Int64,
-  update_id : UInt64,
+  stream : StreamId,
+  update_id : RequestId,
   response : @protocol.RequestOkMessage,
 ) -> Result[Array[SessionAction], ClientSessionError] {
+  let stream = stream.to_int64()
+  let update_id = update_id.to_uint64()
   match self.ensure_open() {
     Ok(_) => ()
     Err(error) => return Err(error)
@@ -303,9 +312,9 @@ pub fn ClientSession::accept_subscription_update(
       [
         EmitNotice(
           SubscriptionUpdateApplied(
-            request_id,
-            update_id,
-            stream,
+            RequestId(request_id),
+            RequestId(update_id),
+            StreamId(stream),
             subscription.parameters,
           ),
         ),
@@ -319,10 +328,12 @@ pub fn ClientSession::accept_subscription_update(
 /// Reject a peer update and terminate the subscription with UPDATE_FAILED.
 pub fn ClientSession::reject_subscription_update(
   self : ClientSession,
-  stream : Int64,
-  update_id : UInt64,
+  stream : StreamId,
+  update_id : RequestId,
   error : @protocol.RequestErrorMessage,
 ) -> Result[Array[SessionAction], ClientSessionError] {
+  let stream = stream.to_int64()
+  let update_id = update_id.to_uint64()
   match self.ensure_open() {
     Ok(_) => ()
     Err(error) => return Err(error)
@@ -431,6 +442,6 @@ fn ClientSession::finish_failed_subscription(
   self.note_request_local_fin(stream)
   [
     SendFin(stream, bytes),
-    EmitNotice(PublishDone(subscription.request_id, done)),
+    EmitNotice(PublishDone(RequestId(subscription.request_id), done)),
   ]
 }

@@ -1,4 +1,32 @@
 ///|
+/// Identifies a request. Request IDs, Stream IDs, and Track Aliases are
+/// separate namespaces even when their numeric values happen to coincide.
+pub(all) struct RequestId(UInt64) derive(Debug, Eq, Hash)
+
+///|
+pub fn RequestId::to_uint64(self : RequestId) -> UInt64 {
+  self.0
+}
+
+///|
+/// Identifies a transport stream owned by the session.
+pub(all) struct StreamId(Int64) derive(Debug, Eq, Hash)
+
+///|
+pub fn StreamId::to_int64(self : StreamId) -> Int64 {
+  self.0
+}
+
+///|
+/// Identifies a track within a session's Track Alias namespace.
+pub(all) struct TrackAlias(UInt64) derive(Debug, Eq, Hash)
+
+///|
+pub fn TrackAlias::to_uint64(self : TrackAlias) -> UInt64 {
+  self.0
+}
+
+///|
 pub(all) enum ClientStreamDirection {
   Unidirectional
   Bidirectional
@@ -7,9 +35,10 @@ pub(all) enum ClientStreamDirection {
 ///|
 pub(all) enum ClientStreamPurpose {
   Control
-  Request(UInt64)
+  /// A request stream. `Object` carries the session-local object-stream token.
+  Request(RequestId)
   Object(UInt64)
-  FetchData(UInt64)
+  FetchData(RequestId)
 } derive(Debug, Eq)
 
 ///|
@@ -64,106 +93,127 @@ pub(all) enum SessionEvent {
 pub(all) enum SessionNotice {
   HandshakeComplete(@protocol.Setup)
   ControlMessageReceived(@protocol.ControlMessage)
-  PublishAccepted(UInt64, @protocol.TrackName, UInt64)
-  PublishRejected(UInt64, @protocol.RequestErrorMessage)
-  SubscribeEstablished(UInt64, UInt64)
-  SubscribeRejected(UInt64, @protocol.RequestErrorMessage)
-  SubscriptionRequested(UInt64, Int64, @protocol.TrackName)
+  PublishAccepted(RequestId, @protocol.TrackName, TrackAlias)
+  PublishRejected(RequestId, @protocol.RequestErrorMessage)
+  SubscribeEstablished(RequestId, TrackAlias)
+  SubscribeRejected(RequestId, @protocol.RequestErrorMessage)
+  SubscriptionRequested(RequestId, StreamId, @protocol.TrackName)
   FetchRequested(
-    UInt64,
-    Int64,
+    RequestId,
+    StreamId,
     @protocol.TrackName,
     @protocol.FetchLocation,
     @protocol.FetchLocation,
     Array[@protocol.MessageParameter]
   )
-  FetchAccepted(UInt64, Int64)
-  FetchResponseAccepted(UInt64, Int64, @protocol.FetchOkMessage)
-  FetchRejected(UInt64, Int64, @protocol.RequestErrorMessage)
-  FetchObjectReceived(UInt64, @protocol.FetchObject)
-  FetchRangeEnded(UInt64, @protocol.FetchRangeEnd)
-  FetchEndOfTrack(UInt64)
-  FetchFinished(UInt64)
-  FetchFailed(UInt64, @protocol.RequestErrorMessage)
-  FetchCancelled(UInt64, UInt64)
-  FetchReset(UInt64, Int64, UInt64)
-  FetchUpdateRequested(UInt64, UInt64, Int64, Array[@protocol.MessageParameter])
-  FetchUpdateAccepted(UInt64, UInt64, @protocol.RequestOkMessage)
-  FetchUpdateRejected(UInt64, UInt64, @protocol.RequestErrorMessage)
+  FetchAccepted(RequestId, StreamId)
+  FetchResponseAccepted(RequestId, StreamId, @protocol.FetchOkMessage)
+  FetchRejected(RequestId, StreamId, @protocol.RequestErrorMessage)
+  FetchObjectReceived(RequestId, @protocol.FetchObject)
+  FetchRangeEnded(RequestId, @protocol.FetchRangeEnd)
+  FetchEndOfTrack(RequestId)
+  FetchFinished(RequestId)
+  FetchFailed(RequestId, @protocol.RequestErrorMessage)
+  FetchCancelled(RequestId, UInt64)
+  FetchReset(RequestId, StreamId, UInt64)
+  FetchUpdateRequested(
+    RequestId,
+    RequestId,
+    StreamId,
+    Array[@protocol.MessageParameter]
+  )
+  FetchUpdateAccepted(RequestId, RequestId, @protocol.RequestOkMessage)
+  FetchUpdateRejected(RequestId, RequestId, @protocol.RequestErrorMessage)
   NamespacePublicationRequested(
-    UInt64,
-    Int64,
+    RequestId,
+    StreamId,
     @protocol.TrackNamespace,
     Array[@protocol.MessageParameter]
   )
-  NamespacePublicationAccepted(UInt64, Int64)
-  NamespacePublicationRejected(UInt64, Int64, @protocol.RequestErrorMessage)
+  NamespacePublicationAccepted(RequestId, StreamId)
+  NamespacePublicationRejected(
+    RequestId,
+    StreamId,
+    @protocol.RequestErrorMessage
+  )
   NamespaceUpdateRequested(
-    UInt64,
-    UInt64,
-    Int64,
+    RequestId,
+    RequestId,
+    StreamId,
     Array[@protocol.MessageParameter]
   )
-  NamespaceUpdateAccepted(UInt64, UInt64, @protocol.RequestOkMessage)
-  NamespaceUpdateRejected(UInt64, UInt64, @protocol.RequestErrorMessage)
-  NamespaceWithdrawn(UInt64, Int64)
-  NamespaceAcceptanceRevoked(UInt64, Int64)
-  NamespaceSubscriptionRequested(UInt64, Int64, @protocol.TrackNamespace)
-  NamespaceSubscriptionEstablished(UInt64, Int64)
-  NamespaceSubscriptionRejected(UInt64, Int64, @protocol.RequestErrorMessage)
-  NamespaceDiscovered(UInt64, @protocol.TrackNamespace)
-  NamespaceNoLongerAvailable(UInt64, @protocol.TrackNamespace)
-  NamespaceSubscriptionEnded(UInt64, Int64)
+  NamespaceUpdateAccepted(RequestId, RequestId, @protocol.RequestOkMessage)
+  NamespaceUpdateRejected(RequestId, RequestId, @protocol.RequestErrorMessage)
+  NamespaceWithdrawn(RequestId, StreamId)
+  NamespaceAcceptanceRevoked(RequestId, StreamId)
+  NamespaceSubscriptionRequested(RequestId, StreamId, @protocol.TrackNamespace)
+  NamespaceSubscriptionEstablished(RequestId, StreamId)
+  NamespaceSubscriptionRejected(
+    RequestId,
+    StreamId,
+    @protocol.RequestErrorMessage
+  )
+  NamespaceDiscovered(RequestId, @protocol.TrackNamespace)
+  NamespaceNoLongerAvailable(RequestId, @protocol.TrackNamespace)
+  NamespaceSubscriptionEnded(RequestId, StreamId)
   NamespaceSubscriptionUpdateRequested(
-    UInt64,
-    UInt64,
-    Int64,
+    RequestId,
+    RequestId,
+    StreamId,
     @protocol.TrackNamespace
   )
   NamespaceSubscriptionUpdateAccepted(
-    UInt64,
-    UInt64,
+    RequestId,
+    RequestId,
     @protocol.RequestOkMessage
   )
   NamespaceSubscriptionUpdateRejected(
-    UInt64,
-    UInt64,
+    RequestId,
+    RequestId,
     @protocol.RequestErrorMessage
   )
-  SubscriptionAccepted(UInt64, Int64, UInt64)
-  SubscriptionRejected(UInt64, Int64)
+  SubscriptionAccepted(RequestId, StreamId, TrackAlias)
+  SubscriptionRejected(RequestId, StreamId)
   SubscriptionUpdateRequested(
-    UInt64,
-    UInt64,
-    Int64,
+    RequestId,
+    RequestId,
+    StreamId,
     Array[@protocol.MessageParameter],
     Array[@protocol.MessageParameter]
   )
   SubscriptionUpdateApplied(
-    UInt64,
-    UInt64,
-    Int64,
+    RequestId,
+    RequestId,
+    StreamId,
     Array[@protocol.MessageParameter]
   )
-  SubscriptionUpdateAccepted(UInt64, UInt64, @protocol.RequestOkMessage)
-  SubscriptionUpdateRejected(UInt64, UInt64, @protocol.RequestErrorMessage)
-  SubscriptionEnded(UInt64, Int64, @protocol.TrackName)
+  SubscriptionUpdateAccepted(RequestId, RequestId, @protocol.RequestOkMessage)
+  SubscriptionUpdateRejected(
+    RequestId,
+    RequestId,
+    @protocol.RequestErrorMessage
+  )
+  SubscriptionEnded(RequestId, StreamId, @protocol.TrackName)
   ObjectReceived(
-    UInt64,
+    RequestId,
     @protocol.TrackName,
     @protocol.SubgroupHeader,
     Array[@protocol.SubgroupFrame]
   )
-  ObjectDatagramReceived(UInt64, @protocol.TrackName, @protocol.ObjectDatagram)
-  ObjectStreamReset(UInt64, Int64)
-  ObjectStreamSendFinished(Int64)
-  GroupFinished(UInt64, UInt64)
-  PublishDone(UInt64, @protocol.PublishDoneMessage)
-  StreamSendFinished(Int64, SendCompletion)
+  ObjectDatagramReceived(
+    RequestId,
+    @protocol.TrackName,
+    @protocol.ObjectDatagram
+  )
+  ObjectStreamReset(RequestId, StreamId)
+  ObjectStreamSendFinished(StreamId)
+  GroupFinished(RequestId, UInt64)
+  PublishDone(RequestId, @protocol.PublishDoneMessage)
+  StreamSendFinished(StreamId, SendCompletion)
   DatagramQueued(UInt64)
   DatagramLocalWriteFailed(UInt64, Int64)
   ControlGoAwayReceived(Bytes, UInt64, UInt64)
-  RequestGoAwayReceived(UInt64, Int64, Bytes, UInt64)
+  RequestGoAwayReceived(RequestId, StreamId, Bytes, UInt64)
   SessionEnded(ClientSessionEnd)
 } derive(Debug, Eq)
 
@@ -433,7 +483,11 @@ pub fn ClientSession::receive(
               self.terminate_fetch(
                 fetch,
                 [AbortSend(stream, code)],
-                Some(EmitNotice(FetchReset(request_id, stream, code))),
+                Some(
+                  EmitNotice(
+                    FetchReset(RequestId(request_id), StreamId(stream), code),
+                  ),
+                ),
                 RemoveFetchData,
               ),
             )
@@ -446,7 +500,7 @@ pub fn ClientSession::receive(
                 Ok(
                   [
                     AbortSend(stream, code),
-                    EmitNotice(StreamSendFinished(stream, Reset)),
+                    EmitNotice(StreamSendFinished(StreamId(stream), Reset)),
                   ] +
                   self.finish_failed_subscription(subscription_stream),
                 )
@@ -538,7 +592,9 @@ fn ClientSession::protocol_error_actions(
                 request.object_drain.note_stream_closed()
                 match self.take_ready_publish_done(request_id) {
                   Some(done) =>
-                    actions.push(EmitNotice(PublishDone(request_id, done)))
+                    actions.push(
+                      EmitNotice(PublishDone(RequestId(request_id), done)),
+                    )
                   None => ()
                 }
               }
@@ -702,3 +758,54 @@ pub extend ClientSessionError with @moonbitlang/core/debug.Debug::{to_repr}
 
 ///|
 pub extend ClientSessionError with Eq::{equal, not_equal}
+
+///|
+pub extend RequestId with @moonbitlang/core/debug.Debug::{to_repr}
+
+///|
+pub extend RequestId with Eq::{equal, not_equal}
+
+///|
+pub extend RequestId with Hash::{hash, hash_combine}
+
+///|
+pub extend StreamId with @moonbitlang/core/debug.Debug::{to_repr}
+
+///|
+pub extend StreamId with Eq::{equal, not_equal}
+
+///|
+pub extend StreamId with Hash::{hash, hash_combine}
+
+///|
+pub extend TrackAlias with @moonbitlang/core/debug.Debug::{to_repr}
+
+///|
+pub extend TrackAlias with Eq::{equal, not_equal}
+
+///|
+pub extend TrackAlias with Hash::{hash, hash_combine}
+
+///|
+pub impl Show for RequestId with fn output(self, logger) {
+  logger.write_string(self.to_uint64().to_string())
+}
+
+///|
+pub impl Show for StreamId with fn output(self, logger) {
+  logger.write_string(self.to_int64().to_string())
+}
+
+///|
+pub impl Show for TrackAlias with fn output(self, logger) {
+  logger.write_string(self.to_uint64().to_string())
+}
+
+///|
+pub extend RequestId with Show::{to_string, output}
+
+///|
+pub extend StreamId with Show::{to_string, output}
+
+///|
+pub extend TrackAlias with Show::{to_string, output}

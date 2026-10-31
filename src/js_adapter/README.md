@@ -114,7 +114,7 @@ proof of peer delivery.
 `browser_connect(url, setup)` creates a connection and a Draft 18 session
 driver. Call `start()`, use `session()` to make MoQ requests, pass each
 operation's returned actions to `dispatch()`, and await `next_notice()` for
-results. `dispatch()` returns `Dispatched`, `QueueFull`, `TooLarge`, or
+results. `dispatch()` returns `Accepted`, `QueueFull`, `TooLarge`, or
 `DriverFailed`; retain and retry the same actions after `QueueFull`. A batch
 that is too large can be dispatched in order as smaller batches. An individual
 action larger than the byte limit cannot be retried: abort its Subgroup and

@@ -78,7 +78,7 @@ pub(all) struct SessionDriverConfig {
 
 ///|
 pub(all) enum DriverDispatchResult {
-  Dispatched
+  Accepted
   QueueFull
   TooLarge
   DriverFailed
@@ -115,7 +115,9 @@ pub struct SessionDriver[T] {
   priv mut clock : (() -> UInt64)?
   priv mut events : Array[@session.SessionEvent]
   priv mut notices : Array[@session.SessionNotice]
-  priv mut opened_streams : Array[(@session.ClientStreamPurpose, Int64)]
+  priv mut opened_streams : Array[
+    (@session.ClientStreamPurpose, @session.StreamId),
+  ]
   priv mut in_flight_opens : Int32
   priv mut in_flight_sends : Int32
   priv send_streams : Map[Int64, Int32]
@@ -194,11 +196,12 @@ pub fn[T] SessionDriver::failure(
 }
 
 ///|
-/// Atomically enqueue actions and pump them through the transport. On Retry,
-/// the caller retains the entire action array and may retry dispatch after
-/// progress; it must not repeat the session operation that produced it.
-/// TooLarge cannot succeed even when the queue is empty. Control-only batches
-/// remain admissible when the data queue is full.
+/// Atomically accept and enqueue a complete action batch, then pump it through
+/// the transport. `Accepted` means the batch was admitted, not that any bytes
+/// reached the peer. When a transport asks for `Retry`, retain the entire batch
+/// and dispatch it again after progress; never repeat the session operation
+/// that produced it. `TooLarge` cannot succeed even when the queue is empty.
+/// Control-only batches remain admissible when the data queue is full.
 pub fn[T : SessionTransport] SessionDriver::dispatch(
   self : SessionDriver[T],
   actions : Array[@session.SessionAction],
@@ -219,7 +222,7 @@ pub fn[T : SessionTransport] SessionDriver::dispatch(
   }
   self.append_actions(actions)
   self.pump()
-  Dispatched
+  Accepted
 }
 
 ///|
@@ -304,7 +307,7 @@ pub fn[T] SessionDriver::take_notices(
 /// intentionally not exposed here; it stays opaque to the session.
 pub fn[T] SessionDriver::take_opened_streams(
   self : SessionDriver[T],
-) -> Array[(@session.ClientStreamPurpose, Int64)] {
+) -> Array[(@session.ClientStreamPurpose, @session.StreamId)] {
   let opened = self.opened_streams
   self.opened_streams = []
   opened
@@ -613,7 +616,7 @@ fn[T : SessionTransport] SessionDriver::note_open(
   }
   match outcome {
     Opened(stream) => {
-      self.opened_streams.push((purpose, stream))
+      self.opened_streams.push((purpose, @session.StreamId(stream)))
       self.events.push(@session.StreamOpened(purpose, stream))
     }
     OpenFailed(status) => self.events.push(@session.TransportFailed(status))

@@ -9,7 +9,7 @@ test "local PUBLISH_NAMESPACE accepts and withdraws independently of tracks" {
   let (request_id, actions) = publisher
     .publish_namespace(namespace_request(), [])
     .unwrap()
-  assert_eq(request_id, 0UL)
+  assert_eq(request_id, @session.RequestId(0UL))
   assert_eq(actions, [
     @session.OpenStream(@session.Bidirectional, @session.Request(0UL)),
   ])
@@ -19,7 +19,7 @@ test "local PUBLISH_NAMESPACE accepts and withdraws independently of tracks" {
       @session.SendChunk(
         30,
         @protocol.encode_publish_namespace({
-          request_id,
+          request_id: request_id.to_uint64(),
           track_namespace: namespace_request(),
           parameters: [],
         }).unwrap(),
@@ -75,7 +75,7 @@ test "peer PUBLISH_NAMESPACE requires explicit application acceptance and can be
     ]),
   )
   assert_eq(
-    subscriber.accept_namespace_publication(40),
+    subscriber.accept_namespace_publication(@session.StreamId(40)),
     Ok([
       @session.SendChunk(
         40,
@@ -125,7 +125,7 @@ test "peer PUBLISH_NAMESPACE can be rejected with REQUEST_ERROR and FIN" {
     redirect: b"",
   }
   assert_eq(
-    subscriber.reject_namespace_publication(40, error),
+    subscriber.reject_namespace_publication(@session.StreamId(40), error),
     Ok([
       @session.SendFin(40, @protocol.encode_request_error(error).unwrap()),
       @session.EmitNotice(@session.NamespacePublicationRejected(1UL, 40, error)),
@@ -205,7 +205,7 @@ test "namespace request updates are surfaced before and after acceptance" {
     Err(@session.UnexpectedMessage),
   )
   assert_eq(
-    subscriber.accept_namespace_publication(40),
+    subscriber.accept_namespace_publication(@session.StreamId(40)),
     Ok([
       @session.SendChunk(
         40,
@@ -314,12 +314,12 @@ test "outgoing namespace update is matched to its REQUEST_OK response" {
   let (update_id, actions) = publisher
     .update_published_namespace(request_id, token)
     .unwrap()
-  assert_eq(update_id, 2UL)
+  assert_eq(update_id, @session.RequestId(2UL))
   assert_eq(actions, [
     @session.SendChunk(
       30,
       @protocol.encode_request_update_for(
-        { request_id: update_id, parameters: token, },
+        { request_id: update_id.to_uint64(), parameters: token, },
         @protocol.RequestStreamFor(@protocol.Namespace),
       ).unwrap(),
     ),
@@ -467,7 +467,7 @@ test "withdrawing a namespace leaves established track subscriptions active" {
       ),
     ),
   )
-  ignore(publisher.accept_subscription(40))
+  ignore(publisher.accept_subscription(@session.StreamId(40)))
 
   let (namespace_id, _) = publisher
     .publish_namespace(namespace_request(), [])
@@ -489,7 +489,11 @@ test "withdrawing a namespace leaves established track subscriptions active" {
   assert_true(publisher.cancel_request(namespace_id) is Ok(_))
 
   assert_true(
-    publisher.open_object_stream(40, client_subgroup_header(9UL, 1UL)) is Ok(_),
+    publisher.open_object_stream(
+      @session.StreamId(40),
+      client_subgroup_header(9UL, 1UL),
+    )
+    is Ok(_),
   )
 }
 
@@ -640,7 +644,7 @@ test "GOAWAY rejects a namespace REQUEST_UPDATE and closes its bidi" {
       ),
     ),
   )
-  ignore(subscriber.accept_namespace_publication(40))
+  ignore(subscriber.accept_namespace_publication(@session.StreamId(40)))
   ignore(subscriber.send_goaway(0UL))
   let update : @protocol.RequestUpdateMessage = {
     request_id: 3UL,

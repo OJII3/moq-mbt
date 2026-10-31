@@ -251,6 +251,7 @@ fn run_interop_test(
       let (request_id, actions) = peer.session
         .publish_namespace(track_namespace, [])
         .unwrap()
+      let request_id = request_id.to_uint64()
       let (notices, opened) = drive_session_actions(
         peer.client,
         peer.session,
@@ -277,11 +278,12 @@ fn run_interop_test(
     "subscribe-error" => {
       let peer = interop_peer(endpoint, insecure)
       defer peer.client.close()
-      let track = @protocol.TrackName::from_namespace_fields(
+      let track = @protocol.TrackName::from_utf8_fields(
         ["nonexistent", "namespace"],
         "test-track",
       )
       let (request_id, actions) = peer.session.subscribe_track(track).unwrap()
+      let request_id = request_id.to_uint64()
       let (notices, _) = drive_session_actions(
         peer.client,
         peer.session,

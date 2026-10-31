@@ -104,6 +104,7 @@ fn ClientSession::stream_opened(
       Ok([SendChunk(stream, self.handshake.outbound_setup())])
     }
     Request(request_id) => {
+      let request_id = request_id.to_uint64()
       if self.request_streams.get(stream) is Some(_) ||
         self.namespace_stream_exists(stream) {
         return Err(DuplicateStream)
@@ -248,7 +249,8 @@ fn ClientSession::stream_opened(
       self.group_streams[token] = stream
       Ok(actions)
     }
-    FetchData(request_id) => self.start_outbound_fetch_data(stream, request_id)
+    FetchData(request_id) =>
+      self.start_outbound_fetch_data(stream, request_id.to_uint64())
   }
 }
 
@@ -317,10 +319,11 @@ fn ClientSession::stream_finished(
       self.inbound_stream_kinds.remove(stream)
       let actions : Array[SessionAction] = []
       if group_finished {
-        actions.push(EmitNotice(GroupFinished(request_id, group_id)))
+        actions.push(EmitNotice(GroupFinished(RequestId(request_id), group_id)))
       }
       match self.take_ready_publish_done(request_id) {
-        Some(done) => actions.push(EmitNotice(PublishDone(request_id, done)))
+        Some(done) =>
+          actions.push(EmitNotice(PublishDone(RequestId(request_id), done)))
         None => ()
       }
       Ok(actions)
@@ -382,10 +385,11 @@ fn ClientSession::stream_reset(
       self.incoming_object_streams.remove(stream)
       self.inbound_stream_kinds.remove(stream)
       let actions : Array[SessionAction] = [
-        EmitNotice(ObjectStreamReset(request_id, stream)),
+        EmitNotice(ObjectStreamReset(RequestId(request_id), StreamId(stream))),
       ]
       match self.take_ready_publish_done(request_id) {
-        Some(done) => actions.push(EmitNotice(PublishDone(request_id, done)))
+        Some(done) =>
+          actions.push(EmitNotice(PublishDone(RequestId(request_id), done)))
         None => ()
       }
       Ok(actions)
@@ -415,7 +419,7 @@ fn ClientSession::send_complete(
       let subscription_stream = outgoing.subscription_stream
       self.close_outgoing_object_stream(stream)
       Ok(
-        [EmitNotice(StreamSendFinished(stream, Reset))] +
+        [EmitNotice(StreamSendFinished(StreamId(stream), Reset))] +
         self.finish_failed_subscription(subscription_stream),
       )
     }
@@ -423,7 +427,7 @@ fn ClientSession::send_complete(
       if outgoing.pending_send_count > 0UL {
         outgoing.pending_send_count = outgoing.pending_send_count - 1UL
       }
-      Ok([EmitNotice(StreamSendFinished(stream, Sent))])
+      Ok([EmitNotice(StreamSendFinished(StreamId(stream), Sent))])
     }
     None =>
       match self.outgoing_fetch_streams.get(stream) {
@@ -432,7 +436,7 @@ fn ClientSession::send_complete(
           Ok(
             self.terminate_fetch(
               fetch,
-              [EmitNotice(StreamSendFinished(stream, Reset))],
+              [EmitNotice(StreamSendFinished(StreamId(stream), Reset))],
               None,
               RemoveFetchData,
             ),
@@ -447,13 +451,13 @@ fn ClientSession::send_complete(
             Ok(
               self.terminate_fetch(
                 fetch,
-                [EmitNotice(StreamSendFinished(stream, Sent))],
+                [EmitNotice(StreamSendFinished(StreamId(stream), Sent))],
                 None,
                 RemoveFetchData,
               ),
             )
           } else {
-            Ok([EmitNotice(StreamSendFinished(stream, Sent))])
+            Ok([EmitNotice(StreamSendFinished(StreamId(stream), Sent))])
           }
         }
         None =>
@@ -463,7 +467,10 @@ fn ClientSession::send_complete(
               match self.request_streams.get(stream) {
                 Some(request_id) if self.requests.get(request_id).unwrap().lifetime.cancelled =>
                   Ok([])
-                _ => Ok([EmitNotice(StreamSendFinished(stream, completion))])
+                _ =>
+                  Ok([
+                    EmitNotice(StreamSendFinished(StreamId(stream), completion)),
+                  ])
               }
           }
       }

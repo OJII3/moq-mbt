@@ -52,7 +52,13 @@ fn ClientSession::receive_peer_request(
               }
               actions.push(SendFin(stream, error_bytes))
               actions.push(
-                EmitNotice(FetchRejected(request.request_id, stream, error)),
+                EmitNotice(
+                  FetchRejected(
+                    RequestId(request.request_id),
+                    StreamId(stream),
+                    error,
+                  ),
+                ),
               )
               continue
             }
@@ -72,7 +78,13 @@ fn ClientSession::receive_peer_request(
                   }
                   actions.push(SendFin(stream, error_bytes))
                   actions.push(
-                    EmitNotice(FetchRejected(request.request_id, stream, error)),
+                    EmitNotice(
+                      FetchRejected(
+                        RequestId(request.request_id),
+                        StreamId(stream),
+                        error,
+                      ),
+                    ),
                   )
                 } else {
                   self.fetch_streams[stream] = request.request_id
@@ -88,8 +100,8 @@ fn ClientSession::receive_peer_request(
                   actions.push(
                     EmitNotice(
                       FetchRequested(
-                        request.request_id,
-                        stream,
+                        RequestId(request.request_id),
+                        StreamId(stream),
                         track,
                         start,
                         end,
@@ -177,8 +189,8 @@ fn ClientSession::receive_peer_request(
               actions.push(
                 EmitNotice(
                   SubscriptionRequested(
-                    request.request_id,
-                    stream,
+                    RequestId(request.request_id),
+                    StreamId(stream),
                     request.track,
                   ),
                 ),
@@ -274,8 +286,9 @@ fn ClientSession::find_publisher(
 /// Accept a peer SUBSCRIBE that targets one of this session's published tracks.
 pub fn ClientSession::accept_subscription(
   self : ClientSession,
-  stream : Int64,
+  stream : StreamId,
 ) -> Result[Array[SessionAction], ClientSessionError] {
+  let stream = stream.to_int64()
   match self.ensure_open() {
     Ok(_) => ()
     Err(error) => return Err(error)
@@ -330,9 +343,9 @@ pub fn ClientSession::accept_subscription(
         SendChunk(stream, response),
         EmitNotice(
           SubscriptionAccepted(
-            inbound.request_id,
-            stream,
-            request.track_alias.unwrap(),
+            RequestId(inbound.request_id),
+            StreamId(stream),
+            TrackAlias(request.track_alias.unwrap()),
           ),
         ),
       ] +
@@ -345,9 +358,10 @@ pub fn ClientSession::accept_subscription(
 /// Reject a peer SUBSCRIBE with REQUEST_ERROR.
 pub fn ClientSession::reject_subscription(
   self : ClientSession,
-  stream : Int64,
+  stream : StreamId,
   error : @protocol.RequestErrorMessage,
 ) -> Result[Array[SessionAction], ClientSessionError] {
+  let stream = stream.to_int64()
   match self.ensure_open() {
     Ok(_) => ()
     Err(error) => return Err(error)
@@ -373,7 +387,9 @@ pub fn ClientSession::reject_subscription(
     self.finish_actions(
       [
         SendFin(stream, response),
-        EmitNotice(SubscriptionRejected(inbound.request_id, stream)),
+        EmitNotice(
+          SubscriptionRejected(RequestId(inbound.request_id), StreamId(stream)),
+        ),
       ] +
       joining_actions,
     ),
@@ -419,7 +435,13 @@ fn ClientSession::end_inbound_subscription(
   if effects.notify_end {
     let track = self.requests.get(inbound.publisher_request_id).unwrap().track
     actions.push(
-      EmitNotice(SubscriptionEnded(inbound.request_id, stream, track)),
+      EmitNotice(
+        SubscriptionEnded(
+          RequestId(inbound.request_id),
+          StreamId(stream),
+          track,
+        ),
+      ),
     )
   }
   actions

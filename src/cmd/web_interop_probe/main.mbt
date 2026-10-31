@@ -80,7 +80,7 @@ async fn run_subscriber(
   client : @js_adapter.BrowserClient,
   track : @protocol.TrackName,
 ) -> Unit {
-  let mut request_id = 0UL
+  let mut request_id = @session.RequestId(0UL)
   let mut subscribed = false
   let mut received_objects = 0
   let mut finished_groups = 0
@@ -179,7 +179,7 @@ async fn run_subscriber(
 ///|
 async fn publish_group(
   client : @js_adapter.BrowserClient,
-  subscription_stream : Int64,
+  subscription_stream : @session.StreamId,
   group_id : UInt64,
 ) -> Bool {
   let header : @protocol.SubgroupHeader = {
@@ -280,7 +280,7 @@ fn dispatch_actions(
   actions : Array[@session.SessionAction],
 ) -> Bool {
   match client.dispatch(actions) {
-    @driver.Dispatched => true
+    @driver.Accepted => true
     @driver.QueueFull => {
       ffi_set_status("failed: action queue full")
       false
@@ -301,7 +301,7 @@ async fn run_publisher(
   client : @js_adapter.BrowserClient,
   track : @protocol.TrackName,
 ) -> Unit {
-  let mut publish_id = 0UL
+  let mut publish_id = @session.RequestId(0UL)
   let mut publish_stream = None
   let mut finished = false
   while !finished {

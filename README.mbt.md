@@ -192,7 +192,7 @@ let client_result = @js_adapter.browser_connect(
 Call `start()` to begin the session, then consume `next_notice()` until you
 receive `HandshakeComplete` before making requests through `session()`. Pass
 each request's returned actions to `dispatch()`, and continue reading notices
-to observe its result. `dispatch()` returns `Dispatched`, `QueueFull`,
+to observe its result. `dispatch()` returns `Accepted`, `QueueFull`,
 `TooLarge`, or `DriverFailed`; retain actions after `QueueFull` and retry after
 progress, and split batches after `TooLarge`. `next_notice()` resolves to
 `None` when the session ends.

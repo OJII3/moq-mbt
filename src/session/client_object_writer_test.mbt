@@ -109,7 +109,7 @@ test "aborting group invalidates incremental Object writer" {
 test "incremental Object carries properties and zero length payload" {
   let publisher = publisher_started()
   let (group, actions) = publisher
-    .open_object_group(40, 0UL, has_properties=true)
+    .open_object_group(@session.StreamId(40), 0UL, has_properties=true)
     .unwrap()
   let token = match actions[0] {
     @session.OpenStream(_, @session.Object(value)) => value

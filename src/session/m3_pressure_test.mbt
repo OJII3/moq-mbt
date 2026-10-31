@@ -5,7 +5,10 @@ test "M3 rejected update drains a near-full stream set across cancellation" {
   for i = 0; i < 14; i = i + 1 {
     let token = match
       publisher
-      .open_object_stream(40, publisher_header(i.to_uint64(), false))
+      .open_object_stream(
+        @session.StreamId(40),
+        publisher_header(i.to_uint64(), false),
+      )
       .unwrap() {
       [@session.OpenStream(@session.Unidirectional, @session.Object(token))] =>
         token
@@ -20,7 +23,9 @@ test "M3 rejected update drains a near-full stream set across cancellation" {
     )
   }
   let delayed_token = match
-    publisher.open_object_stream(40, publisher_header(14UL, false)).unwrap() {
+    publisher
+    .open_object_stream(@session.StreamId(40), publisher_header(14UL, false))
+    .unwrap() {
     [@session.OpenStream(@session.Unidirectional, @session.Object(token))] =>
       token
     _ => fail("expected delayed object stream")

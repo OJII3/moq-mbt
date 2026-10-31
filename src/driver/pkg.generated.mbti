@@ -12,7 +12,7 @@ import {
 
 // Types and methods
 pub(all) enum DriverDispatchResult {
-  Dispatched
+  Accepted
   QueueFull
   TooLarge
   DriverFailed
@@ -37,7 +37,7 @@ pub fn[T] SessionDriver::set_clock(Self[T], () -> UInt64) -> Unit
 pub fn[T] SessionDriver::set_now_ms(Self[T], UInt64) -> Unit
 pub fn[T] SessionDriver::set_update_handler(Self[T], () -> Unit) -> Unit
 pub fn[T] SessionDriver::take_notices(Self[T]) -> Array[@session.SessionNotice]
-pub fn[T] SessionDriver::take_opened_streams(Self[T]) -> Array[(@session.ClientStreamPurpose, Int64)]
+pub fn[T] SessionDriver::take_opened_streams(Self[T]) -> Array[(@session.ClientStreamPurpose, @session.StreamId)]
 
 pub(all) struct SessionDriverConfig {
   max_in_flight_opens : Int

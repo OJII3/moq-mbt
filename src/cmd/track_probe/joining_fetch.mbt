@@ -23,7 +23,7 @@ fn JoiningFetchState::observe_publisher(
 ) -> Unit raise {
   for notice in notices {
     match notice {
-      @session.PublishAccepted(id, _, _) if id == self.publish_id =>
+      @session.PublishAccepted(id, _, _) if id.to_uint64() == self.publish_id =>
         self.published = true
       @session.PublishRejected(_, error) =>
         fail("joining FETCH PUBLISH rejected: \{error.to_repr()}")
@@ -38,7 +38,7 @@ fn JoiningFetchState::observe_publisher(
             "joining FETCH upstream identity or resolved range did not match",
           )
         }
-        self.upstream_fetch_id = Some(id)
+        self.upstream_fetch_id = Some(id.to_uint64())
         ignore(
           drive_session_result(
             peer.client,
@@ -96,13 +96,13 @@ fn JoiningFetchState::observe_subscriber(
   for notice in notices {
     match notice {
       @session.SubscribeEstablished(id, track_alias) =>
-        self.aliases[id] = track_alias
+        self.aliases[id.to_uint64()] = track_alias.to_uint64()
       @session.SubscribeRejected(_, error) =>
         fail("joining FETCH SUBSCRIBE rejected: \{error.to_repr()}")
       @session.SubscriptionUpdateRejected(_, _, error) =>
         fail("joining FETCH filter update rejected: \{error.to_repr()}")
       @session.ObjectReceived(id, _, header, frames) => {
-        guard self.aliases.get(id) == Some(header.track_alias) else {
+        guard self.aliases.get(id.to_uint64()) == Some(header.track_alias) else {
           fail("joining FETCH live Object alias did not match")
         }
         for frame in frames {
@@ -112,7 +112,7 @@ fn JoiningFetchState::observe_subscriber(
             frame.payload == probe_payload(header.group_id, 0UL) else {
             fail("joining FETCH live Object contents did not match")
           }
-          guard Some(id) == self.subscribe_id &&
+          guard Some(id.to_uint64()) == self.subscribe_id &&
             header.group_id == 2UL &&
             !self.live_received &&
             self.fetch_finished else {
@@ -123,18 +123,18 @@ fn JoiningFetchState::observe_subscriber(
         }
       }
       @session.GroupFinished(id, group) => {
-        guard Some(id) == self.subscribe_id &&
+        guard Some(id.to_uint64()) == self.subscribe_id &&
           group == 2UL &&
           !self.live_finished else {
           fail("unexpected joining live Group FIN")
         }
         self.live_finished = true
       }
-      @session.FetchAccepted(id, _) if Some(id) == self.fetch_id =>
+      @session.FetchAccepted(id, _) if Some(id.to_uint64()) == self.fetch_id =>
         self.fetch_accepted = true
       @session.FetchObjectReceived(id, object) => {
         // QUIC may deliver the data stream before FETCH_OK on its bidi stream.
-        guard Some(id) == self.fetch_id &&
+        guard Some(id.to_uint64()) == self.fetch_id &&
           !self.fetch_finished &&
           self.fetched < 2UL &&
           object.group_id == self.fetched &&
@@ -152,14 +152,15 @@ fn JoiningFetchState::observe_subscriber(
           "Received joining FETCH Object (group \{object.group_id}, object 0)",
         )
       }
-      @session.FetchFinished(id) if Some(id) == self.fetch_id => {
+      @session.FetchFinished(id) if Some(id.to_uint64()) == self.fetch_id => {
         guard self.fetch_accepted && self.fetched == 2UL && !self.fetch_finished else {
           fail("joining FETCH finished without the exact historical range")
         }
         self.fetch_finished = true
         println("Joining FETCH data FIN received")
       }
-      @session.FetchRejected(id, _, error) if Some(id) == self.fetch_id => {
+      @session.FetchRejected(id, _, error) if Some(id.to_uint64()) ==
+        self.fetch_id => {
         guard error.code == 0x10UL else {
           fail("joining FETCH was rejected: \{error.to_repr()}")
         }
@@ -292,6 +293,7 @@ pub fn run_joining_fetch(
   let (publish_id, actions) = publisher_session
     .publish_track(track, 1UL)
     .unwrap()
+  let publish_id = publish_id.to_uint64()
   let state : JoiningFetchState = {
     track,
     publish_id,
@@ -343,6 +345,7 @@ pub fn run_joining_fetch(
       { kind: 0x21UL, value: @protocol.Filter(@protocol.LargestObject), },
     ])
     .unwrap()
+  let subscribe_id = subscribe_id.to_uint64()
   state.subscribe_id = Some(subscribe_id)
   let (notices, _) = drive_session_actions(
     subscriber_client,
@@ -362,8 +365,13 @@ pub fn run_joining_fetch(
   // The omitted GROUP_ORDER is ascending. The relay joins from its retained
   // history while the origin's publish streams remain unacknowledged.
   let (fetch_id, actions) = subscriber_session
-    .fetch_relative(subscribe_id, 1UL, [])
+    .fetch_joining_relative(
+      subscription_request_id=subscribe_id,
+      groups_back=1UL,
+      parameters=[],
+    )
     .unwrap()
+  let fetch_id = fetch_id.to_uint64()
   println("Joining FETCH request sent")
   state.fetch_id = Some(fetch_id)
   let (notices, _) = drive_session_actions(

@@ -19,11 +19,12 @@ pub struct ObjectGroupWriter {
 /// Objects; earlier sends return ObjectStreamNotReady without retaining payload.
 pub fn ClientSession::open_object_group(
   self : ClientSession,
-  subscription_stream : Int64,
+  subscription_stream : StreamId,
   group_id : UInt64,
   end_of_group~ : Bool = false,
   has_properties~ : Bool = false,
 ) -> Result[(ObjectGroupWriter, Array[SessionAction]), ClientSessionError] {
+  let subscription_stream = subscription_stream.to_int64()
   let publisher_request_id = match
     self.publisher_request_for_subscription(subscription_stream) {
     Some(value) => value
@@ -43,7 +44,8 @@ pub fn ClientSession::open_object_group(
     first_object: true,
     has_properties,
   }
-  let actions = match self.open_object_stream(subscription_stream, header) {
+  let actions = match
+    self.open_object_stream(StreamId(subscription_stream), header) {
     Ok(value) => value
     Err(error) => return Err(error)
   }

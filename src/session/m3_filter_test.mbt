@@ -24,11 +24,18 @@ test "M3 accepted absolute range constrains publisher Object sends" {
   ignore(publisher.accept_subscription_update(40, 3UL, update_ok()).unwrap())
   ignore(publisher_open(publisher, 40, 50, publisher_header(10UL, false)))
   assert_eq(
-    publisher.send_object(50, publisher_frame(0UL, b"outside")),
+    publisher.send_object(
+      @session.StreamId(50),
+      publisher_frame(0UL, b"outside"),
+    ),
     Err(@session.SubscriptionNotAccepted),
   )
   assert_true(
-    publisher.send_object(50, publisher_frame(2UL, b"inside")) is Ok(_),
+    publisher.send_object(
+      @session.StreamId(50),
+      publisher_frame(2UL, b"inside"),
+    )
+    is Ok(_),
   )
 }
 
@@ -43,7 +50,10 @@ test "M3 accepted absolute range constrains publisher Object Datagrams" {
   )
   ignore(publisher.accept_subscription_update(40, 3UL, update_ok()).unwrap())
   assert_eq(
-    publisher.send_object_datagram(40, update_datagram(1UL, 0UL, b"outside")),
+    publisher.send_object_datagram(
+      @session.StreamId(40),
+      update_datagram(1UL, 0UL, b"outside"),
+    ),
     Err(@session.SubscriptionNotAccepted),
   )
   let beyond_range : @protocol.ObjectDatagram = {
@@ -57,7 +67,7 @@ test "M3 accepted absolute range constrains publisher Object Datagrams" {
     payload: b"outside",
   }
   assert_eq(
-    publisher.send_object_datagram(40, beyond_range),
+    publisher.send_object_datagram(@session.StreamId(40), beyond_range),
     Err(@session.SubscriptionNotAccepted),
   )
   let inside : @protocol.ObjectDatagram = {
@@ -70,17 +80,21 @@ test "M3 accepted absolute range constrains publisher Object Datagrams" {
     status: @protocol.Normal,
     payload: b"inside",
   }
-  assert_true(publisher.send_object_datagram(40, inside) is Ok(_))
+  assert_true(
+    publisher.send_object_datagram(@session.StreamId(40), inside) is Ok(_),
+  )
 }
 
 ///|
 test "M3 publish done waits for an Object stream opening callback" {
   let publisher = publisher_started()
   ignore(
-    publisher.open_object_stream(40, publisher_header(1UL, false)).unwrap(),
+    publisher
+    .open_object_stream(@session.StreamId(40), publisher_header(1UL, false))
+    .unwrap(),
   )
   assert_eq(
-    publisher.publish_done(40, 2UL, b""),
+    publisher.publish_done(@session.StreamId(40), 2UL, b""),
     Err(@session.Track(@session.ObjectStreamsStillOpen)),
   )
 }
@@ -90,7 +104,10 @@ test "M3 relative filter snapshots only when its filter parameter is updated" {
   let publisher = publisher_started()
   ignore(
     publisher
-    .send_object_datagram(40, update_datagram(1UL, 5UL, b"seed"))
+    .send_object_datagram(
+      @session.StreamId(40),
+      update_datagram(1UL, 5UL, b"seed"),
+    )
     .unwrap(),
   )
   let largest_object : Array[@protocol.MessageParameter] = [
@@ -103,12 +120,18 @@ test "M3 relative filter snapshots only when its filter parameter is updated" {
   )
   ignore(publisher.accept_subscription_update(40, 3UL, update_ok()).unwrap())
   assert_eq(
-    publisher.send_object_datagram(40, update_datagram(1UL, 5UL, b"old")),
+    publisher.send_object_datagram(
+      @session.StreamId(40),
+      update_datagram(1UL, 5UL, b"old"),
+    ),
     Err(@session.SubscriptionNotAccepted),
   )
   ignore(
     publisher
-    .send_object_datagram(40, update_datagram(1UL, 8UL, b"new largest"))
+    .send_object_datagram(
+      @session.StreamId(40),
+      update_datagram(1UL, 8UL, b"new largest"),
+    )
     .unwrap(),
   )
   let priority = [subscriber_priority_parameter(4)]
