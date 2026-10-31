@@ -149,6 +149,20 @@ async test "WebTransport connection and session lifecycle" {
   for pending in excess_writes {
     assert_true(pending.wait() is Ok(_))
   }
+  // Byte pressure is independent of the number of pending writes.
+  ffi_fake_delay_stream_writes()
+  let full_byte_budget = connection.write_stream(
+    stream,
+    Bytes::make(1024 * 1024, 0),
+  )
+  match connection.write_stream(stream, b"x").wait() {
+    Err(error) => assert_eq(error.name, "QuotaExceededError")
+    Ok(_) => fail("the pending stream byte budget exceeded its limit")
+  }
+  @js.sleep(1)
+  ffi_fake_resolve_pending_stream_writes()
+  assert_true(full_byte_budget.wait() is Ok(_))
+  assert_true(connection.write_stream(stream, b"recovered").wait() is Ok(_))
   assert_true(connection.write_stream(stream, b"", fin=true).wait() is Ok(_))
   match connection.next_stream_event().wait() {
     StreamDataCommitted(id) => assert_eq(id, stream)
@@ -363,6 +377,19 @@ async test "WebTransport connection and session lifecycle" {
     DatagramsClosed => fail("datagram reader closed unexpectedly")
   }
 
+  // The byte limit must reject overflow and recover after completion.
+  ffi_fake_set_max_datagram_size(1024 * 1024)
+  ffi_fake_delay_datagram_writes()
+  let full_byte_budget = connection.send_datagram(Bytes::make(1024 * 1024, 0))
+  match connection.send_datagram(b"x").wait() {
+    Err(DatagramQueueFull) => ()
+    _ => fail("the pending datagram byte budget exceeded its limit")
+  }
+  @js.sleep(1)
+  ffi_fake_resolve_pending_datagram_writes()
+  assert_true(full_byte_budget.wait() is Ok(_))
+  assert_true(connection.send_datagram(b"recovered").wait() is Ok(_))
+
   ffi_fake_reject_datagram_writes()
   match connection.send_datagram(b"reject").wait() {
     Err(DatagramWriteFailed(error)) =>
@@ -370,6 +397,13 @@ async test "WebTransport connection and session lifecycle" {
     _ => fail("datagram write rejection was reported as success")
   }
   ffi_fake_allow_datagram_writes()
+  // A failed WritableStream stays errored, but its send budget must be freed.
+  for _ in 0..<2 {
+    match connection.send_datagram(Bytes::make(1024 * 1024, 0)).wait() {
+      Err(DatagramWriteFailed(_)) => ()
+      _ => fail("failed datagram writes did not release their byte budget")
+    }
+  }
 
   let waiting = connection.next_datagram()
   ignore(connection.close(0L, "done"))

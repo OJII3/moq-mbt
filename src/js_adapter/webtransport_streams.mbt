@@ -36,8 +36,7 @@ struct WebTransportStreamManager {
   event_waiters : Array[(WebTransportStreamEvent) -> Unit]
   next_stream_ref : Ref[Int64]
   pending_stream_opens : Ref[Int32]
-  pending_send_count : Ref[Int32]
-  pending_send_bytes : Ref[Int32]
+  send_budget : SendQueueBudget
   pending_event_bytes : Ref[Int32]
   connection_ended : Ref[Bool]
   final_close : Ref[WebTransportClose?]
@@ -548,8 +547,7 @@ fn WebTransportStreamManager::write_stream(
       }),
     )
   }
-  if self.pending_send_count.val >= max_pending_stream_sends ||
-    bytes.length() > max_pending_stream_send_bytes - self.pending_send_bytes.val {
+  if !self.send_budget.has_capacity(bytes.length()) {
     return @js.Promise::resolve(
       Err(WebTransportFailure::{
         name: "QuotaExceededError",
@@ -596,8 +594,7 @@ fn WebTransportStreamManager::write_stream(
   if fin {
     state.write_closed.val = true
   }
-  self.pending_send_count.val += 1
-  self.pending_send_bytes.val += bytes.length()
+  self.send_budget.acquire(bytes.length())
   @js.from_async(async fn() {
     try {
       writer.ready().wait()
@@ -619,8 +616,7 @@ fn WebTransportStreamManager::write_stream(
       }
     }
   }).then(fn(result) {
-    self.pending_send_count.val -= 1
-    self.pending_send_bytes.val -= bytes.length()
+    self.send_budget.release(bytes.length())
     @js.Promise::resolve(result)
   })
 }

@@ -134,8 +134,9 @@ pub fn webtransport_connect(
         event_waiters: [],
         next_stream_ref: Ref(1L),
         pending_stream_opens: Ref(0),
-        pending_send_count: Ref(0),
-        pending_send_bytes: Ref(0),
+        send_budget: SendQueueBudget::new(
+          max_pending_stream_sends, max_pending_stream_send_bytes,
+        ),
         pending_event_bytes: Ref(0),
         connection_ended: Ref(false),
         final_close: Ref(None),
