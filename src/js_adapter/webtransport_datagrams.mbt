@@ -27,8 +27,7 @@ struct WebTransportDatagramManager {
   datagrams : @js.Any
   queue : Array[Bytes]
   waiters : Array[(WebTransportDatagramEvent) -> Unit]
-  pending_send_count : Ref[Int32]
-  pending_send_bytes : Ref[Int32]
+  send_budget : SendQueueBudget
   pending_receive_bytes : Ref[Int32]
   receive_queue_full : Ref[Bool]
   ended : Ref[Bool]
@@ -72,8 +71,9 @@ fn WebTransportDatagramManager::new(
     datagrams,
     queue: [],
     waiters: [],
-    pending_send_count: Ref(0),
-    pending_send_bytes: Ref(0),
+    send_budget: SendQueueBudget::new(
+      max_pending_datagram_sends, max_pending_datagram_send_bytes,
+    ),
     pending_receive_bytes: Ref(0),
     receive_queue_full: Ref(false),
     ended: Ref(false),
@@ -200,13 +200,10 @@ fn WebTransportDatagramManager::send_datagram(
       Err(DatagramTooLarge(bytes.length(), max_length)),
     )
   }
-  if self.pending_send_count.val >= max_pending_datagram_sends ||
-    bytes.length() >
-    max_pending_datagram_send_bytes - self.pending_send_bytes.val {
+  if !self.send_budget.has_capacity(bytes.length()) {
     return @js.Promise::resolve(Err(DatagramQueueFull))
   }
-  self.pending_send_count.val += 1
-  self.pending_send_bytes.val += bytes.length()
+  self.send_budget.acquire(bytes.length())
   @js.from_async(async fn() {
     let result = try {
       writer.ready().wait()
@@ -225,8 +222,7 @@ fn WebTransportDatagramManager::send_datagram(
     } catch {
       error => Err(DatagramWriteFailed(webtransport_failure(@js.any(error))))
     }
-    self.pending_send_count.val -= 1
-    self.pending_send_bytes.val -= bytes.length()
+    self.send_budget.release(bytes.length())
     result
   })
 }
