@@ -1,6 +1,6 @@
 # WebTransport adapter
 
-`webtransport_connect` accepts an `https://` URL or a `moqt://` URI. For `moqt:`
+`WebTransportConnection::connect` accepts an `https://` URL or a `moqt://` URI. For `moqt:`
 it preserves the authority, path, and query while opening the corresponding
 `https://` URL. It offers the WebTransport
 subprotocol `moqt-18`, as required by MOQT Draft 18. Once `ready` fulfills, the
@@ -9,7 +9,7 @@ returns `Err(WebTransportFailure)`. The relay must advertise and select this pro
 WebTransport's `WT-Available-Protocols` negotiation.
 
 WebTransport is available only in secure contexts. If the API is missing, the
-module still imports; `webtransport_connect` returns a clear constructor error.
+module still imports; `WebTransportConnection::connect` returns a clear constructor error.
 The binding also requires the `protocols` constructor option and the `protocol`
 property. As of 2026-10-23, those negotiation features are supported by Chrome
 143+, Edge 143+, Firefox 155+, and Safari 26.4+. Browser support changes over
@@ -17,7 +17,7 @@ time; check the browser's WebTransport support before connecting.
 
 By default, certificate verification uses the browser's Web PKI. For an
 explicitly trusted local or ephemeral certificate, pass
-the SHA-256 hashes as `certificate_hashes=hashes` to `webtransport_connect`.
+the SHA-256 hashes as `certificate_hashes=hashes` to `WebTransportConnection::connect`.
 This opts into the WebTransport certificate-hash mechanism and its browser
 restrictions; it does not disable TLS verification.
 
@@ -111,7 +111,7 @@ proof of peer delivery.
 
 ## Browser client facade
 
-`browser_connect(url, setup)` creates a connection and a Draft 18 session
+`BrowserClient::connect(url, setup)` creates a connection and a Draft 18 session
 driver. Call `start()`, use `session()` to make MoQ requests, pass each
 operation's returned actions to `dispatch()`, and await `next_notice()` for
 results. `dispatch()` returns `Accepted`, `QueueFull`, `TooLarge`, or
@@ -124,10 +124,10 @@ Call `close(code, reason)` when the application is done; `closed()`
 reports whether the local peer, remote peer, or transport failure ended the
 connection. To restore subscriptions after reconnecting, pass the previous
 session's `desired_subscriptions()` as
-`browser_connect(url, setup, desired_subscriptions=desired)`. The facade
+`BrowserClient::connect(url, setup, desired_subscriptions=desired)`. The facade
 does not access `window` or `document` during import. Certificate hashes and
 restored subscriptions can be supplied together as
-`browser_connect(url, setup, certificate_hashes=hashes,
+`BrowserClient::connect(url, setup, certificate_hashes=hashes,
 desired_subscriptions=desired)`.
 
 See [`examples/browser`](../examples/browser) for a runnable publish /
