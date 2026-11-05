@@ -11,6 +11,7 @@ fn writer_group_open(
       token
     _ => fail("expected one object stream open")
   }
+  assert_eq(group.token(), token)
   (group, token)
 }
 
@@ -120,6 +121,7 @@ test "object group writer rotates to the next group" {
     ] => token
     _ => fail("expected FIN and the next OpenStream")
   }
+  assert_eq(group.token(), next_token)
   assert_eq(group.send(b"second"), Err(@session.ObjectStreamNotReady))
   let opened = publisher
     .receive(@session.StreamOpened(@session.Object(next_token), 52))

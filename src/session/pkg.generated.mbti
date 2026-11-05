@@ -197,6 +197,7 @@ pub fn ObjectGroupWriter::finish(Self) -> Result[Array[SessionAction], ClientSes
 pub fn ObjectGroupWriter::rotate(Self) -> Result[Array[SessionAction], ClientSessionError]
 pub fn ObjectGroupWriter::send(Self, Bytes) -> Result[Array[SessionAction], ClientSessionError]
 pub fn ObjectGroupWriter::send_frame(Self, @protocol.SubgroupFrame) -> Result[Array[SessionAction], ClientSessionError]
+pub fn ObjectGroupWriter::token(Self) -> UInt64
 
 pub struct ObjectWriter {
   // private fields
