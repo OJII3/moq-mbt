@@ -62,7 +62,7 @@ pub fn encode_subgroup_header(header : SubgroupHeader) -> Bytes {
   if header.first_object {
     stream_type = stream_type | 0x40UL
   }
-  let bytes : Array[Byte] = []
+  let bytes : Array[Byte] = Array::Array(capacity=40)
   for byte in encode_vi64(stream_type) {
     bytes.push(byte)
   }
@@ -345,8 +345,13 @@ pub fn encode_subgroup_stream(
   header : SubgroupHeader,
   frames : Array[SubgroupFrame],
 ) -> Result[Bytes, CodecError] {
-  let bytes : Array[Byte] = []
-  for byte in encode_subgroup_header(header) {
+  let header_bytes = encode_subgroup_header(header)
+  let mut capacity = header_bytes.length()
+  for frame in frames {
+    capacity += 36 + frame.properties.length() + frame.payload.length()
+  }
+  let bytes : Array[Byte] = Array::Array(capacity~)
+  for byte in header_bytes {
     bytes.push(byte)
   }
   let mut previous_object_id : UInt64? = None

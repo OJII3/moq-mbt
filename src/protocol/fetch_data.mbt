@@ -8,7 +8,7 @@ pub(all) struct FetchHeader {
 
 ///|
 pub fn encode_fetch_header(header : FetchHeader) -> Bytes {
-  let bytes : Array[Byte] = []
+  let bytes : Array[Byte] = Array::Array(capacity=24)
   append_vi64s(bytes, 0x05UL)
   append_vi64s(bytes, header.request_id)
   Bytes::from_array(bytes)
@@ -345,7 +345,12 @@ pub fn FetchDataEncoder::encode(
   self : FetchDataEncoder,
   frame : FetchDataFrame,
 ) -> Result[Bytes, CodecError] {
-  let bytes : Array[Byte] = []
+  let capacity = match frame {
+    FetchDataObject(object) =>
+      64 + object.properties.length() + object.payload.length()
+    FetchDataRangeEnd(_) => 64
+  }
+  let bytes : Array[Byte] = Array::Array(capacity~)
   let mut flags = 0UL
   let group_id = match frame {
     FetchDataObject(object) => object.group_id
@@ -390,7 +395,7 @@ pub fn FetchDataEncoder::encode(
     FetchDataRangeEnd(range) => {
       flags = if range.kind == EndOfNonExistentRange { 0x8cUL } else { 0x10cUL }
       // Range end fields are always explicit, even if the group is unchanged.
-      let fields : Array[Byte] = []
+      let fields : Array[Byte] = Array::Array(capacity=32)
       append_vi64s(fields, group_delta)
       append_vi64s(fields, object_id)
       append_vi64s(bytes, flags)
@@ -446,7 +451,9 @@ pub fn FetchDataEncoder::encode(
         flags = flags | 0x20UL
       }
       // Flags precede all optional fields; stage the remaining encoding first.
-      let fields : Array[Byte] = []
+      let fields : Array[Byte] = Array::Array(
+        capacity=48 + object.properties.length() + object.payload.length(),
+      )
       if group_changed || self.previous_group_id is None {
         append_vi64s(fields, group_delta)
       }

@@ -41,7 +41,15 @@ fn unique_option(kind : UInt64) -> Bool {
 /// The caller supplies options in ascending type order for delta encoding.
 /// AUTHORIZATION TOKEN (type 3) and unknown options may be repeated.
 pub fn encode_setup(setup : Setup) -> Result[Bytes, CodecError] {
-  let payload : Array[Byte] = []
+  let mut capacity = 0
+  for option in setup.options {
+    capacity += 18
+    match option.value {
+      Integer(_) => ()
+      Data(value) => capacity += value.length()
+    }
+  }
+  let payload : Array[Byte] = Array::Array(capacity~)
   let mut previous = 0UL
   let mut first = true
   for option in setup.options {

@@ -105,7 +105,12 @@ fn encode_track_name(track : TrackName) -> Result[Bytes, CodecError] {
   if track.namespace_fields.length() > 32 {
     return Err(InvalidTrackName)
   }
-  let encoded : Array[Byte] = []
+  let capacity = 9 +
+    track.namespace_fields.fold(
+      fn(acc, field) { acc + 9 + field.length() },
+      init=track.name.length(),
+    )
+  let encoded : Array[Byte] = Array::Array(capacity~)
   append_vi64s(encoded, track.namespace_fields.length().to_uint64())
   let mut total = track.name.length()
   for field in track.namespace_fields {
@@ -206,7 +211,12 @@ fn encode_track_namespace(
   if track_namespace.fields.length() > 32 {
     return Err(InvalidTrackName)
   }
-  let encoded : Array[Byte] = []
+  let capacity = 9 +
+    track_namespace.fields.fold(
+      fn(acc, field) { acc + 9 + field.length() },
+      init=0,
+    )
+  let encoded : Array[Byte] = Array::Array(capacity~)
   append_vi64s(encoded, track_namespace.fields.length().to_uint64())
   let mut total = 0
   for field in track_namespace.fields {
@@ -248,7 +258,7 @@ pub fn join_track_namespace(
 fn encode_subscription_filter(
   filter : SubscriptionFilter,
 ) -> Result[Bytes, CodecError] {
-  let encoded : Array[Byte] = []
+  let encoded : Array[Byte] = Array::Array(capacity=40)
   match filter {
     NextGroupStart => append_vi64s(encoded, 1UL)
     LargestObject => append_vi64s(encoded, 2UL)
