@@ -1,6 +1,6 @@
 name = "OJII3/moq-mbt"
 
-version = "0.4.1"
+version = "0.4.2"
 
 readme = "README.md"
 
