@@ -14,8 +14,18 @@ pub struct ObjectGroupWriter {
 }
 
 ///|
+/// The session-local token for the group currently owned by this writer.
+/// `StreamOpened(Object(token), stream)` reports the transport stream that
+/// accepts the group's Objects. `rotate` replaces the token with the next
+/// group's token.
+pub fn ObjectGroupWriter::token(self : ObjectGroupWriter) -> UInt64 {
+  self.token
+}
+
+///|
 /// Start a new Object group on an accepted subscription. The returned actions
-/// contain the `OpenStream` request. Wait for StreamOpened before submitting
+/// contain the `OpenStream` request. Use `ObjectGroupWriter::token` to match the
+/// StreamOpened event for this group. Wait for StreamOpened before submitting
 /// Objects; earlier sends return ObjectStreamNotReady without retaining payload.
 pub fn ClientSession::open_object_group(
   self : ClientSession,
