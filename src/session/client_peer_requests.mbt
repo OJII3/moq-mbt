@@ -15,10 +15,7 @@ fn ClientSession::receive_peer_request(
   if self.ignore_late_namespace_peer_request(stream) {
     return Ok([])
   }
-  let buffer = match self.inbound_buffers.get(stream) {
-    Some(value) => value
-    None => b""
-  }
+  let buffer = self.inbound_buffers.get(stream).unwrap_or(b"")
   if bytes.length() > 65546 - buffer.length() {
     return Err(BufferLimitExceeded)
   }
@@ -120,10 +117,7 @@ fn ClientSession::receive_peer_request(
                     true,
                     request.parameters,
                   ) {
-                  Ok(values) =>
-                    for action in values {
-                      actions.push(action)
-                    }
+                  Ok(values) => actions.append(values)
                   Err(error) => return Err(error)
                 }
               @protocol.AbsoluteJoiningFetch(joining_id, joining_start) =>
@@ -136,20 +130,14 @@ fn ClientSession::receive_peer_request(
                     false,
                     request.parameters,
                   ) {
-                  Ok(values) =>
-                    for action in values {
-                      actions.push(action)
-                    }
+                  Ok(values) => actions.append(values)
                   Err(error) => return Err(error)
                 }
             }
           }
           (None, @protocol.SubscribeNamespace(request)) =>
             match self.receive_peer_namespace_subscription(stream, request) {
-              Ok(values) =>
-                for action in values {
-                  actions.push(action)
-                }
+              Ok(values) => actions.append(values)
               Err(error) => return Err(error)
             }
           (None, @protocol.Subscribe(request)) => {
@@ -174,10 +162,9 @@ fn ClientSession::receive_peer_request(
               }
               actions.push(SendFin(stream, error))
             } else {
-              let publisher_request_id = match
-                self.find_publisher(request.track) {
-                Some(value) => value
-                None => return Err(TrackNotPublished)
+              guard self.find_publisher(request.track)
+                is Some(publisher_request_id) else {
+                return Err(TrackNotPublished)
               }
               self.inbound_subscriptions[stream] = {
                 request_id: request.request_id,
@@ -199,16 +186,11 @@ fn ClientSession::receive_peer_request(
           }
           (None, @protocol.PublishNamespace(request)) =>
             match self.receive_peer_namespace_publication(stream, request) {
-              Ok(values) =>
-                for action in values {
-                  actions.push(action)
-                }
+              Ok(values) => actions.append(values)
               Err(error) => return Err(error)
             }
           (Some(inbound), @protocol.GoAwayRequest(goaway)) => {
-            for action in self.receive_request_goaway(stream, goaway) {
-              actions.push(action)
-            }
+            actions.append(self.receive_request_goaway(stream, goaway))
             if self.state == Closed {
               return Ok(actions)
             }
@@ -218,22 +200,15 @@ fn ClientSession::receive_peer_request(
               stream,
             )
             is Some(_) =>
-            for action in self.receive_request_goaway(stream, goaway) {
-              actions.push(action)
-            }
+            actions.append(self.receive_request_goaway(stream, goaway))
           (None, @protocol.GoAwayRequest(goaway)) if self.inbound_namespace_subscriptions.get(
               stream,
             )
             is Some(_) =>
-            for action in self.receive_request_goaway(stream, goaway) {
-              actions.push(action)
-            }
+            actions.append(self.receive_request_goaway(stream, goaway))
           (Some(_), @protocol.RequestUpdate(update)) =>
             match self.receive_peer_subscription_update(stream, update) {
-              Ok(values) =>
-                for action in values {
-                  actions.push(action)
-                }
+              Ok(values) => actions.append(values)
               Err(error) => return Err(error)
             }
           (None, @protocol.RequestUpdate(update)) if self.namespace_request_streams.get(
@@ -241,10 +216,7 @@ fn ClientSession::receive_peer_request(
             )
             is Some(_) =>
             match self.receive_peer_namespace_update(stream, update) {
-              Ok(values) =>
-                for action in values {
-                  actions.push(action)
-                }
+              Ok(values) => actions.append(values)
               Err(error) => return Err(error)
             }
           (None, @protocol.RequestUpdate(update)) if self.inbound_namespace_subscriptions.get(
@@ -253,10 +225,7 @@ fn ClientSession::receive_peer_request(
             is Some(_) =>
             match
               self.receive_peer_namespace_subscription_update(stream, update) {
-              Ok(values) =>
-                for action in values {
-                  actions.push(action)
-                }
+              Ok(values) => actions.append(values)
               Err(error) => return Err(error)
             }
           _ => return Err(UnexpectedMessage)
@@ -293,9 +262,8 @@ pub fn ClientSession::accept_subscription(
     Ok(_) => ()
     Err(error) => return Err(error)
   }
-  let inbound = match self.inbound_subscriptions.get(stream) {
-    Some(value) => value
-    None => return Err(UnknownStream)
+  guard self.inbound_subscriptions.get(stream) is Some(inbound) else {
+    return Err(UnknownStream)
   }
   if inbound.state != Pending {
     return Err(UnexpectedMessage)
@@ -366,9 +334,8 @@ pub fn ClientSession::reject_subscription(
     Ok(_) => ()
     Err(error) => return Err(error)
   }
-  let inbound = match self.inbound_subscriptions.get(stream) {
-    Some(value) => value
-    None => return Err(UnknownStream)
+  guard self.inbound_subscriptions.get(stream) is Some(inbound) else {
+    return Err(UnknownStream)
   }
   if inbound.state != Pending {
     return Err(UnexpectedMessage)
@@ -403,9 +370,8 @@ fn ClientSession::end_inbound_subscription(
   event : RequestLifetimeEvent,
 ) -> Array[SessionAction] {
   self.request_goaway_deadlines.remove(stream)
-  let inbound = match self.inbound_subscriptions.get(stream) {
-    Some(value) => value
-    None => return []
+  guard self.inbound_subscriptions.get(stream) is Some(inbound) else {
+    return []
   }
   if inbound.state == Ended &&
     !self.has_pending_publish_done(stream) &&
@@ -429,9 +395,7 @@ fn ClientSession::end_inbound_subscription(
   if effects.stop_receiving {
     actions.push(StopReceiving(stream, error_code))
   }
-  for action in self.cancel_outgoing_object_streams(stream, error_code) {
-    actions.push(action)
-  }
+  actions.append(self.cancel_outgoing_object_streams(stream, error_code))
   if effects.notify_end {
     let track = self.requests.get(inbound.publisher_request_id).unwrap().track
     actions.push(

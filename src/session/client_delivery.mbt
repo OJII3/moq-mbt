@@ -103,13 +103,18 @@ fn ClientSession::object_datagram_action(
 fn ClientSession::expire_object_streams(
   self : ClientSession,
 ) -> Array[SessionAction] {
-  let expired : Array[Int64] = []
-  for (stream, outgoing) in self.outgoing_object_streams {
-    if outgoing.delivery_deadline_ms is Some(deadline) &&
-      self.now_ms >= deadline {
-      expired.push(stream)
-    }
-  }
+  let expired = self.outgoing_object_streams
+    .iter()
+    .filter_map(fn(entry) {
+      let (stream, outgoing) = entry
+      if outgoing.delivery_deadline_ms is Some(deadline) &&
+        self.now_ms >= deadline {
+        Some(stream)
+      } else {
+        None
+      }
+    })
+    .to_array()
   for (_, pending) in self.pending_object_streams {
     if pending.cancelled_error_code is None {
       match pending.finish_time_ms {
@@ -126,10 +131,7 @@ fn ClientSession::expire_object_streams(
   let actions : Array[SessionAction] = []
   for stream in expired {
     match self.abort_outgoing_object_stream(stream, 2UL) {
-      Ok(extra) =>
-        for action in extra {
-          actions.push(action)
-        }
+      Ok(extra) => actions.append(extra)
       Err(_) => ()
     }
   }
@@ -186,23 +188,8 @@ fn ClientSession::ensure_delivery_clock(
 ///|
 /// Publisher Track Properties are validated when the PUBLISH is created.
 fn track_property_timeout(properties : Bytes, wanted : UInt64) -> UInt64 {
-  let mut offset = 0
-  let mut previous = 0UL
-  while offset < properties.length() {
-    let (delta, next) = read_track_property_vi64(properties, offset).unwrap()
-    let kind = previous + delta
-    offset = next
-    if (kind & 1UL) == 0UL {
-      let (value, next) = read_track_property_vi64(properties, offset).unwrap()
-      if kind == wanted {
-        return value
-      }
-      offset = next
-    } else {
-      let (length, next) = read_track_property_vi64(properties, offset).unwrap()
-      offset = next + length.to_int()
-    }
-    previous = kind
+  match @protocol.find_track_property_varint(properties, wanted) {
+    Ok(Some(value)) => value
+    _ => 0UL
   }
-  0UL
 }

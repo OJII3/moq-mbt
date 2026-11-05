@@ -377,37 +377,37 @@ fn LifecycleState::observe_subscriber(
           frame.properties.is_empty() else {
           fail("lifecycle Object fields did not match")
         }
-        if is_a && header.group_id == 0UL {
-          guard frame.payload == @utf8.encode("lifecycle-a-group-0") else {
-            fail("track A group 0 payload did not match")
+        match (is_a, header.group_id) {
+          (true, 0UL) => {
+            guard frame.payload == @utf8.encode("lifecycle-a-group-0") else {
+              fail("track A group 0 payload did not match")
+            }
+            self.received_a0 = true
+            println("Received track A group 0 after forwarding resumed")
           }
-          self.received_a0 = true
-          println("Received track A group 0 after forwarding resumed")
-        } else if !is_a && header.group_id == 0UL {
-          guard frame.payload == @utf8.encode("lifecycle-b-group-0") else {
-            fail("track B group 0 payload did not match")
+          (false, 0UL) => {
+            guard frame.payload == @utf8.encode("lifecycle-b-group-0") else {
+              fail("track B group 0 payload did not match")
+            }
+            self.received_b0 = true
+            println("Received track B group 0 while track A was paused")
           }
-          self.received_b0 = true
-          println("Received track B group 0 while track A was paused")
-        } else if !is_a && header.group_id == 1UL {
-          guard frame.payload == @utf8.encode("lifecycle-b-group-1") else {
-            fail("track B group 1 payload did not match")
+          (false, 1UL) => {
+            guard frame.payload == @utf8.encode("lifecycle-b-group-1") else {
+              fail("track B group 1 payload did not match")
+            }
+            self.received_b1 = true
+            println("Received track B group 1 after track A cancellation")
           }
-          self.received_b1 = true
-          println("Received track B group 1 after track A cancellation")
-        } else {
-          fail("received an unexpected lifecycle Object")
+          _ => fail("received an unexpected lifecycle Object")
         }
       }
       @session.GroupFinished(request_id, group_id) =>
-        if request_id.to_uint64() == self.subscribe_a && group_id == 0UL {
-          self.finished_a0 = true
-        } else if request_id.to_uint64() == self.subscribe_b && group_id == 0UL {
-          self.finished_b0 = true
-        } else if request_id.to_uint64() == self.subscribe_b && group_id == 1UL {
-          self.finished_b1 = true
-        } else {
-          fail("received an unexpected lifecycle Group end")
+        match (request_id.to_uint64(), group_id) {
+          (id, 0UL) if id == self.subscribe_a => self.finished_a0 = true
+          (id, 0UL) if id == self.subscribe_b => self.finished_b0 = true
+          (id, 1UL) if id == self.subscribe_b => self.finished_b1 = true
+          _ => fail("received an unexpected lifecycle Group end")
         }
       @session.SubscriptionEnded(request_id, _, _) if request_id.to_uint64() ==
         self.subscribe_a => {

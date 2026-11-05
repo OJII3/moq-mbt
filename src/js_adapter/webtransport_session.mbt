@@ -278,7 +278,7 @@ pub fn WebTransportSessionDriver::next_notice(
   self : WebTransportSessionDriver,
 ) -> @js.Promise[@session.SessionNotice?] {
   self.flush()
-  if self.notices.length() > 0 {
+  if !self.notices.is_empty() {
     let notice = self.notices[0]
     ignore(self.notices.remove(0))
     return @js.Promise::resolve(Some(notice))
@@ -296,7 +296,7 @@ pub fn WebTransportSessionDriver::next_opened_stream(
   self : WebTransportSessionDriver,
 ) -> @js.Promise[(@session.ClientStreamPurpose, @session.StreamId)?] {
   self.flush()
-  if self.opened_streams.length() > 0 {
+  if !self.opened_streams.is_empty() {
     let stream = self.opened_streams[0]
     ignore(self.opened_streams.remove(0))
     return @js.Promise::resolve(Some(stream))
@@ -329,7 +329,7 @@ fn WebTransportSessionDriver::notify_opened_stream(
   purpose : @session.ClientStreamPurpose,
   stream : @session.StreamId,
 ) -> Unit {
-  if self.opened_stream_waiters.length() > 0 {
+  if !self.opened_stream_waiters.is_empty() {
     let waiter = self.opened_stream_waiters[0]
     ignore(self.opened_stream_waiters.remove(0))
     waiter(Some((purpose, stream)))
@@ -359,7 +359,7 @@ fn WebTransportSessionDriver::enqueue_notice(
   self : WebTransportSessionDriver,
   notice : @session.SessionNotice,
 ) -> Unit {
-  if self.notice_waiters.length() > 0 {
+  if !self.notice_waiters.is_empty() {
     let waiter = self.notice_waiters[0]
     ignore(self.notice_waiters.remove(0))
     waiter(Some(notice))
@@ -535,17 +535,16 @@ fn WebTransportSessionDriver::finish(self : WebTransportSessionDriver) -> Unit {
     return
   }
   self.active = false
-  match self.clock_timer {
-    Some(timer) => ffi_webtransport_clear_timeout(timer)
-    None => ()
+  if self.clock_timer is Some(timer) {
+    ffi_webtransport_clear_timeout(timer)
   }
   self.clock_timer = None
-  while self.notice_waiters.length() > 0 {
+  while !self.notice_waiters.is_empty() {
     let waiter = self.notice_waiters[0]
     ignore(self.notice_waiters.remove(0))
     waiter(None)
   }
-  while self.opened_stream_waiters.length() > 0 {
+  while !self.opened_stream_waiters.is_empty() {
     let waiter = self.opened_stream_waiters[0]
     ignore(self.opened_stream_waiters.remove(0))
     waiter(None)

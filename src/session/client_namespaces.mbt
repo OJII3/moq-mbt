@@ -262,10 +262,7 @@ pub fn ClientSession::update_published_namespace(
       return Err(UnexpectedMessage)
     }
   }
-  let stream = match request.stream {
-    Some(value) => value
-    None => return Err(UnknownRequest)
-  }
+  guard request.stream is Some(stream) else { return Err(UnknownRequest) }
   let update_id = self.allocate_request_id()
   let bytes = match
     @protocol.encode_request_update_for(
@@ -291,9 +288,8 @@ pub fn ClientSession::accept_namespace_publication(
     Ok(_) => ()
     Err(error) => return Err(error)
   }
-  let request_id = match self.namespace_request_streams.get(stream) {
-    Some(value) => value
-    None => return Err(UnknownStream)
+  guard self.namespace_request_streams.get(stream) is Some(request_id) else {
+    return Err(UnknownStream)
   }
   let request = self.namespace_requests.get(request_id).unwrap()
   if request.locally_initiated || request.state != NamespacePending {
@@ -330,9 +326,8 @@ pub fn ClientSession::reject_namespace_publication(
     Ok(_) => ()
     Err(error) => return Err(error)
   }
-  let request_id = match self.namespace_request_streams.get(stream) {
-    Some(value) => value
-    None => return Err(UnknownStream)
+  guard self.namespace_request_streams.get(stream) is Some(request_id) else {
+    return Err(UnknownStream)
   }
   let request = self.namespace_requests.get(request_id).unwrap()
   if request.locally_initiated || request.state != NamespacePending {
@@ -373,9 +368,8 @@ pub fn ClientSession::accept_namespace_update(
     Ok(_) => ()
     Err(error) => return Err(error)
   }
-  let request_id = match self.namespace_request_streams.get(stream) {
-    Some(value) => value
-    None => return Err(UnknownStream)
+  guard self.namespace_request_streams.get(stream) is Some(request_id) else {
+    return Err(UnknownStream)
   }
   let request = self.namespace_requests.get(request_id).unwrap()
   if request.locally_initiated ||
@@ -428,9 +422,8 @@ pub fn ClientSession::reject_namespace_update(
     Ok(_) => ()
     Err(error) => return Err(error)
   }
-  let request_id = match self.namespace_request_streams.get(stream) {
-    Some(value) => value
-    None => return Err(UnknownStream)
+  guard self.namespace_request_streams.get(stream) is Some(request_id) else {
+    return Err(UnknownStream)
   }
   let request = self.namespace_requests.get(request_id).unwrap()
   if request.locally_initiated ||
@@ -443,10 +436,7 @@ pub fn ClientSession::reject_namespace_update(
     Ok(value) => value
     Err(error) => return Err(Encoding(error))
   }
-  let rejected_updates : Array[UInt64] = []
-  for pending in request.pending_updates {
-    rejected_updates.push(pending.0)
-  }
+  let rejected_updates = request.pending_updates.map(fn(pending) { pending.0 })
   request.pending_updates = []
   request.state = NamespaceTerminal
   request.ignore_late_bytes = true
@@ -514,10 +504,7 @@ fn ClientSession::receive_namespace_response(
             ),
           ]
           match self.broadcast_namespace_available(request.track_namespace) {
-            Ok(extra) =>
-              for action in extra {
-                actions.push(action)
-              }
+            Ok(extra) => actions.append(extra)
             Err(error) => return Err(error)
           }
           actions
@@ -677,9 +664,8 @@ fn ClientSession::end_namespace_request(
   stream : Int64,
   event : RequestLifetimeEvent,
 ) -> Array[SessionAction] {
-  let request_id = match self.namespace_request_streams.get(stream) {
-    Some(value) => value
-    None => return []
+  guard self.namespace_request_streams.get(stream) is Some(request_id) else {
+    return []
   }
   let request = self.namespace_requests.get(request_id).unwrap()
   let was_active = request.locally_initiated &&
@@ -700,10 +686,7 @@ fn ClientSession::end_namespace_request(
   let actions : Array[SessionAction] = []
   if was_active {
     match self.broadcast_namespace_done(request.track_namespace) {
-      Ok(values) =>
-        for action in values {
-          actions.push(action)
-        }
+      Ok(values) => actions.append(values)
       Err(_) => ()
     }
   }
@@ -743,9 +726,8 @@ fn ClientSession::finish_namespace_stream(
   self : ClientSession,
   stream : Int64,
 ) -> Result[Array[SessionAction], ClientSessionError]? {
-  match self.finish_namespace_subscription_stream(stream) {
-    Some(result) => return Some(result)
-    None => ()
+  if self.finish_namespace_subscription_stream(stream) is Some(result) {
+    return Some(result)
   }
   match self.namespace_request_streams.get(stream) {
     Some(request_id) => {
@@ -774,9 +756,9 @@ fn ClientSession::reset_namespace_stream(
   stream : Int64,
   error_code : UInt64,
 ) -> Result[Array[SessionAction], ClientSessionError]? {
-  match self.reset_namespace_subscription_stream(stream, error_code) {
-    Some(result) => return Some(result)
-    None => ()
+  if self.reset_namespace_subscription_stream(stream, error_code)
+    is Some(result) {
+    return Some(result)
   }
   if self.namespace_request_streams.get(stream) is Some(_) {
     return Some(Ok(self.end_namespace_request(stream, PeerReset(error_code))))

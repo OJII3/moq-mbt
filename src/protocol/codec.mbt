@@ -82,6 +82,68 @@ fn read_vi64(input : Bytes, offset : Int32, end : Int32) -> (UInt64, Int32)? {
 }
 
 ///|
+/// One generic Key-Value-Pair value. Even kinds carry a varint, odd kinds carry
+/// length-prefixed bytes.
+priv enum KeyValue {
+  VarInt(UInt64)
+  Blob
+}
+
+///|
+fn read_key_value_at(
+  input : Bytes,
+  offset : Int32,
+  end : Int32,
+  previous : UInt64,
+) -> (UInt64, KeyValue, Int32)? {
+  guard read_vi64(input, offset, end) is Some((delta, after_delta)) else {
+    return None
+  }
+  if delta > 0xffffffffffffffffUL - previous {
+    return None
+  }
+  let kind = previous + delta
+  guard read_vi64(input, after_delta, end) is Some((number, next)) else {
+    return None
+  }
+  if (kind & 1UL) == 0UL {
+    Some((kind, VarInt(number), next))
+  } else {
+    if number > 65535UL || number > (end - next).to_uint64() {
+      return None
+    }
+    let value_end = next + number.to_int()
+    Some((kind, Blob, value_end))
+  }
+}
+
+///|
+/// Find a varint value by kind in a Track Properties Key-Value-Pair list.
+/// `Err` reports a malformed list; `Ok(None)` means the kind is absent.
+pub fn find_track_property_varint(
+  properties : Bytes,
+  wanted : UInt64,
+) -> Result[UInt64?, CodecError] {
+  let mut next = 0
+  let mut previous = 0UL
+  while next < properties.length() {
+    guard read_key_value_at(properties, next, properties.length(), previous)
+      is Some((kind, value, after)) else {
+      return Err(InvalidTrackProperties)
+    }
+    next = after
+    previous = kind
+    if kind == wanted {
+      return match value {
+        VarInt(number) => Ok(Some(number))
+        Blob => Err(InvalidTrackProperties)
+      }
+    }
+  }
+  Ok(None)
+}
+
+///|
 pub fn decode_vi64(input : Bytes) -> DecodeResult[UInt64] {
   match read_vi64(input, 0, input.length()) {
     Some((value, end)) => Complete(value, end)
@@ -100,9 +162,8 @@ fn read_varint_at(
 
 ///|
 fn read_bytes_at(input : Bytes, offset : Int32, end : Int32) -> (Bytes, Int32)? {
-  let (length, next) = match read_varint_at(input, offset, end) {
-    Some(pair) => pair
-    None => return None
+  guard read_varint_at(input, offset, end) is Some((length, next)) else {
+    return None
   }
   if length > (end - next).to_uint64() {
     return None

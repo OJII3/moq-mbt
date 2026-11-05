@@ -46,13 +46,11 @@ fn ClientSession::finish_actions(
     match action {
       SendChunk(stream, _)
       | SendObjectChunk(stream, _, _)
-      | SendFin(stream, _) => {
-        let count = match self.pending_sends.get(stream) {
-          Some(value) => value
-          None => 0UL
-        }
-        self.pending_sends[stream] = count + 1UL
-      }
+      | SendFin(stream, _) =>
+        self.pending_sends[stream] = self.pending_sends
+          .get(stream)
+          .unwrap_or(0UL) +
+          1UL
       SendDatagram(token, _) | SendObjectDatagram(token, _, _) =>
         self.pending_datagram_sends[token] = true
       // An aborted stream will never accept another send. Late SendCompleted
@@ -82,18 +80,18 @@ fn ClientSession::has_active_requests(self : ClientSession) -> Bool {
   if self.has_active_request_family_work() {
     return true
   }
-  self.incoming_object_streams.length() > 0 ||
-  self.outgoing_fetch_streams.length() > 0 ||
-  self.ignored_object_streams.length() > 0 ||
-  self.pending_object_streams.length() > 0 ||
-  self.outgoing_object_streams.length() > 0
+  !self.incoming_object_streams.is_empty() ||
+  !self.outgoing_fetch_streams.is_empty() ||
+  !self.ignored_object_streams.is_empty() ||
+  !self.pending_object_streams.is_empty() ||
+  !self.outgoing_object_streams.is_empty()
 }
 
 ///|
 fn ClientSession::has_drain_work(self : ClientSession) -> Bool {
   self.has_active_requests() ||
-  self.pending_sends.length() > 0 ||
-  self.pending_datagram_sends.length() > 0
+  !self.pending_sends.is_empty() ||
+  !self.pending_datagram_sends.is_empty()
 }
 
 ///|
@@ -126,9 +124,8 @@ fn ClientSession::end_session(
   self.outgoing_fetch_streams.clear()
   self.pending_joining_fetches.clear()
   let actions : Array[SessionAction] = []
-  match close_code {
-    Some(code) => actions.push(CloseConnection(code, reason))
-    None => ()
+  if close_code is Some(code) {
+    actions.push(CloseConnection(code, reason))
   }
   actions.push(EmitNotice(SessionEnded(end)))
   actions
@@ -144,15 +141,18 @@ fn ClientSession::clock(
   }
   self.clock_initialized = true
   let actions : Array[SessionAction] = self.expire_pending_joining_fetches()
-  for action in self.expire_object_streams() {
-    actions.push(action)
-  }
-  let expired_requests : Array[Int64] = []
-  for (stream, deadline) in self.request_goaway_deadlines {
-    if self.now_ms >= deadline {
-      expired_requests.push(stream)
-    }
-  }
+  actions.append(self.expire_object_streams())
+  let expired_requests = self.request_goaway_deadlines
+    .iter()
+    .filter_map(fn(entry) {
+      let (stream, deadline) = entry
+      if self.now_ms >= deadline {
+        Some(stream)
+      } else {
+        None
+      }
+    })
+    .to_array()
   for stream in expired_requests {
     self.request_goaway_deadlines.remove(stream)
     for
@@ -196,9 +196,8 @@ pub fn ClientSession::send_goaway(
   if self.control_goaway_sent {
     return Err(UnexpectedMessage)
   }
-  let stream = match self.outbound_control_stream {
-    Some(value) => value
-    None => return Err(HandshakeNotComplete)
+  guard self.outbound_control_stream is Some(stream) else {
+    return Err(HandshakeNotComplete)
   }
   let request_id = match self.max_peer_request_id {
     Some(value) => value + 2UL
@@ -309,9 +308,7 @@ fn ClientSession::receive_control_goaway(
   ]
   for (request_id, request) in self.requests {
     if request_id >= message.request_id && !request.is_accepted() {
-      for action in self.reject_local_request_for_goaway(request_id, request) {
-        actions.push(action)
-      }
+      actions.append(self.reject_local_request_for_goaway(request_id, request))
     }
   }
   for (request_id, fetch) in self.fetches {
@@ -353,9 +350,7 @@ fn ClientSession::receive_control_goaway(
       }
     }
   }
-  for action in self.reject_namespace_requests_for_goaway(message.request_id) {
-    actions.push(action)
-  }
+  actions.append(self.reject_namespace_requests_for_goaway(message.request_id))
   actions
 }
 

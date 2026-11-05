@@ -72,9 +72,8 @@ fn ClientSession::receive_peer_subscription_update(
         None => return Err(UnknownStream)
       }
   }
-  let subscription = match self.published_subscriptions.get(stream) {
-    Some(value) => value
-    None => return Err(SubscriptionNotAccepted)
+  guard self.published_subscriptions.get(stream) is Some(subscription) else {
+    return Err(SubscriptionNotAccepted)
   }
   self.peer_request_ids[message.request_id] = stream
   self.note_peer_request_id(message.request_id)
@@ -89,18 +88,16 @@ fn ClientSession::receive_peer_subscription_update(
       Ok(value) => value
       Err(value) => return Err(Encoding(value))
     }
-    let rejected_updates : Array[UInt64] = []
-    for pending in subscription.pending_updates {
-      rejected_updates.push(pending.request_id)
-    }
+    let rejected_updates = subscription.pending_updates.map(fn(pending) {
+      pending.request_id
+    })
     rejected_updates.push(message.request_id)
     subscription.pending_updates = []
     match self.inbound_subscriptions.get(stream) {
       Some(inbound) => inbound.state = Ended
       None =>
-        match self.requests.get(request_id) {
-          Some(request) => request.mark_terminal()
-          None => ()
+        if self.requests.get(request_id) is Some(request) {
+          request.mark_terminal()
         }
     }
     subscription.pending_failure = Some({
@@ -121,12 +118,8 @@ fn ClientSession::receive_peer_subscription_update(
         ),
       )
     }
-    for action in self.stop_subscription_object_sends(stream, 0UL) {
-      actions.push(action)
-    }
-    for action in self.finish_failed_subscription(stream) {
-      actions.push(action)
-    }
+    actions.append(self.stop_subscription_object_sends(stream, 0UL))
+    actions.append(self.finish_failed_subscription(stream))
     return Ok(actions)
   }
   let previous = if subscription.pending_updates.is_empty() {
@@ -169,9 +162,8 @@ pub fn ClientSession::update_subscription(
     Ok(_) => ()
     Err(error) => return Err(error)
   }
-  let request = match self.requests.get(request_id) {
-    Some(value) => value
-    None => return Err(UnknownRequest)
+  guard self.requests.get(request_id) is Some(request) else {
+    return Err(UnknownRequest)
   }
   if request.kind != Subscribing ||
     !request.is_accepted() ||
@@ -188,9 +180,8 @@ pub fn ClientSession::update_subscription(
       return Err(Encoding(@protocol.InvalidParameterValue(0x32)))
     }
   }
-  let stream = match request.stream {
-    Some(value) => value
-    None => return Err(SubscriptionNotAccepted)
+  guard request.stream is Some(stream) else {
+    return Err(SubscriptionNotAccepted)
   }
   let update_id = self.allocate_request_id()
   let bytes = match
@@ -223,9 +214,8 @@ pub fn ClientSession::accept_subscription_update(
     Ok(_) => ()
     Err(error) => return Err(error)
   }
-  let subscription = match self.published_subscriptions.get(stream) {
-    Some(value) => value
-    None => return Err(UnknownStream)
+  guard self.published_subscriptions.get(stream) is Some(subscription) else {
+    return Err(UnknownStream)
   }
   if subscription.pending_failure is Some(_) {
     return Err(SubscriptionNotAccepted)
@@ -301,9 +291,7 @@ pub fn ClientSession::accept_subscription_update(
   }
   let actions : Array[SessionAction] = [SendChunk(stream, response_bytes)]
   if was_forwarding && !forwarding {
-    for action in self.stop_subscription_object_sends(stream, 0UL) {
-      actions.push(action)
-    }
+    actions.append(self.stop_subscription_object_sends(stream, 0UL))
   }
   let request_id = subscription.request_id
   Ok(
@@ -338,9 +326,8 @@ pub fn ClientSession::reject_subscription_update(
     Ok(_) => ()
     Err(error) => return Err(error)
   }
-  let subscription = match self.published_subscriptions.get(stream) {
-    Some(value) => value
-    None => return Err(UnknownStream)
+  guard self.published_subscriptions.get(stream) is Some(subscription) else {
+    return Err(UnknownStream)
   }
   if subscription.pending_failure is Some(_) {
     return Err(SubscriptionNotAccepted)
@@ -357,9 +344,8 @@ pub fn ClientSession::reject_subscription_update(
   match self.inbound_subscriptions.get(stream) {
     Some(inbound) => inbound.state = Ended
     None =>
-      match self.requests.get(subscription.request_id) {
-        Some(request) => request.mark_terminal()
-        None => ()
+      if self.requests.get(subscription.request_id) is Some(request) {
+        request.mark_terminal()
       }
   }
   let failure : @protocol.PublishDoneMessage = {
@@ -373,13 +359,43 @@ pub fn ClientSession::reject_subscription_update(
       subscription.request_id,
       request_error_invalid_joining_request_id,
     )
-  for action in self.stop_subscription_object_sends(stream, 0UL) {
-    actions.push(action)
-  }
-  for action in self.finish_failed_subscription(stream) {
-    actions.push(action)
-  }
+  actions.append(self.stop_subscription_object_sends(stream, 0UL))
+  actions.append(self.finish_failed_subscription(stream))
   Ok(self.finish_actions(actions))
+}
+
+///|
+fn ClientSession::abort_subscription_object_streams(
+  self : ClientSession,
+  subscription_stream : Int64,
+  error_code : UInt64,
+) -> (Array[Int64], Array[SessionAction]) {
+  self.pending_object_streams.each(fn(_, pending) {
+    if pending.subscription_stream == subscription_stream {
+      pending.cancelled_error_code = Some(error_code)
+    }
+  })
+  let streams = self.outgoing_object_streams
+    .iter()
+    .filter_map(fn(entry) {
+      let (stream, pending) = entry
+      if pending.subscription_stream == subscription_stream {
+        Some(stream)
+      } else {
+        None
+      }
+    })
+    .to_array()
+  let actions : Array[SessionAction] = []
+  for stream in streams {
+    if self.outgoing_object_streams.get(stream) is Some(outgoing) {
+      if !outgoing.abort_sent {
+        outgoing.abort_sent = true
+        actions.push(AbortSend(stream, error_code))
+      }
+    }
+  }
+  (streams, actions)
 }
 
 ///|
@@ -388,27 +404,9 @@ fn ClientSession::stop_subscription_object_sends(
   subscription_stream : Int64,
   error_code : UInt64,
 ) -> Array[SessionAction] {
-  for (_, pending) in self.pending_object_streams {
-    if pending.subscription_stream == subscription_stream {
-      pending.cancelled_error_code = Some(error_code)
-    }
-  }
-  let streams : Array[Int64] = []
-  for (stream, outgoing) in self.outgoing_object_streams {
-    if outgoing.subscription_stream == subscription_stream {
-      streams.push(stream)
-    }
-  }
-  let actions : Array[SessionAction] = []
-  for stream in streams {
-    match self.outgoing_object_streams.get(stream) {
-      Some(outgoing) if !outgoing.abort_sent => {
-        outgoing.abort_sent = true
-        actions.push(AbortSend(stream, error_code))
-      }
-      _ => ()
-    }
-  }
+  let (_, actions) = self.abort_subscription_object_streams(
+    subscription_stream, error_code,
+  )
   actions
 }
 
@@ -417,9 +415,8 @@ fn ClientSession::finish_failed_subscription(
   self : ClientSession,
   stream : Int64,
 ) -> Array[SessionAction] {
-  let subscription = match self.published_subscriptions.get(stream) {
-    Some(value) => value
-    None => return []
+  guard self.published_subscriptions.get(stream) is Some(subscription) else {
+    return []
   }
   if subscription.open_stream_count != 0UL ||
     self.has_pending_object_streams(stream) {

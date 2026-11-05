@@ -62,7 +62,7 @@ pub fn encode_subgroup_header(header : SubgroupHeader) -> Bytes {
   if header.first_object {
     stream_type = stream_type | 0x40UL
   }
-  let bytes : Array[Byte] = []
+  let bytes : Array[Byte] = Array::Array(capacity=40)
   for byte in encode_vi64(stream_type) {
     bytes.push(byte)
   }
@@ -72,9 +72,8 @@ pub fn encode_subgroup_header(header : SubgroupHeader) -> Bytes {
     Explicit(subgroup_id) => append_vi64s(bytes, subgroup_id)
     _ => ()
   }
-  match header.publisher_priority {
-    Some(priority) => bytes.push(priority)
-    None => ()
+  if header.publisher_priority is Some(priority) {
+    bytes.push(priority)
   }
   Bytes::from_array(bytes)
 }
@@ -82,9 +81,8 @@ pub fn encode_subgroup_header(header : SubgroupHeader) -> Bytes {
 ///|
 /// Decode a Subgroup stream header and report the number of consumed bytes.
 pub fn decode_subgroup_header(input : Bytes) -> DecodeResult[SubgroupHeader] {
-  let (stream_type, first_next) = match read_vi64(input, 0, input.length()) {
-    Some(pair) => pair
-    None => return Incomplete
+  guard read_vi64(input, 0, input.length()) is Some((stream_type, first_next)) else {
+    return Incomplete
   }
   let subgroup_id_mode = (stream_type & 0x06UL) >> 1
   if stream_type > 0x7fUL ||
@@ -92,29 +90,26 @@ pub fn decode_subgroup_header(input : Bytes) -> DecodeResult[SubgroupHeader] {
     subgroup_id_mode == 3UL {
     return Invalid(InvalidSubgroup)
   }
-  let (track_alias, after_alias) = match
-    read_vi64(input, first_next, input.length()) {
-    Some(pair) => pair
-    None => return Incomplete
+  guard read_vi64(input, first_next, input.length())
+    is Some((track_alias, after_alias)) else {
+    return Incomplete
   }
-  let (group_id, after_group) = match
-    read_vi64(input, after_alias, input.length()) {
-    Some(pair) => pair
-    None => return Incomplete
+  guard read_vi64(input, after_alias, input.length())
+    is Some((group_id, after_group)) else {
+    return Incomplete
   }
   let mut next = after_group
-  let subgroup_id_mode = if subgroup_id_mode == 0UL {
-    Zero
-  } else if subgroup_id_mode == 1UL {
-    FirstObject
-  } else {
-    let (subgroup_id, after_subgroup_id) = match
-      read_vi64(input, next, input.length()) {
-      Some(pair) => pair
-      None => return Incomplete
+  let subgroup_id_mode = match subgroup_id_mode {
+    0UL => Zero
+    1UL => FirstObject
+    _ => {
+      guard read_vi64(input, next, input.length())
+        is Some((subgroup_id, after_subgroup_id)) else {
+        return Incomplete
+      }
+      next = after_subgroup_id
+      Explicit(subgroup_id)
     }
-    next = after_subgroup_id
-    Explicit(subgroup_id)
   }
   let publisher_priority = if (stream_type & 0x20UL) != 0UL {
     None
@@ -172,10 +167,9 @@ pub fn SubgroupDecoder::decode_next(
   self : SubgroupDecoder,
   input : Bytes,
 ) -> DecodeResult[SubgroupFrame] {
-  let (object_id_delta, after_delta) = match
-    read_vi64(input, 0, input.length()) {
-    Some(pair) => pair
-    None => return Incomplete
+  guard read_vi64(input, 0, input.length())
+    is Some((object_id_delta, after_delta)) else {
+    return Incomplete
   }
   let object_id = match self.previous_object_id {
     None => object_id_delta
@@ -189,10 +183,9 @@ pub fn SubgroupDecoder::decode_next(
   }
   let mut next = after_delta
   let properties = if self.header.has_properties {
-    let (properties_length, after_properties_length) = match
-      read_vi64(input, next, input.length()) {
-      Some(pair) => pair
-      None => return Incomplete
+    guard read_vi64(input, next, input.length())
+      is Some((properties_length, after_properties_length)) else {
+      return Incomplete
     }
     if properties_length >
       (input.length() - after_properties_length).to_uint64() {
@@ -205,17 +198,15 @@ pub fn SubgroupDecoder::decode_next(
   } else {
     b""
   }
-  let (payload_length, after_payload_length) = match
-    read_vi64(input, next, input.length()) {
-    Some(pair) => pair
-    None => return Incomplete
+  guard read_vi64(input, next, input.length())
+    is Some((payload_length, after_payload_length)) else {
+    return Incomplete
   }
   next = after_payload_length
   let status = if payload_length == 0UL {
-    let (status_value, after_status) = match
-      read_vi64(input, next, input.length()) {
-      Some(pair) => pair
-      None => return Incomplete
+    guard read_vi64(input, next, input.length())
+      is Some((status_value, after_status)) else {
+      return Incomplete
     }
     next = after_status
     match status_value {
@@ -354,8 +345,13 @@ pub fn encode_subgroup_stream(
   header : SubgroupHeader,
   frames : Array[SubgroupFrame],
 ) -> Result[Bytes, CodecError] {
-  let bytes : Array[Byte] = []
-  for byte in encode_subgroup_header(header) {
+  let header_bytes = encode_subgroup_header(header)
+  let mut capacity = header_bytes.length()
+  for frame in frames {
+    capacity += 36 + frame.properties.length() + frame.payload.length()
+  }
+  let bytes : Array[Byte] = Array::Array(capacity~)
+  for byte in header_bytes {
     bytes.push(byte)
   }
   let mut previous_object_id : UInt64? = None

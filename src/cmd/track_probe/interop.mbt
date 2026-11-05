@@ -92,7 +92,7 @@ fn parse_interop_endpoint(url : String) -> InteropEndpoint raise {
     fail("the native interop client requires a moqt:// raw QUIC relay URL")
   }
   let pieces = url[7:].split("/").map(fn(piece) { piece.to_owned() }).collect()
-  guard pieces.length() > 0 && !pieces[0].is_empty() else {
+  guard !pieces.is_empty() && !pieces[0].is_empty() else {
     fail("relay URL is missing its host")
   }
   let authority = pieces[0]

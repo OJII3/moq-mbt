@@ -70,14 +70,7 @@ impl @driver.SessionTransport for ProbeTransport with fn send(
   if !accepted {
     return @driver.Retry
   }
-  let waiters = match self.send_waiters.get(stream) {
-    Some(waiters) => waiters
-    None => {
-      let waiters : Array[(@driver.TransportWriteOutcome) -> Unit] = []
-      self.send_waiters[stream] = waiters
-      waiters
-    }
-  }
+  let waiters = self.send_waiters.get_or_init(stream, fn() { [] })
   waiters.push(on_done)
   @driver.Accepted
 }
@@ -143,7 +136,7 @@ fn ProbeTransport::complete_send(
   canceled : Bool,
 ) -> Unit {
   match self.send_waiters.get(stream) {
-    Some(waiters) if waiters.length() > 0 => {
+    Some(waiters) if !waiters.is_empty() => {
       let callback = waiters.remove(0)
       if waiters.is_empty() {
         self.send_waiters.remove(stream)
@@ -156,7 +149,7 @@ fn ProbeTransport::complete_send(
 
 ///|
 fn ProbeTransport::complete_datagram(self : ProbeTransport) -> Unit {
-  if self.datagram_waiters.length() > 0 {
+  if !self.datagram_waiters.is_empty() {
     let callback = self.datagram_waiters.remove(0)
     callback(@driver.Written)
   }
@@ -224,9 +217,8 @@ fn SessionActionDriver::complete_send(
   stream : Int64,
   canceled : Bool,
 ) -> Unit {
-  match self.transport {
-    Some(transport) => transport.complete_send(stream, canceled)
-    None => ()
+  if self.transport is Some(transport) {
+    transport.complete_send(stream, canceled)
   }
 }
 
@@ -235,17 +227,15 @@ fn SessionActionDriver::committed(
   self : SessionActionDriver,
   stream : Int64,
 ) -> Unit {
-  match self.inner {
-    Some(inner) => inner.receive(@session.StreamDataCommitted(stream))
-    None => ()
+  if self.inner is Some(inner) {
+    inner.receive(@session.StreamDataCommitted(stream))
   }
 }
 
 ///|
 fn SessionActionDriver::complete_datagram(self : SessionActionDriver) -> Unit {
-  match self.transport {
-    Some(transport) => transport.complete_datagram()
-    None => ()
+  if self.transport is Some(transport) {
+    transport.complete_datagram()
   }
 }
 

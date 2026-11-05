@@ -41,7 +41,15 @@ fn unique_option(kind : UInt64) -> Bool {
 /// The caller supplies options in ascending type order for delta encoding.
 /// AUTHORIZATION TOKEN (type 3) and unknown options may be repeated.
 pub fn encode_setup(setup : Setup) -> Result[Bytes, CodecError] {
-  let payload : Array[Byte] = []
+  let mut capacity = 0
+  for option in setup.options {
+    capacity += 18
+    match option.value {
+      Integer(_) => ()
+      Data(value) => capacity += value.length()
+    }
+  }
+  let payload : Array[Byte] = Array::Array(capacity~)
   let mut previous = 0UL
   let mut first = true
   for option in setup.options {
@@ -94,9 +102,8 @@ pub fn encode_setup(setup : Setup) -> Result[Bytes, CodecError] {
 /// A complete frame with truncated option fields is malformed, not incomplete.
 /// Option semantics (URI, token authorization) are handled by the session.
 pub fn decode_setup(input : Bytes) -> DecodeResult[Setup] {
-  let (kind, header) = match read_vi64(input, 0, input.length()) {
-    Some(pair) => pair
-    None => return Incomplete
+  guard read_vi64(input, 0, input.length()) is Some((kind, header)) else {
+    return Incomplete
   }
   if kind != 0x2f00 {
     return Invalid(UnexpectedMessageType(kind))
@@ -113,9 +120,8 @@ pub fn decode_setup(input : Bytes) -> DecodeResult[Setup] {
   let mut offset = header + 2
   let mut previous = 0UL
   while offset < end {
-    let (delta, next) = match read_vi64(input, offset, end) {
-      Some(pair) => pair
-      None => return Invalid(MalformedOptions)
+    guard read_vi64(input, offset, end) is Some((delta, next)) else {
+      return Invalid(MalformedOptions)
     }
     if delta > 0xffffffffffffffffUL - previous {
       return Invalid(OptionTypeOverflow)
@@ -124,9 +130,8 @@ pub fn decode_setup(input : Bytes) -> DecodeResult[Setup] {
     if !options.is_empty() && delta == 0 && unique_option(kind) {
       return Invalid(DuplicateOption(kind))
     }
-    let (number, next) = match read_vi64(input, next, end) {
-      Some(pair) => pair
-      None => return Invalid(MalformedOptions)
+    guard read_vi64(input, next, end) is Some((number, next)) else {
+      return Invalid(MalformedOptions)
     }
     let value = if (kind & 1) == 0 {
       offset = next

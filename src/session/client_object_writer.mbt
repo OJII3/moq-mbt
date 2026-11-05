@@ -33,9 +33,8 @@ pub fn ObjectGroupWriter::begin_object(
     Ok(_) => ()
     Err(error) => return Err(error)
   }
-  let stream = match self.session.group_streams.get(self.token) {
-    Some(value) => value
-    None => return Err(ObjectStreamNotReady)
+  guard self.session.group_streams.get(self.token) is Some(stream) else {
+    return Err(ObjectStreamNotReady)
   }
   let outgoing = self.session.outgoing_object_streams.get(stream).unwrap()
   if outgoing.finishing || outgoing.partial_object is Some(_) {
@@ -96,9 +95,8 @@ pub fn ObjectWriter::write(
     Ok(_) => ()
     Err(error) => return Err(error)
   }
-  let outgoing = match self.session.outgoing_object_streams.get(self.stream) {
-    Some(value) => value
-    None => return Err(UnknownStream)
+  guard self.session.outgoing_object_streams.get(self.stream) is Some(outgoing) else {
+    return Err(UnknownStream)
   }
   if !self.session.subscription_is_active(outgoing.subscription_stream) {
     return Err(SubscriptionNotAccepted)
@@ -143,9 +141,8 @@ pub fn ObjectWriter::finish(
   if self.finished {
     return Err(UnexpectedMessage)
   }
-  let outgoing = match self.session.outgoing_object_streams.get(self.stream) {
-    Some(value) => value
-    None => return Err(UnknownStream)
+  guard self.session.outgoing_object_streams.get(self.stream) is Some(outgoing) else {
+    return Err(UnknownStream)
   }
   let partial = match outgoing.partial_object {
     Some(value) if value.object_id == self.object_id => value
@@ -156,17 +153,15 @@ pub fn ObjectWriter::finish(
   }
   outgoing.partial_object = None
   self.finished = true
-  match
-    self.session.publisher_request_for_subscription(
+  if self.session.publisher_request_for_subscription(
       outgoing.subscription_stream,
-    ) {
-    Some(request_id) =>
-      self.session.note_published_location(
-        request_id,
-        outgoing.header.group_id,
-        self.object_id,
-      )
-    None => ()
+    )
+    is Some(request_id) {
+    self.session.note_published_location(
+      request_id,
+      outgoing.header.group_id,
+      self.object_id,
+    )
   }
   Ok([])
 }

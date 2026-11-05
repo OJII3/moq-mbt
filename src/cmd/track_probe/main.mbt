@@ -21,16 +21,13 @@ fn main {
   let mut wait_for_start = false
   let mut wait_for_fetch = false
   for arg in args {
-    if arg == "--insecure" {
-      insecure = true
-    } else if arg == "--datagrams" {
-      datagrams = true
-    } else if arg == "--hold-open" {
-      hold_open = true
-    } else if arg == "--wait-for-start" {
-      wait_for_start = true
-    } else if arg == "--wait-for-fetch" {
-      wait_for_fetch = true
+    match arg {
+      "--insecure" => insecure = true
+      "--datagrams" => datagrams = true
+      "--hold-open" => hold_open = true
+      "--wait-for-start" => wait_for_start = true
+      "--wait-for-fetch" => wait_for_fetch = true
+      _ => ()
     }
   }
   let expected_args = match args[1] {

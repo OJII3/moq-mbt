@@ -239,9 +239,8 @@ fn encode_goaway_payload(
   let mut payload = encode_vi64(uri.length().to_uint64()) +
     uri +
     encode_vi64(timeout_ms)
-  match request_id {
-    Some(value) => payload = payload + encode_vi64(value)
-    None => ()
+  if request_id is Some(value) {
+    payload = payload + encode_vi64(value)
   }
   control_frame(0x10, payload)
 }

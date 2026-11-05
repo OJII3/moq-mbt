@@ -178,28 +178,18 @@ fn resolve_subscription_filter(
 fn subscription_filter_parameter(
   parameters : Array[@protocol.MessageParameter],
 ) -> @protocol.MessageParameter? {
-  for parameter in parameters {
-    if parameter.kind == 0x21 {
-      return Some(parameter)
-    }
-  }
-  None
+  parameters.iter().find_first(fn(parameter) { parameter.kind == 0x21 })
 }
 
 ///|
 fn subscription_largest_location(
   parameters : Array[@protocol.MessageParameter],
 ) -> (UInt64, UInt64)? {
-  for parameter in parameters {
-    if parameter.kind == 0x09 {
-      match parameter.value {
-        @protocol.Location(group_id, object_id) =>
-          return Some((group_id, object_id))
-        _ => ()
-      }
-    }
+  match parameters.iter().find_first(fn(parameter) { parameter.kind == 0x09 }) {
+    Some({ value: @protocol.Location(group_id, object_id), .. }) =>
+      Some((group_id, object_id))
+    _ => None
   }
-  None
 }
 
 ///|
@@ -220,10 +210,9 @@ fn ClientSession::close_outgoing_object_stream(
 ) -> Unit {
   match self.outgoing_object_streams.get(stream) {
     Some(outgoing) => {
-      match self.published_subscriptions.get(outgoing.subscription_stream) {
-        Some(subscription) =>
-          subscription.open_stream_count = subscription.open_stream_count - 1UL
-        None => ()
+      if self.published_subscriptions.get(outgoing.subscription_stream)
+        is Some(subscription) {
+        subscription.open_stream_count = subscription.open_stream_count - 1UL
       }
       self.outgoing_object_streams.remove(stream)
       self.group_streams.remove(outgoing.token)
@@ -241,19 +230,9 @@ fn ClientSession::receive_subgroup(
   if self.ignored_object_streams.get(stream) is Some(_) {
     return Ok([])
   }
-  let state = match self.incoming_object_streams.get(stream) {
-    Some(value) => value
-    None => {
-      let value : IncomingObjectStream = {
-        request_id: None,
-        buffer: b"",
-        header: None,
-        decoder: None,
-      }
-      self.incoming_object_streams[stream] = value
-      value
-    }
-  }
+  let state = self.incoming_object_streams.get_or_init(stream, fn() {
+    { request_id: None, buffer: b"", header: None, decoder: None, }
+  })
   if state.buffer.length().to_uint64() > self.max_object_buffer_bytes ||
     bytes.length().to_uint64() >
     self.max_object_buffer_bytes - state.buffer.length().to_uint64() {
@@ -266,9 +245,8 @@ fn ClientSession::receive_subgroup(
         @protocol.Incomplete => return Ok([])
         @protocol.Invalid(_) => return Err(UnexpectedMessage)
         @protocol.Complete(header, consumed) => {
-          let request_id = match self.aliases.get(header.track_alias) {
-            Some(value) => value
-            None => return Err(UnknownRequest)
+          guard self.aliases.get(header.track_alias) is Some(request_id) else {
+            return Err(UnknownRequest)
           }
           let request = self.requests.get(request_id).unwrap()
           if request.lifetime.cancelled {
@@ -346,9 +324,8 @@ fn ClientSession::receive_object_datagram(
       }
     _ => return Err(UnexpectedMessage)
   }
-  let request_id = match self.aliases.get(datagram.track_alias) {
-    Some(value) => value
-    None => return Ok([])
+  guard self.aliases.get(datagram.track_alias) is Some(request_id) else {
+    return Ok([])
   }
   let request = self.requests.get(request_id).unwrap()
   if !request.can_receive_object_data() {
@@ -435,9 +412,8 @@ pub fn ClientSession::send_object(
     Ok(_) => ()
     Err(error) => return Err(error)
   }
-  let outgoing = match self.outgoing_object_streams.get(stream) {
-    Some(value) => value
-    None => return Err(UnknownStream)
+  guard self.outgoing_object_streams.get(stream) is Some(outgoing) else {
+    return Err(UnknownStream)
   }
   if !self.subscription_is_active(outgoing.subscription_stream) {
     return Err(SubscriptionNotAccepted)
@@ -593,14 +569,12 @@ pub fn ClientSession::send_object_datagram_for_track(
       publisher_request_id = Some(request_id)
     }
   }
-  let publisher_request_id = match publisher_request_id {
-    Some(value) => value
-    None => return Err(UnknownRequest)
+  guard publisher_request_id is Some(publisher_request_id) else {
+    return Err(UnknownRequest)
   }
   let publisher = self.requests.get(publisher_request_id).unwrap()
-  let base_alias = match publisher.track_alias {
-    Some(value) => value
-    None => return Err(UnknownRequest)
+  guard publisher.track_alias is Some(base_alias) else {
+    return Err(UnknownRequest)
   }
   if !self.datagram_send_enabled {
     return Err(DatagramSendUnavailable)
@@ -618,9 +592,8 @@ pub fn ClientSession::send_object_datagram_for_track(
   for (subscription_stream, subscription) in self.published_subscriptions {
     // The local PUBLISH request also has a published_subscriptions entry; it
     // is the publisher's own state, not a peer subscription.
-    let inbound = match self.inbound_subscriptions.get(subscription_stream) {
-      Some(value) => value
-      None => continue
+    guard self.inbound_subscriptions.get(subscription_stream) is Some(inbound) else {
+      continue
     }
     if inbound.publisher_request_id != publisher_request_id ||
       !self.subscription_is_active(subscription_stream) ||
@@ -636,11 +609,9 @@ pub fn ClientSession::send_object_datagram_for_track(
       Ok(_) => ()
       Err(error) => return Err(error)
     }
-    let track_alias = match
-      self.subscription_publisher_alias(subscription_stream) {
-      Some(value) => value
-      None => base_alias
-    }
+    let track_alias = self
+      .subscription_publisher_alias(subscription_stream)
+      .unwrap_or(base_alias)
     let bytes = match
       @protocol.encode_object_datagram({ ..datagram, track_alias, }) {
       Ok(value) => value
@@ -675,10 +646,9 @@ fn ClientSession::subscription_publisher_alias(
   self : ClientSession,
   subscription_stream : Int64,
 ) -> UInt64? {
-  let publisher_request_id = match
-    self.publisher_request_for_subscription(subscription_stream) {
-    Some(value) => value
-    None => return None
+  guard self.publisher_request_for_subscription(subscription_stream)
+    is Some(publisher_request_id) else {
+    return None
   }
   match self.requests.get(publisher_request_id) {
     Some(request) => request.track_alias
@@ -729,9 +699,8 @@ pub fn ClientSession::finish_object_stream(
     Ok(_) => ()
     Err(error) => return Err(error)
   }
-  let outgoing = match self.outgoing_object_streams.get(stream) {
-    Some(value) => value
-    None => return Err(UnknownStream)
+  guard self.outgoing_object_streams.get(stream) is Some(outgoing) else {
+    return Err(UnknownStream)
   }
   if outgoing.finishing || outgoing.partial_object is Some(_) {
     return Err(UnexpectedMessage)
@@ -788,10 +757,9 @@ pub fn ClientSession::publish_done(
         None => return Err(UnknownStream)
       }
   }
-  let subscription = match
-    self.published_subscriptions.get(subscription_stream) {
-    Some(value) => value
-    None => return Err(UnexpectedMessage)
+  guard self.published_subscriptions.get(subscription_stream)
+    is Some(subscription) else {
+    return Err(UnexpectedMessage)
   }
   if !subscription.pending_updates.is_empty() {
     return Err(RequestUpdatePending)

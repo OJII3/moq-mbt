@@ -288,24 +288,20 @@ fn ClientSession::receive_joining_fetch(
   self.fetches[request_id] = fetch
   self.fetch_streams[stream] = request_id
   if subscription_pending {
-    let waiting = match self.pending_joining_fetches.get(joining_request_id) {
-      Some(values) => values
-      None => []
-    }
+    let waiting = self.pending_joining_fetches.get_or_init(joining_request_id, fn() {
+      []
+    })
     waiting.push(request_id)
-    self.pending_joining_fetches[joining_request_id] = waiting
     return Ok([])
   }
   let subscription = self.published_subscriptions
     .get(subscription_stream)
     .unwrap()
   if !subscription.pending_updates.is_empty() {
-    let waiting = match self.pending_joining_fetches.get(joining_request_id) {
-      Some(values) => values
-      None => []
-    }
+    let waiting = self.pending_joining_fetches.get_or_init(joining_request_id, fn() {
+      []
+    })
     waiting.push(request_id)
-    self.pending_joining_fetches[joining_request_id] = waiting
     return Ok([])
   }
   Ok(self.resolve_joining_fetch(request_id, subscription_stream))
@@ -344,9 +340,8 @@ fn ClientSession::resolve_joining_fetch(
   if !subscription_forward(subscription.parameters) {
     return fail(request_error_invalid_range)
   }
-  let joining_location = match subscription.joining_location {
-    Some(value) => value
-    None => return fail(request_error_invalid_range)
+  guard subscription.joining_location is Some(joining_location) else {
+    return fail(request_error_invalid_range)
   }
   let joining_start = fetch.joining_start.unwrap()
   let start_group = if fetch.joining_relative {
@@ -392,9 +387,8 @@ fn ClientSession::drain_joining_fetches(
   joining_request_id : UInt64,
   subscription_stream : Int64,
 ) -> Array[SessionAction] {
-  let waiting = match self.pending_joining_fetches.get(joining_request_id) {
-    Some(values) => values
-    None => return []
+  guard self.pending_joining_fetches.get(joining_request_id) is Some(waiting) else {
+    return []
   }
   let remaining : Array[UInt64] = []
   let actions : Array[SessionAction] = []
@@ -404,9 +398,9 @@ fn ClientSession::drain_joining_fetches(
       _ => continue
     }
     if self.published_subscriptions.get(subscription_stream).unwrap().pending_updates.is_empty() {
-      for action in self.resolve_joining_fetch(request_id, subscription_stream) {
-        actions.push(action)
-      }
+      actions.append(
+        self.resolve_joining_fetch(request_id, subscription_stream),
+      )
     } else {
       remaining.push(request_id)
     }
@@ -426,9 +420,8 @@ fn ClientSession::fail_pending_joining_fetches(
   joining_request_id : UInt64,
   code : UInt64,
 ) -> Array[SessionAction] {
-  let waiting = match self.pending_joining_fetches.get(joining_request_id) {
-    Some(values) => values
-    None => return []
+  guard self.pending_joining_fetches.get(joining_request_id) is Some(waiting) else {
+    return []
   }
   self.pending_joining_fetches.remove(joining_request_id)
   let actions : Array[SessionAction] = []
@@ -463,10 +456,7 @@ fn ClientSession::remove_pending_joining_fetch(
   self : ClientSession,
   request_id : UInt64,
 ) -> Unit {
-  let joining_ids : Array[UInt64] = []
-  for (joining_id, _) in self.pending_joining_fetches {
-    joining_ids.push(joining_id)
-  }
+  let joining_ids = self.pending_joining_fetches.keys().to_array()
   for joining_id in joining_ids {
     let waiting = self.pending_joining_fetches.get(joining_id).unwrap()
     let remaining : Array[UInt64] = []

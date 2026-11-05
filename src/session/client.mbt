@@ -581,48 +581,42 @@ fn ClientSession::protocol_error_actions(
     | SendStopped(stream, _) => {
       let kind = self.inbound_stream_kinds.get(stream)
       if self.peer_control_stream == Some(stream) || kind is Some(Control) {
-        Some(self.end_session(Local(code, b""), Some(code), b""))
-      } else if self.namespace_subscription_streams.get(stream) is Some(_) ||
+        return Some(self.end_session(Local(code, b""), Some(code), b""))
+      }
+      if self.namespace_subscription_streams.get(stream) is Some(_) ||
         self.inbound_namespace_subscriptions.get(stream) is Some(_) {
-        Some(self.end_session(Local(code, b""), Some(code), b""))
-      } else if self.request_stream_requires_cancel(stream) {
-        match self.namespace_request_streams.get(stream) {
-          Some(request_id) if self.namespace_requests.get(request_id).unwrap().locally_initiated =>
-            Some(self.end_session(Local(code, b""), Some(code), b""))
-          _ => Some(self.end_request_stream(stream, Cancel(code)))
-        }
-      } else if kind is Some(Request) {
-        self.inbound_buffers.remove(stream)
-        Some([AbortSend(stream, code), StopReceiving(stream, code)])
-      } else if kind is Some(Subgroup) {
-        let actions : Array[SessionAction] = []
-        match self.incoming_object_streams.get(stream) {
-          Some(state) => {
-            match state.request_id {
-              Some(request_id) => {
-                let request = self.requests.get(request_id).unwrap()
-                request.object_drain.note_stream_closed()
-                match self.take_ready_publish_done(request_id) {
-                  Some(done) =>
-                    actions.push(
-                      EmitNotice(PublishDone(RequestId(request_id), done)),
-                    )
-                  None => ()
-                }
-              }
-              None => ()
-            }
-            self.incoming_object_streams.remove(stream)
+        return Some(self.end_session(Local(code, b""), Some(code), b""))
+      }
+      if self.request_stream_requires_cancel(stream) {
+        if self.namespace_request_streams.get(stream) is Some(request_id) {
+          if self.namespace_requests.get(request_id).unwrap().locally_initiated {
+            return Some(self.end_session(Local(code, b""), Some(code), b""))
           }
-          None => ()
+        }
+        return Some(self.end_request_stream(stream, Cancel(code)))
+      }
+      if kind is Some(Request) {
+        self.inbound_buffers.remove(stream)
+        return Some([AbortSend(stream, code), StopReceiving(stream, code)])
+      }
+      if kind is Some(Subgroup) {
+        let actions : Array[SessionAction] = []
+        if self.incoming_object_streams.get(stream) is Some(state) {
+          if state.request_id is Some(request_id) {
+            let request = self.requests.get(request_id).unwrap()
+            request.object_drain.note_stream_closed()
+            if self.take_ready_publish_done(request_id) is Some(done) {
+              actions.push(EmitNotice(PublishDone(RequestId(request_id), done)))
+            }
+          }
+          self.incoming_object_streams.remove(stream)
         }
         // Retain a tombstone until FIN/reset so already queued data is ignored.
         self.inbound_stream_kinds[stream] = Discarded
         actions.push(StopReceiving(stream, code))
-        Some(actions)
-      } else {
-        Some(self.end_session(Local(code, b""), Some(code), b""))
+        return Some(actions)
       }
+      Some(self.end_session(Local(code, b""), Some(code), b""))
     }
     DatagramReceived(_) =>
       Some(self.end_session(Local(code, b""), Some(code), b""))
@@ -706,16 +700,12 @@ fn ClientSession::decode_control_messages(
         match message {
           @protocol.GoAwayControl(goaway) => {
             if self.control_goaway_received || (goaway.request_id & 1UL) != 0UL {
-              for action in self.receive_control_goaway(goaway) {
-                actions.push(action)
-              }
+              actions.append(self.receive_control_goaway(goaway))
               self.control_buffer = b""
               return Ok(actions)
             }
             actions.push(EmitNotice(ControlMessageReceived(message)))
-            for action in self.receive_control_goaway(goaway) {
-              actions.push(action)
-            }
+            actions.append(self.receive_control_goaway(goaway))
           }
           _ => actions.push(EmitNotice(ControlMessageReceived(message)))
         }

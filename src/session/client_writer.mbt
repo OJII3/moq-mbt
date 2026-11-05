@@ -25,15 +25,13 @@ pub fn ClientSession::open_object_group(
   has_properties~ : Bool = false,
 ) -> Result[(ObjectGroupWriter, Array[SessionAction]), ClientSessionError] {
   let subscription_stream = subscription_stream.to_int64()
-  let publisher_request_id = match
-    self.publisher_request_for_subscription(subscription_stream) {
-    Some(value) => value
-    None => return Err(UnknownStream)
+  guard self.publisher_request_for_subscription(subscription_stream)
+    is Some(publisher_request_id) else {
+    return Err(UnknownStream)
   }
-  let track_alias = match
-    self.requests.get(publisher_request_id).unwrap().track_alias {
-    Some(value) => value
-    None => return Err(UnknownRequest)
+  guard self.requests.get(publisher_request_id).unwrap().track_alias
+    is Some(track_alias) else {
+    return Err(UnknownRequest)
   }
   let header : @protocol.SubgroupHeader = {
     track_alias,
@@ -49,17 +47,16 @@ pub fn ClientSession::open_object_group(
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  let mut token : UInt64? = None
-  for action in actions {
-    match action {
-      OpenStream(_, Object(value)) => token = Some(value)
-      _ => ()
-    }
-  }
-  let token = match token {
-    Some(value) => value
-    None => return Err(UnexpectedMessage)
-  }
+  let token = actions
+    .iter()
+    .filter_map(fn(action) {
+      match action {
+        OpenStream(_, Object(value)) => Some(value)
+        _ => None
+      }
+    })
+    .last()
+  guard token is Some(token) else { return Err(UnexpectedMessage) }
   Ok(
     (
       {
@@ -251,9 +248,8 @@ fn ClientSession::abort_outgoing_object_stream(
   stream : Int64,
   code : UInt64,
 ) -> Result[Array[SessionAction], ClientSessionError] {
-  let outgoing = match self.outgoing_object_streams.get(stream) {
-    Some(value) => value
-    None => return Err(UnknownStream)
+  guard self.outgoing_object_streams.get(stream) is Some(outgoing) else {
+    return Err(UnknownStream)
   }
   let subscription_stream = outgoing.subscription_stream
   self.close_outgoing_object_stream(stream)

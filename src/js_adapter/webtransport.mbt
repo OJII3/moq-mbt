@@ -83,9 +83,8 @@ pub fn WebTransportConnection::connect(
               source: None,
               stream_error_code: None,
             }
-            match connection_box.val {
-              Some(connection) => ignore(connection.close(0L, ""))
-              None => ()
+            if connection_box.val is Some(connection) {
+              ignore(connection.close(0L, ""))
             }
             @js.Promise::resolve(Err(error))
           } else {

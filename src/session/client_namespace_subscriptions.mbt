@@ -31,15 +31,7 @@ fn namespace_has_prefix(
   ns : @protocol.TrackNamespace,
   prefix : @protocol.TrackNamespace,
 ) -> Bool {
-  if prefix.fields.length() > ns.fields.length() {
-    return false
-  }
-  for index in 0..<prefix.fields.length() {
-    if ns.fields[index] != prefix.fields[index] {
-      return false
-    }
-  }
-  true
+  ns.fields.has_prefix(prefix.fields)
 }
 
 ///|
@@ -245,9 +237,8 @@ pub fn ClientSession::update_namespace_subscription(
     Ok(_) => ()
     Err(error) => return Err(error)
   }
-  let request = match self.namespace_subscriptions.get(request_id) {
-    Some(value) => value
-    None => return Err(UnknownRequest)
+  guard self.namespace_subscriptions.get(request_id) is Some(request) else {
+    return Err(UnknownRequest)
   }
   if !request.established ||
     request.lifetime.local_send_closed ||
@@ -268,9 +259,8 @@ pub fn ClientSession::update_namespace_subscription(
       return Err(PrefixOverlap)
     }
   }
-  let stream = match request.stream {
-    Some(value) => value
-    None => return Err(SubscriptionNotAccepted)
+  guard request.stream is Some(stream) else {
+    return Err(SubscriptionNotAccepted)
   }
   let parameters : Array[@protocol.MessageParameter] = [
     { kind: 0x34UL, value: @protocol.NamespacePrefix(prefix), },
@@ -298,9 +288,8 @@ pub fn ClientSession::accept_namespace_subscription(
     Ok(_) => ()
     Err(error) => return Err(error)
   }
-  let inbound = match self.inbound_namespace_subscriptions.get(stream) {
-    Some(value) => value
-    None => return Err(UnknownStream)
+  guard self.inbound_namespace_subscriptions.get(stream) is Some(inbound) else {
+    return Err(UnknownStream)
   }
   if inbound.state != Pending {
     return Err(UnexpectedMessage)
@@ -371,10 +360,7 @@ pub fn ClientSession::accept_namespace_subscription(
   }
   for ns in known {
     match self.send_namespace_available(stream, ns) {
-      Ok(message_actions) =>
-        for action in message_actions {
-          actions.push(action)
-        }
+      Ok(message_actions) => actions.append(message_actions)
       Err(error) => return Err(error)
     }
   }
@@ -395,9 +381,8 @@ pub fn ClientSession::accept_namespace_subscription_update(
     Ok(_) => ()
     Err(error) => return Err(error)
   }
-  let inbound = match self.inbound_namespace_subscriptions.get(stream) {
-    Some(value) => value
-    None => return Err(UnknownStream)
+  guard self.inbound_namespace_subscriptions.get(stream) is Some(inbound) else {
+    return Err(UnknownStream)
   }
   if inbound.state != Active ||
     inbound.pending_updates.is_empty() ||
@@ -454,10 +439,7 @@ pub fn ClientSession::accept_namespace_subscription_update(
   }
   for ns in known {
     match self.send_namespace_available(stream, ns) {
-      Ok(values) =>
-        for action in values {
-          actions.push(action)
-        }
+      Ok(values) => actions.append(values)
       Err(error) => return Err(error)
     }
   }
@@ -478,9 +460,8 @@ pub fn ClientSession::reject_namespace_subscription_update(
     Ok(_) => ()
     Err(value) => return Err(value)
   }
-  let inbound = match self.inbound_namespace_subscriptions.get(stream) {
-    Some(value) => value
-    None => return Err(UnknownStream)
+  guard self.inbound_namespace_subscriptions.get(stream) is Some(inbound) else {
+    return Err(UnknownStream)
   }
   if inbound.state != Active ||
     inbound.pending_updates.is_empty() ||
@@ -491,10 +472,7 @@ pub fn ClientSession::reject_namespace_subscription_update(
     Ok(value) => value
     Err(value) => return Err(Encoding(value))
   }
-  let rejected : Array[UInt64] = []
-  for pending in inbound.pending_updates {
-    rejected.push(pending.request_id)
-  }
+  let rejected = inbound.pending_updates.map(fn(pending) { pending.request_id })
   inbound.pending_updates = []
   inbound.state = Ended
   inbound.lifetime.local_send_closed = true
@@ -543,9 +521,8 @@ pub fn ClientSession::reject_namespace_subscription(
     Ok(_) => ()
     Err(error) => return Err(error)
   }
-  let inbound = match self.inbound_namespace_subscriptions.get(stream) {
-    Some(value) => value
-    None => return Err(UnknownStream)
+  guard self.inbound_namespace_subscriptions.get(stream) is Some(inbound) else {
+    return Err(UnknownStream)
   }
   if inbound.state != Pending {
     return Err(UnexpectedMessage)
@@ -609,35 +586,9 @@ fn append_unique_namespace(
   namespaces : Array[@protocol.TrackNamespace],
   ns : @protocol.TrackNamespace,
 ) -> Unit {
-  if !namespace_array_contains(namespaces, ns) {
+  if !namespaces.contains(ns) {
     namespaces.push(ns)
   }
-}
-
-///|
-fn namespace_array_contains(
-  namespaces : Array[@protocol.TrackNamespace],
-  ns : @protocol.TrackNamespace,
-) -> Bool {
-  for item in namespaces {
-    if item == ns {
-      return true
-    }
-  }
-  false
-}
-
-///|
-fn namespace_array_index(
-  namespaces : Array[@protocol.TrackNamespace],
-  ns : @protocol.TrackNamespace,
-) -> Int32? {
-  for index in 0..<namespaces.length() {
-    if namespaces[index] == ns {
-      return Some(index)
-    }
-  }
-  None
 }
 
 ///|
@@ -645,10 +596,8 @@ fn remove_namespace(
   namespaces : Array[@protocol.TrackNamespace],
   ns : @protocol.TrackNamespace,
 ) -> Unit {
-  let index = namespace_array_index(namespaces, ns)
-  match index {
-    Some(value) => ignore(namespaces.remove(value))
-    None => ()
+  if namespaces.search(ns) is Some(value) {
+    ignore(namespaces.remove(value))
   }
 }
 
@@ -663,7 +612,7 @@ fn ClientSession::send_namespace_available(
   if inbound.state != Active || !namespace_has_prefix(ns, inbound.prefix) {
     return Ok([])
   }
-  if namespace_array_contains(inbound.active_namespaces, ns) {
+  if inbound.active_namespaces.contains(ns) {
     return Ok([])
   }
   let suffix : @protocol.TrackNamespace = {
@@ -687,9 +636,8 @@ fn ClientSession::send_namespace_done(
   ns : @protocol.TrackNamespace,
 ) -> Result[Array[SessionAction], ClientSessionError] {
   let inbound = self.inbound_namespace_subscriptions.get(stream).unwrap()
-  let index = match namespace_array_index(inbound.active_namespaces, ns) {
-    Some(value) => value
-    None => return Ok([])
+  guard inbound.active_namespaces.search(ns) is Some(index) else {
+    return Ok([])
   }
   let suffix : @protocol.TrackNamespace = {
     fields: ns.fields[inbound.prefix.fields.length():].to_owned(),
@@ -714,10 +662,7 @@ fn ClientSession::broadcast_namespace_available(
   let actions : Array[SessionAction] = []
   for (stream, _) in self.inbound_namespace_subscriptions {
     match self.send_namespace_available(stream, ns) {
-      Ok(values) =>
-        for action in values {
-          actions.push(action)
-        }
+      Ok(values) => actions.append(values)
       Err(error) => return Err(error)
     }
   }
@@ -732,10 +677,7 @@ fn ClientSession::broadcast_namespace_done(
   let actions : Array[SessionAction] = []
   for (stream, _) in self.inbound_namespace_subscriptions {
     match self.send_namespace_done(stream, ns) {
-      Ok(values) =>
-        for action in values {
-          actions.push(action)
-        }
+      Ok(values) => actions.append(values)
       Err(error) => return Err(error)
     }
   }
@@ -838,7 +780,7 @@ fn ClientSession::receive_namespace_subscription_response(
             Ok(value) => value
             Err(_) => return Err(UnexpectedMessage)
           }
-          if namespace_array_contains(request.active_namespaces, ns) {
+          if request.active_namespaces.contains(ns) {
             return Err(UnexpectedMessage)
           }
           request.active_namespaces.push(ns)
@@ -850,10 +792,8 @@ fn ClientSession::receive_namespace_subscription_response(
             Ok(value) => value
             Err(_) => return Err(UnexpectedMessage)
           }
-          let index = match
-            namespace_array_index(request.active_namespaces, ns) {
-            Some(value) => value
-            None => return Err(UnexpectedMessage)
+          guard request.active_namespaces.search(ns) is Some(index) else {
+            return Err(UnexpectedMessage)
           }
           ignore(request.active_namespaces.remove(index))
           [EmitNotice(NamespaceNoLongerAvailable(RequestId(request_id), ns))]
@@ -883,9 +823,8 @@ fn ClientSession::end_namespace_subscription(
   stream : Int64,
   event : RequestLifetimeEvent,
 ) -> Array[SessionAction] {
-  let request_id = match self.namespace_subscription_streams.get(stream) {
-    Some(value) => value
-    None => return []
+  guard self.namespace_subscription_streams.get(stream) is Some(request_id) else {
+    return []
   }
   let request = self.namespace_subscriptions.get(request_id).unwrap()
   let effects = request.lifetime.transition(event, true)
@@ -977,9 +916,8 @@ fn ClientSession::end_inbound_namespace_subscription(
   stream : Int64,
   event : RequestLifetimeEvent,
 ) -> Array[SessionAction] {
-  let inbound = match self.inbound_namespace_subscriptions.get(stream) {
-    Some(value) => value
-    None => return []
+  guard self.inbound_namespace_subscriptions.get(stream) is Some(inbound) else {
+    return []
   }
   let effects = inbound.lifetime.transition(event, true)
   let fin_end = match event {

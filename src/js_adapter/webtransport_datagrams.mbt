@@ -114,7 +114,7 @@ fn WebTransportDatagramManager::start_reading(
                 let bytes = uint8array_to_bytes(
                   ffi_webtransport_copy_view(view),
                 )
-                if self.waiters.length() > 0 {
+                if !self.waiters.is_empty() {
                   let waiter = self.waiters[0]
                   ignore(self.waiters.remove(0))
                   waiter(DatagramReceived(bytes))
@@ -157,7 +157,7 @@ fn WebTransportDatagramManager::finish_reading(
 fn WebTransportDatagramManager::next_datagram(
   self : WebTransportDatagramManager,
 ) -> @js.Promise[WebTransportDatagramEvent] {
-  if self.queue.length() > 0 {
+  if !self.queue.is_empty() {
     let bytes = self.queue[0]
     ignore(self.queue.remove(0))
     self.pending_receive_bytes.val -= bytes.length()
@@ -178,18 +178,16 @@ fn WebTransportDatagramManager::send_datagram(
   self : WebTransportDatagramManager,
   bytes : Bytes,
 ) -> @js.Promise[Result[Unit, WebTransportDatagramError]] {
-  let writer = match self.writer {
-    Some(writer) => writer
-    None =>
-      return @js.Promise::resolve(
-        Err(
-          if self.ended.val {
-            DatagramConnectionClosed
-          } else {
-            DatagramUnavailable
-          },
-        ),
-      )
+  guard self.writer is Some(writer) else {
+    return @js.Promise::resolve(
+      Err(
+        if self.ended.val {
+          DatagramConnectionClosed
+        } else {
+          DatagramUnavailable
+        },
+      ),
+    )
   }
   if self.ended.val {
     return @js.Promise::resolve(Err(DatagramConnectionClosed))
@@ -276,7 +274,7 @@ extern "js" fn ffi_webtransport_abort_datagram_writer(
 fn WebTransportDatagramManager::notify_closed(
   self : WebTransportDatagramManager,
 ) -> Unit {
-  while self.waiters.length() > 0 {
+  while !self.waiters.is_empty() {
     let waiter = self.waiters[0]
     ignore(self.waiters.remove(0))
     waiter(DatagramsClosed)
