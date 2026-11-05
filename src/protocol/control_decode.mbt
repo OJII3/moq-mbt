@@ -22,9 +22,8 @@ pub fn decode_control_with_context(
   input : Bytes,
   context : ControlStreamContext,
 ) -> DecodeResult[ControlMessage] {
-  let (kind, header) = match read_vi64(input, 0, input.length()) {
-    Some(pair) => pair
-    None => return Incomplete
+  guard read_vi64(input, 0, input.length()) is Some((kind, header)) else {
+    return Incomplete
   }
   if input.length() - header < 2 {
     return Incomplete
@@ -38,17 +37,14 @@ pub fn decode_control_with_context(
   let invalid = Invalid(MalformedControlMessage)
   match kind {
     3 => {
-      let (request_id, offset) = match read_varint_at(input, start, end) {
-        Some(pair) => pair
-        None => return invalid
+      guard read_varint_at(input, start, end) is Some((request_id, offset)) else {
+        return invalid
       }
-      let (track, offset) = match read_track_at(input, offset, end) {
-        Some(pair) => pair
-        None => return invalid
+      guard read_track_at(input, offset, end) is Some((track, offset)) else {
+        return invalid
       }
-      let (parameters, offset) = match read_parameters_at(input, offset, end) {
-        Some(pair) => pair
-        None => return invalid
+      guard read_parameters_at(input, offset, end) is Some((parameters, offset)) else {
+        return invalid
       }
       match validate_parameters_scope(parameters, Subscribe) {
         Ok(_) => ()
@@ -60,21 +56,17 @@ pub fn decode_control_with_context(
       Complete(Subscribe({ request_id, track, parameters, }), end)
     }
     0x1d => {
-      let (request_id, offset) = match read_varint_at(input, start, end) {
-        Some(pair) => pair
-        None => return invalid
+      guard read_varint_at(input, start, end) is Some((request_id, offset)) else {
+        return invalid
       }
-      let (track, offset) = match read_track_at(input, offset, end) {
-        Some(pair) => pair
-        None => return invalid
+      guard read_track_at(input, offset, end) is Some((track, offset)) else {
+        return invalid
       }
-      let (track_alias, offset) = match read_varint_at(input, offset, end) {
-        Some(pair) => pair
-        None => return invalid
+      guard read_varint_at(input, offset, end) is Some((track_alias, offset)) else {
+        return invalid
       }
-      let (parameters, offset) = match read_parameters_at(input, offset, end) {
-        Some(pair) => pair
-        None => return invalid
+      guard read_parameters_at(input, offset, end) is Some((parameters, offset)) else {
+        return invalid
       }
       match validate_parameters_scope(parameters, Publish) {
         Ok(_) => ()
@@ -92,13 +84,11 @@ pub fn decode_control_with_context(
       )
     }
     4 => {
-      let (track_alias, offset) = match read_varint_at(input, start, end) {
-        Some(pair) => pair
-        None => return invalid
+      guard read_varint_at(input, start, end) is Some((track_alias, offset)) else {
+        return invalid
       }
-      let (parameters, offset) = match read_parameters_at(input, offset, end) {
-        Some(pair) => pair
-        None => return invalid
+      guard read_parameters_at(input, offset, end) is Some((parameters, offset)) else {
+        return invalid
       }
       match validate_parameters_scope(parameters, SubscribeOk) {
         Ok(_) => ()
@@ -114,9 +104,8 @@ pub fn decode_control_with_context(
       )
     }
     7 => {
-      let (parameters, offset) = match read_parameters_at(input, start, end) {
-        Some(pair) => pair
-        None => return invalid
+      guard read_parameters_at(input, start, end) is Some((parameters, offset)) else {
+        return invalid
       }
       let message : RequestOkMessage = {
         parameters,
@@ -142,13 +131,11 @@ pub fn decode_control_with_context(
       if context == ControlStream {
         return invalid
       }
-      let (request_id, offset) = match read_varint_at(input, start, end) {
-        Some(pair) => pair
-        None => return invalid
+      guard read_varint_at(input, start, end) is Some((request_id, offset)) else {
+        return invalid
       }
-      let (parameters, offset) = match read_parameters_at(input, offset, end) {
-        Some(pair) => pair
-        None => return invalid
+      guard read_parameters_at(input, offset, end) is Some((parameters, offset)) else {
+        return invalid
       }
       let update_context = match context {
         FetchRequestStream => ParameterScope::FetchUpdate
@@ -167,36 +154,30 @@ pub fn decode_control_with_context(
       if context == ControlStream {
         return invalid
       }
-      let (request_id, offset) = match read_varint_at(input, start, end) {
-        Some(pair) => pair
-        None => return invalid
+      guard read_varint_at(input, start, end) is Some((request_id, offset)) else {
+        return invalid
       }
-      let (fetch_kind, offset) = match read_varint_at(input, offset, end) {
-        Some(pair) => pair
-        None => return invalid
+      guard read_varint_at(input, offset, end) is Some((fetch_kind, offset)) else {
+        return invalid
       }
       let fetch_type = match fetch_kind {
         1 => {
-          let (track, offset) = match read_track_at(input, offset, end) {
-            Some(pair) => pair
-            None => return invalid
+          guard read_track_at(input, offset, end) is Some((track, offset)) else {
+            return invalid
           }
-          let (start_group, offset) = match read_varint_at(input, offset, end) {
-            Some(pair) => pair
-            None => return invalid
+          guard read_varint_at(input, offset, end)
+            is Some((start_group, offset)) else {
+            return invalid
           }
-          let (start_object, offset) = match
-            read_varint_at(input, offset, end) {
-            Some(pair) => pair
-            None => return invalid
+          guard read_varint_at(input, offset, end)
+            is Some((start_object, offset)) else {
+            return invalid
           }
-          let (end_group, offset) = match read_varint_at(input, offset, end) {
-            Some(pair) => pair
-            None => return invalid
+          guard read_varint_at(input, offset, end) is Some((end_group, offset)) else {
+            return invalid
           }
-          let (end_object, offset) = match read_varint_at(input, offset, end) {
-            Some(pair) => pair
-            None => return invalid
+          guard read_varint_at(input, offset, end) is Some((end_object, offset)) else {
+            return invalid
           }
           if start_group > end_group ||
             (
@@ -216,15 +197,13 @@ pub fn decode_control_with_context(
           )
         }
         2 | 3 => {
-          let (joining_request_id, offset) = match
-            read_varint_at(input, offset, end) {
-            Some(pair) => pair
-            None => return invalid
+          guard read_varint_at(input, offset, end)
+            is Some((joining_request_id, offset)) else {
+            return invalid
           }
-          let (joining_start, offset) = match
-            read_varint_at(input, offset, end) {
-            Some(pair) => pair
-            None => return invalid
+          guard read_varint_at(input, offset, end)
+            is Some((joining_start, offset)) else {
+            return invalid
           }
           let value = if fetch_kind == 2 {
             RelativeJoiningFetch(joining_request_id, joining_start)
@@ -235,10 +214,9 @@ pub fn decode_control_with_context(
         }
         _ => return invalid
       }
-      let (parameters, offset) = match
-        read_parameters_at(input, fetch_type.1, end) {
-        Some(pair) => pair
-        None => return invalid
+      guard read_parameters_at(input, fetch_type.1, end)
+        is Some((parameters, offset)) else {
+        return invalid
       }
       match validate_parameters_scope(parameters, Fetch) {
         Ok(_) => ()
@@ -262,17 +240,14 @@ pub fn decode_control_with_context(
       if start >= end || input[start] > 1 {
         return invalid
       }
-      let (end_group, offset) = match read_varint_at(input, start + 1, end) {
-        Some(pair) => pair
-        None => return invalid
+      guard read_varint_at(input, start + 1, end) is Some((end_group, offset)) else {
+        return invalid
       }
-      let (end_object, offset) = match read_varint_at(input, offset, end) {
-        Some(pair) => pair
-        None => return invalid
+      guard read_varint_at(input, offset, end) is Some((end_object, offset)) else {
+        return invalid
       }
-      let (parameters, offset) = match read_parameters_at(input, offset, end) {
-        Some(pair) => pair
-        None => return invalid
+      guard read_parameters_at(input, offset, end) is Some((parameters, offset)) else {
+        return invalid
       }
       match validate_parameters_scope(parameters, FetchOk) {
         Ok(_) => ()
@@ -293,22 +268,19 @@ pub fn decode_control_with_context(
       )
     }
     0x10 => {
-      let (uri, offset) = match read_bytes_at(input, start, end) {
-        Some(pair) => pair
-        None => return invalid
+      guard read_bytes_at(input, start, end) is Some((uri, offset)) else {
+        return invalid
       }
       if uri.length() > 8192 {
         return invalid
       }
-      let (timeout_ms, offset) = match read_varint_at(input, offset, end) {
-        Some(pair) => pair
-        None => return invalid
+      guard read_varint_at(input, offset, end) is Some((timeout_ms, offset)) else {
+        return invalid
       }
       match context {
         ControlStream => {
-          let (request_id, offset) = match read_varint_at(input, offset, end) {
-            Some(pair) => pair
-            None => return invalid
+          guard read_varint_at(input, offset, end) is Some((request_id, offset)) else {
+            return invalid
           }
           if offset != end {
             return invalid
@@ -325,10 +297,9 @@ pub fn decode_control_with_context(
           if offset == end {
             Complete(GoAwayRequest({ uri, timeout_ms, }), end)
           } else {
-            let (request_id, offset) = match
-              read_varint_at(input, offset, end) {
-              Some(pair) => pair
-              None => return invalid
+            guard read_varint_at(input, offset, end)
+              is Some((request_id, offset)) else {
+              return invalid
             }
             if offset != end {
               return invalid
@@ -341,17 +312,14 @@ pub fn decode_control_with_context(
       if context == ControlStream {
         return invalid
       }
-      let (code, offset) = match read_varint_at(input, start, end) {
-        Some(pair) => pair
-        None => return invalid
+      guard read_varint_at(input, start, end) is Some((code, offset)) else {
+        return invalid
       }
-      let (retry_interval, offset) = match read_varint_at(input, offset, end) {
-        Some(pair) => pair
-        None => return invalid
+      guard read_varint_at(input, offset, end) is Some((retry_interval, offset)) else {
+        return invalid
       }
-      let (reason, offset) = match read_reason_at(input, offset, end) {
-        Some(pair) => pair
-        None => return invalid
+      guard read_reason_at(input, offset, end) is Some((reason, offset)) else {
+        return invalid
       }
       Complete(
         RequestError({
@@ -364,17 +332,14 @@ pub fn decode_control_with_context(
       )
     }
     0x0b => {
-      let (code, offset) = match read_varint_at(input, start, end) {
-        Some(pair) => pair
-        None => return invalid
+      guard read_varint_at(input, start, end) is Some((code, offset)) else {
+        return invalid
       }
-      let (stream_count, offset) = match read_varint_at(input, offset, end) {
-        Some(pair) => pair
-        None => return invalid
+      guard read_varint_at(input, offset, end) is Some((stream_count, offset)) else {
+        return invalid
       }
-      let (reason, offset) = match read_reason_at(input, offset, end) {
-        Some(pair) => pair
-        None => return invalid
+      guard read_reason_at(input, offset, end) is Some((reason, offset)) else {
+        return invalid
       }
       if offset != end {
         return invalid
@@ -385,18 +350,15 @@ pub fn decode_control_with_context(
       if context == ControlStream {
         return invalid
       }
-      let (request_id, offset) = match read_varint_at(input, start, end) {
-        Some(pair) => pair
-        None => return invalid
+      guard read_varint_at(input, start, end) is Some((request_id, offset)) else {
+        return invalid
       }
-      let (track_namespace, offset) = match
-        read_track_namespace_at(input, offset, end) {
-        Some(pair) => pair
-        None => return invalid
+      guard read_track_namespace_at(input, offset, end)
+        is Some((track_namespace, offset)) else {
+        return invalid
       }
-      let (parameters, offset) = match read_parameters_at(input, offset, end) {
-        Some(pair) => pair
-        None => return invalid
+      guard read_parameters_at(input, offset, end) is Some((parameters, offset)) else {
+        return invalid
       }
       match validate_parameters_scope(parameters, NamespaceRequest) {
         Ok(_) => ()
@@ -416,10 +378,9 @@ pub fn decode_control_with_context(
       if context == ControlStream {
         return invalid
       }
-      let (track_namespace, offset) = match
-        read_track_namespace_at(input, start, end) {
-        Some(pair) => pair
-        None => return invalid
+      guard read_track_namespace_at(input, start, end)
+        is Some((track_namespace, offset)) else {
+        return invalid
       }
       if offset != end {
         return invalid

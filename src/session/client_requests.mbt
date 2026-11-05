@@ -234,18 +234,16 @@ fn ClientSession::request_stream_route(
   self : ClientSession,
   stream : Int64,
 ) -> RequestStreamRoute {
-  match self.namespace_subscription_streams.get(stream) {
-    Some(request_id) => return NamespaceSubscriptionResponse(request_id)
-    None => ()
+  if self.namespace_subscription_streams.get(stream) is Some(request_id) {
+    return NamespaceSubscriptionResponse(request_id)
   }
-  match self.namespace_request_streams.get(stream) {
-    Some(request_id) if self.namespace_requests.get(request_id).unwrap().locally_initiated =>
+  if self.namespace_request_streams.get(stream) is Some(request_id) {
+    if self.namespace_requests.get(request_id).unwrap().locally_initiated {
       return NamespacePublicationResponse(request_id)
-    _ => ()
+    }
   }
-  match self.fetch_streams.get(stream) {
-    Some(request_id) => return FetchResponse(request_id)
-    None => ()
+  if self.fetch_streams.get(stream) is Some(request_id) {
+    return FetchResponse(request_id)
   }
   match self.request_streams.get(stream) {
     Some(request_id) => TrackResponse(request_id)
@@ -328,17 +326,15 @@ fn ClientSession::receive_response(
           self.drain_joining_fetches(request_id, stream)
         }
         (Subscribing, @protocol.SubscribeOk(response)) if !request.is_accepted() => {
-          let dynamic_groups = match
-            track_supports_dynamic_groups(response.properties) {
-            Some(value) => value
-            None =>
-              return Ok(
-                self.end_session(
-                  Local(close_protocol_violation, b""),
-                  Some(close_protocol_violation),
-                  b"",
-                ),
-              )
+          guard track_supports_dynamic_groups(response.properties)
+            is Some(dynamic_groups) else {
+            return Ok(
+              self.end_session(
+                Local(close_protocol_violation, b""),
+                Some(close_protocol_violation),
+                b"",
+              ),
+            )
           }
           if self.aliases.get(response.track_alias) is Some(_) {
             return Err(AliasInUse)
@@ -526,10 +522,7 @@ fn ClientSession::request_local_fin_actions(
     self.note_request_local_fin(stream)
     return [SendFin(stream, b"")]
   }
-  let request_id = match self.request_streams.get(stream) {
-    Some(value) => value
-    None => return []
-  }
+  guard self.request_streams.get(stream) is Some(request_id) else { return [] }
   let request = self.requests.get(request_id).unwrap()
   if request.lifetime.local_send_closed {
     return []
@@ -539,63 +532,13 @@ fn ClientSession::request_local_fin_actions(
 }
 
 ///|
-/// Decode one variable-length integer from raw Track Properties.
-fn read_track_property_vi64(input : Bytes, offset : Int32) -> (UInt64, Int32)? {
-  let end = if offset + 9 < input.length() {
-    offset + 9
-  } else {
-    input.length()
-  }
-  match @protocol.decode_vi64(input[offset:end].to_owned()) {
-    @protocol.Complete(value, consumed) => Some((value, offset + consumed))
-    _ => None
-  }
-}
-
-///|
 /// Scan Draft 18 Track Properties, ignoring unknown properties safely.
 fn track_supports_dynamic_groups(properties : Bytes) -> Bool? {
-  let mut offset = 0
-  let mut previous = 0UL
-  let mut supported = false
-  while offset < properties.length() {
-    let (delta, after_delta) = match
-      read_track_property_vi64(properties, offset) {
-      Some(value) => value
-      None => return None
-    }
-    if delta > 0xffffffffffffffffUL - previous {
-      return None
-    }
-    let kind = previous + delta
-    offset = after_delta
-    if (kind & 1UL) == 0UL {
-      let (value, next) = match read_track_property_vi64(properties, offset) {
-        Some(value) => value
-        None => return None
-      }
-      if kind == 0x30UL {
-        if value > 1UL {
-          return None
-        }
-        supported = value == 1UL
-      }
-      offset = next
-    } else {
-      let (length, after_length) = match
-        read_track_property_vi64(properties, offset) {
-        Some(value) => value
-        None => return None
-      }
-      if length > 65535UL ||
-        length > (properties.length() - after_length).to_uint64() {
-        return None
-      }
-      offset = after_length + length.to_int()
-    }
-    previous = kind
+  match @protocol.find_track_property_varint(properties, 0x30UL) {
+    Ok(Some(value)) => if value > 1UL { None } else { Some(value == 1UL) }
+    Ok(None) => Some(false)
+    Err(_) => None
   }
-  Some(supported)
 }
 
 ///|
@@ -633,15 +576,13 @@ fn ClientSession::note_request_local_fin(
         ),
       )
     None =>
-      match self.request_streams.get(stream) {
-        Some(request_id) =>
-          ignore(
-            self.requests.get(request_id).unwrap().lifetime.transition(
-              LocalFin,
-              true,
-            ),
-          )
-        None => ()
+      if self.request_streams.get(stream) is Some(request_id) {
+        ignore(
+          self.requests.get(request_id).unwrap().lifetime.transition(
+            LocalFin,
+            true,
+          ),
+        )
       }
   }
 }
@@ -778,9 +719,8 @@ pub fn ClientSession::finish_subscription_updates(
     Ok(_) => ()
     Err(error) => return Err(error)
   }
-  let request = match self.requests.get(request_id) {
-    Some(value) => value
-    None => return Err(UnknownRequest)
+  guard self.requests.get(request_id) is Some(request) else {
+    return Err(UnknownRequest)
   }
   if request.kind != Subscribing {
     return Err(SubscriptionNotAccepted)
@@ -791,9 +731,8 @@ pub fn ClientSession::finish_subscription_updates(
   if request.is_terminal() {
     return Err(SubscriptionNotAccepted)
   }
-  let stream = match request.stream {
-    Some(value) => value
-    None => return Err(SubscriptionNotAccepted)
+  guard request.stream is Some(stream) else {
+    return Err(SubscriptionNotAccepted)
   }
   Ok(self.finish_actions(self.request_local_fin_actions(stream)))
 }
@@ -911,9 +850,8 @@ fn ClientSession::end_request_stream(
     }
     None => ()
   }
-  match self.inbound_subscriptions.get(stream) {
-    Some(_) => return self.end_inbound_subscription(stream, event)
-    None => ()
+  if self.inbound_subscriptions.get(stream) is Some(_) {
+    return self.end_inbound_subscription(stream, event)
   }
   if self.inbound_namespace_subscriptions.get(stream) is Some(_) {
     return self.end_inbound_namespace_subscription(stream, event)
@@ -924,10 +862,7 @@ fn ClientSession::end_request_stream(
   if self.namespace_request_streams.get(stream) is Some(_) {
     return self.end_namespace_request(stream, event)
   }
-  let request_id = match self.request_streams.get(stream) {
-    Some(value) => value
-    None => return []
-  }
+  guard self.request_streams.get(stream) is Some(request_id) else { return [] }
   let request = self.requests.get(request_id).unwrap()
   let publisher_pending_publish_done = self.has_pending_publish_done(stream)
   if request.is_fully_terminal() &&
@@ -962,22 +897,26 @@ fn ClientSession::end_request_stream(
   if effects.stop_receiving {
     actions.push(StopReceiving(stream, error_code))
   }
-  for action in self.cancel_outgoing_object_streams(stream, error_code) {
-    actions.push(action)
-  }
+  actions.append(self.cancel_outgoing_object_streams(stream, error_code))
   if request.kind == Subscribing {
-    for action in self.cancel_incoming_object_streams(request_id, error_code) {
-      actions.push(action)
-    }
+    actions.append(self.cancel_incoming_object_streams(request_id, error_code))
   }
   if request.kind == Publishing {
-    let child_streams : Array[Int64] = []
-    for (child_stream, inbound) in self.inbound_subscriptions {
-      if inbound.publisher_request_id == request_id &&
-        (inbound.state != Ended || self.has_pending_publish_done(child_stream)) {
-        child_streams.push(child_stream)
-      }
-    }
+    let child_streams = self.inbound_subscriptions
+      .iter()
+      .filter_map(fn(entry) {
+        let (child_stream, inbound) = entry
+        if inbound.publisher_request_id == request_id &&
+          (
+            inbound.state != Ended ||
+            self.has_pending_publish_done(child_stream)
+          ) {
+          Some(child_stream)
+        } else {
+          None
+        }
+      })
+      .to_array()
     for child_stream in child_streams {
       for
         action in self.end_inbound_subscription(
@@ -1015,27 +954,11 @@ fn ClientSession::cancel_outgoing_object_streams(
     }
     None => ()
   }
-  for (_, pending) in self.pending_object_streams {
-    if pending.subscription_stream == subscription_stream {
-      pending.cancelled_error_code = Some(error_code)
-    }
-  }
-  let object_streams : Array[Int64] = []
-  for (object_stream, outgoing) in self.outgoing_object_streams {
-    if outgoing.subscription_stream == subscription_stream {
-      object_streams.push(object_stream)
-    }
-  }
-  let actions : Array[SessionAction] = []
-  for object_stream in object_streams {
-    match self.outgoing_object_streams.get(object_stream) {
-      Some(outgoing) if !outgoing.abort_sent => {
-        outgoing.abort_sent = true
-        actions.push(AbortSend(object_stream, error_code))
-      }
-      _ => ()
-    }
-    self.close_outgoing_object_stream(object_stream)
+  let (streams, actions) = self.abort_subscription_object_streams(
+    subscription_stream, error_code,
+  )
+  for stream in streams {
+    self.close_outgoing_object_stream(stream)
   }
   self.published_subscriptions.remove(subscription_stream)
   actions
@@ -1058,12 +981,17 @@ fn ClientSession::cancel_incoming_object_streams(
   request_id : UInt64,
   error_code : UInt64,
 ) -> Array[SessionAction] {
-  let object_streams : Array[Int64] = []
-  for (object_stream, state) in self.incoming_object_streams {
-    if state.request_id == Some(request_id) {
-      object_streams.push(object_stream)
-    }
-  }
+  let object_streams = self.incoming_object_streams
+    .iter()
+    .filter_map(fn(entry) {
+      let (stream, state) = entry
+      if state.request_id == Some(request_id) {
+        Some(stream)
+      } else {
+        None
+      }
+    })
+    .to_array()
   let actions : Array[SessionAction] = []
   for object_stream in object_streams {
     self.incoming_object_streams.remove(object_stream)

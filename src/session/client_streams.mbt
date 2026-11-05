@@ -135,9 +135,8 @@ fn ClientSession::stream_opened(
         Some(_) => return Err(DuplicateStream)
         None => ()
       }
-      match self.open_namespace_stream(request_id, stream) {
-        Some(result) => return result
-        None => ()
+      if self.open_namespace_stream(request_id, stream) is Some(result) {
+        return result
       }
       let request = match self.requests.get(request_id) {
         Some(value) if value.stream is None => value
@@ -148,10 +147,7 @@ fn ClientSession::stream_opened(
       self.request_streams[stream] = request_id
       if request.is_terminal() {
         if request.lifetime.cancelled {
-          let error_code = match request.lifetime.cancel_error_code {
-            Some(value) => value
-            None => 1UL
-          }
+          let error_code = request.lifetime.cancel_error_code.unwrap_or(1UL)
           return Ok(self.end_request_stream(stream, Cancel(error_code)))
         }
         return Ok([])
@@ -179,18 +175,16 @@ fn ClientSession::stream_opened(
       Ok([SendChunk(stream, bytes)])
     }
     Object(token) => {
-      let pending = match self.pending_object_streams.get(token) {
-        Some(value) => value
-        None => return Err(UnknownStream)
+      guard self.pending_object_streams.get(token) is Some(pending) else {
+        return Err(UnknownStream)
       }
       match pending.cancelled_error_code {
         Some(error_code) => {
           self.pending_object_streams.remove(token)
-          match self.published_subscriptions.get(pending.subscription_stream) {
-            Some(subscription) =>
-              subscription.opened_stream_count = subscription.opened_stream_count +
-                1UL
-            None => ()
+          if self.published_subscriptions.get(pending.subscription_stream)
+            is Some(subscription) {
+            subscription.opened_stream_count = subscription.opened_stream_count +
+              1UL
           }
           return Ok(
             [AbortSend(stream, error_code)] +
@@ -201,21 +195,19 @@ fn ClientSession::stream_opened(
       }
       if !self.subscription_is_active(pending.subscription_stream) {
         self.pending_object_streams.remove(token)
-        match self.published_subscriptions.get(pending.subscription_stream) {
-          Some(subscription) =>
-            subscription.opened_stream_count = subscription.opened_stream_count +
-              1UL
-          None => ()
+        if self.published_subscriptions.get(pending.subscription_stream)
+          is Some(subscription) {
+          subscription.opened_stream_count = subscription.opened_stream_count +
+            1UL
         }
         return Ok(
           [AbortSend(stream, 1UL)] +
           self.finish_failed_subscription(pending.subscription_stream),
         )
       }
-      let subscription = match
-        self.published_subscriptions.get(pending.subscription_stream) {
-        Some(value) => value
-        None => return Err(SubscriptionNotAccepted)
+      guard self.published_subscriptions.get(pending.subscription_stream)
+        is Some(subscription) else {
+        return Err(SubscriptionNotAccepted)
       }
       if self.outgoing_object_streams.get(stream) is Some(_) {
         return Err(Track(UnexpectedMessage))
@@ -277,9 +269,8 @@ fn ClientSession::stream_finished(
     }
     None => ()
   }
-  match self.inbound_fetch_streams.get(stream) {
-    Some(_) => return self.finish_inbound_fetch_data(stream)
-    None => ()
+  if self.inbound_fetch_streams.get(stream) is Some(_) {
+    return self.finish_inbound_fetch_data(stream)
   }
   match self.ignored_object_streams.get(stream) {
     Some(ignored) => {
@@ -321,17 +312,14 @@ fn ClientSession::stream_finished(
       if group_finished {
         actions.push(EmitNotice(GroupFinished(RequestId(request_id), group_id)))
       }
-      match self.take_ready_publish_done(request_id) {
-        Some(done) =>
-          actions.push(EmitNotice(PublishDone(RequestId(request_id), done)))
-        None => ()
+      if self.take_ready_publish_done(request_id) is Some(done) {
+        actions.push(EmitNotice(PublishDone(RequestId(request_id), done)))
       }
       Ok(actions)
     }
     None => {
-      match self.finish_request_stream(stream) {
-        Some(result) => return result
-        None => ()
+      if self.finish_request_stream(stream) is Some(result) {
+        return result
       }
       if self.inbound_unclassified_buffers.get(stream) is Some(_) {
         self.inbound_unclassified_buffers.remove(stream)
@@ -354,9 +342,8 @@ fn ClientSession::stream_reset(
     self.inbound_stream_kinds.get(stream) is Some(Control) {
     return Err(Handshake(self.handshake.control_closed()))
   }
-  match self.inbound_fetch_streams.get(stream) {
-    Some(_) => return self.reset_inbound_fetch_data(stream, error_code)
-    None => ()
+  if self.inbound_fetch_streams.get(stream) is Some(_) {
+    return self.reset_inbound_fetch_data(stream, error_code)
   }
   match self.ignored_object_streams.get(stream) {
     Some(ignored) => {
@@ -387,17 +374,14 @@ fn ClientSession::stream_reset(
       let actions : Array[SessionAction] = [
         EmitNotice(ObjectStreamReset(RequestId(request_id), StreamId(stream))),
       ]
-      match self.take_ready_publish_done(request_id) {
-        Some(done) =>
-          actions.push(EmitNotice(PublishDone(RequestId(request_id), done)))
-        None => ()
+      if self.take_ready_publish_done(request_id) is Some(done) {
+        actions.push(EmitNotice(PublishDone(RequestId(request_id), done)))
       }
       Ok(actions)
     }
     None => {
-      match self.reset_request_stream(stream, error_code) {
-        Some(result) => return result
-        None => ()
+      if self.reset_request_stream(stream, error_code) is Some(result) {
+        return result
       }
       self.inbound_buffers.remove(stream)
       self.incoming_object_streams.remove(stream)

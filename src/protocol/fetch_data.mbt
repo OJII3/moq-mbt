@@ -16,16 +16,14 @@ pub fn encode_fetch_header(header : FetchHeader) -> Bytes {
 
 ///|
 pub fn decode_fetch_header(input : Bytes) -> DecodeResult[FetchHeader] {
-  let (kind, after_kind) = match read_vi64(input, 0, input.length()) {
-    Some(pair) => pair
-    None => return Incomplete
+  guard read_vi64(input, 0, input.length()) is Some((kind, after_kind)) else {
+    return Incomplete
   }
   if kind != 0x05UL {
     return Invalid(UnexpectedMessageType(kind))
   }
-  let (request_id, end) = match read_vi64(input, after_kind, input.length()) {
-    Some(pair) => pair
-    None => return Incomplete
+  guard read_vi64(input, after_kind, input.length()) is Some((request_id, end)) else {
+    return Incomplete
   }
   Complete({ request_id, }, end)
 }
@@ -101,9 +99,8 @@ pub fn FetchDataDecoder::decode_next(
   self : FetchDataDecoder,
   input : Bytes,
 ) -> DecodeResult[FetchDataFrame] {
-  let (flags, after_flags) = match read_vi64(input, 0, input.length()) {
-    Some(pair) => pair
-    None => return Incomplete
+  guard read_vi64(input, 0, input.length()) is Some((flags, after_flags)) else {
+    return Incomplete
   }
   let range_kind = if flags == 0x8cUL {
     Some(EndOfNonExistentRange)
@@ -138,9 +135,8 @@ pub fn FetchDataDecoder::decode_next(
   }
   let mut next = after_flags
   let group_value = if has_group_delta {
-    let (value, end) = match read_vi64(input, next, input.length()) {
-      Some(pair) => pair
-      None => return Incomplete
+    guard read_vi64(input, next, input.length()) is Some((value, end)) else {
+      return Incomplete
     }
     next = end
     Some(value)
@@ -150,9 +146,8 @@ pub fn FetchDataDecoder::decode_next(
   let explicit_subgroup = if !is_range_end &&
     (flags & 0x40UL) == 0UL &&
     subgroup_mode == 3UL {
-    let (value, end) = match read_vi64(input, next, input.length()) {
-      Some(pair) => pair
-      None => return Incomplete
+    guard read_vi64(input, next, input.length()) is Some((value, end)) else {
+      return Incomplete
     }
     next = end
     Some(value)
@@ -160,9 +155,8 @@ pub fn FetchDataDecoder::decode_next(
     None
   }
   let object_delta = if has_object_delta {
-    let (value, end) = match read_vi64(input, next, input.length()) {
-      Some(pair) => pair
-      None => return Incomplete
+    guard read_vi64(input, next, input.length()) is Some((value, end)) else {
+      return Incomplete
     }
     next = end
     Some(value)
@@ -271,14 +265,12 @@ pub fn FetchDataDecoder::decode_next(
   } else {
     self.previous_priority
   }
-  let publisher_priority = match publisher_priority {
-    Some(value) => value
-    None => return Invalid(InvalidFetchObject)
+  guard publisher_priority is Some(publisher_priority) else {
+    return Invalid(InvalidFetchObject)
   }
-  let (payload_length, after_payload_length) = match
-    read_vi64(input, next, input.length()) {
-    Some(pair) => pair
-    None => return Incomplete
+  guard read_vi64(input, next, input.length())
+    is Some((payload_length, after_payload_length)) else {
+    return Incomplete
   }
   next = after_payload_length
   if payload_length > (input.length() - next).to_uint64() {
@@ -363,10 +355,7 @@ pub fn FetchDataEncoder::encode(
     FetchDataObject(object) => object.object_id
     FetchDataRangeEnd(range) => range.object_id
   }
-  let is_range_end = match frame {
-    FetchDataRangeEnd(_) => true
-    _ => false
-  }
+  let is_range_end = frame is FetchDataRangeEnd(_)
   let group_delta = if is_range_end {
     group_id
   } else {
@@ -405,9 +394,7 @@ pub fn FetchDataEncoder::encode(
       append_vi64s(fields, group_delta)
       append_vi64s(fields, object_id)
       append_vi64s(bytes, flags)
-      for byte in fields {
-        bytes.push(byte)
-      }
+      bytes.push_iter(fields.iter())
     }
     FetchDataObject(object) => {
       let subgroup_mode = if object.datagram_forwarding {
@@ -475,18 +462,12 @@ pub fn FetchDataEncoder::encode(
       }
       if !object.properties.is_empty() {
         append_vi64s(fields, object.properties.length().to_uint64())
-        for byte in object.properties {
-          fields.push(byte)
-        }
+        fields.push_iter(object.properties.iter())
       }
       append_vi64s(fields, object.payload.length().to_uint64())
-      for byte in object.payload {
-        fields.push(byte)
-      }
+      fields.push_iter(object.payload.iter())
       append_vi64s(bytes, flags)
-      for byte in fields {
-        bytes.push(byte)
-      }
+      bytes.push_iter(fields.iter())
       self.previous_group_id = Some(group_id)
       self.previous_object_id = Some(object_id)
       if !object.datagram_forwarding {

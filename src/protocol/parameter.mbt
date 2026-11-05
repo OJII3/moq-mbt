@@ -117,17 +117,13 @@ fn encode_track_name(track : TrackName) -> Result[Bytes, CodecError] {
       return Err(InvalidTrackName)
     }
     append_vi64s(encoded, field.length().to_uint64())
-    for byte in field {
-      encoded.push(byte)
-    }
+    encoded.push_iter(field.iter())
   }
   if total > 4096 {
     return Err(InvalidTrackName)
   }
   append_vi64s(encoded, track.name.length().to_uint64())
-  for byte in track.name {
-    encoded.push(byte)
-  }
+  encoded.push_iter(track.name.iter())
   Ok(Bytes::from_array(encoded))
 }
 
@@ -167,9 +163,7 @@ fn encode_parameters(
         append_vi64s(encoded, value)
       (0x03, Data(value)) => {
         append_vi64s(encoded, value.length().to_uint64())
-        for byte in value {
-          encoded.push(byte)
-        }
+        encoded.push_iter(value.iter())
       }
       (0x34, NamespacePrefix(value)) => {
         let body = match encode_track_namespace(value) {
@@ -177,9 +171,7 @@ fn encode_parameters(
           Err(error) => return Err(error)
         }
         append_vi64s(encoded, body.length().to_uint64())
-        for byte in body {
-          encoded.push(byte)
-        }
+        encoded.push_iter(body.iter())
       }
       (0x21, Filter(filter)) => {
         let body = match encode_subscription_filter(filter) {
@@ -187,9 +179,7 @@ fn encode_parameters(
           Err(error) => return Err(error)
         }
         append_vi64s(encoded, body.length().to_uint64())
-        for byte in body {
-          encoded.push(byte)
-        }
+        encoded.push_iter(body.iter())
       }
       _ => return Err(UnsupportedParameter(parameter.kind))
     }
@@ -218,9 +208,7 @@ fn encode_track_namespace(
       return Err(InvalidTrackName)
     }
     append_vi64s(encoded, field.length().to_uint64())
-    for byte in field {
-      encoded.push(byte)
-    }
+    encoded.push_iter(field.iter())
   }
   Ok(Bytes::from_array(encoded))
 }
@@ -273,9 +261,8 @@ fn encode_subscription_filter(
 ///|
 fn decode_subscription_filter(input : Bytes) -> SubscriptionFilter? {
   let end = input.length()
-  let (kind, offset) = match read_varint_at(input, 0, end) {
-    Some(pair) => pair
-    None => return None
+  guard read_varint_at(input, 0, end) is Some((kind, offset)) else {
+    return None
   }
   let filter = match kind {
     1 => {
@@ -291,13 +278,11 @@ fn decode_subscription_filter(input : Bytes) -> SubscriptionFilter? {
       LargestObject
     }
     3 => {
-      let (group, offset) = match read_varint_at(input, offset, end) {
-        Some(pair) => pair
-        None => return None
+      guard read_varint_at(input, offset, end) is Some((group, offset)) else {
+        return None
       }
-      let (object, offset) = match read_varint_at(input, offset, end) {
-        Some(pair) => pair
-        None => return None
+      guard read_varint_at(input, offset, end) is Some((object, offset)) else {
+        return None
       }
       if offset != end {
         return None
@@ -305,17 +290,14 @@ fn decode_subscription_filter(input : Bytes) -> SubscriptionFilter? {
       AbsoluteStart(group, object)
     }
     4 => {
-      let (group, offset) = match read_varint_at(input, offset, end) {
-        Some(pair) => pair
-        None => return None
+      guard read_varint_at(input, offset, end) is Some((group, offset)) else {
+        return None
       }
-      let (object, offset) = match read_varint_at(input, offset, end) {
-        Some(pair) => pair
-        None => return None
+      guard read_varint_at(input, offset, end) is Some((object, offset)) else {
+        return None
       }
-      let (delta, offset) = match read_varint_at(input, offset, end) {
-        Some(pair) => pair
-        None => return None
+      guard read_varint_at(input, offset, end) is Some((delta, offset)) else {
+        return None
       }
       if offset != end || delta > 0xffffffffffffffffUL - group {
         return None
@@ -328,39 +310,52 @@ fn decode_subscription_filter(input : Bytes) -> SubscriptionFilter? {
 }
 
 ///|
-fn read_track_at(
+fn read_namespace_fields_at(
   input : Bytes,
   offset : Int32,
   end : Int32,
-) -> (TrackName, Int32)? {
-  let (field_count, first_next) = match read_varint_at(input, offset, end) {
-    Some(pair) => pair
-    None => return None
-  }
-  if field_count > 32UL {
-    return None
-  }
-  let namespace_fields : Array[Bytes] = []
+  count : UInt64,
+) -> (Array[Bytes], Int32, Int32)? {
+  let fields : Array[Bytes] = []
   let mut total = 0
-  let mut next = first_next
-  for _ in 0..<field_count.to_int() {
-    let (field, field_end) = match read_bytes_at(input, next, end) {
-      Some(pair) => pair
-      None => return None
+  let mut next = offset
+  for _ in 0..<count.to_int() {
+    guard read_bytes_at(input, next, end) is Some((field, field_end)) else {
+      return None
     }
     if field.is_empty() {
       return None
     }
     total += field.length()
-    namespace_fields.push(field)
+    if total > 4096 {
+      return None
+    }
+    fields.push(field)
     next = field_end
   }
-  let (name, name_end) = match read_bytes_at(input, next, end) {
-    Some(pair) => pair
-    None => return None
+  Some((fields, total, next))
+}
+
+///|
+fn read_track_at(
+  input : Bytes,
+  offset : Int32,
+  end : Int32,
+) -> (TrackName, Int32)? {
+  guard read_varint_at(input, offset, end) is Some((field_count, first_next)) else {
+    return None
   }
-  total += name.length()
-  if total > 4096 {
+  if field_count > 32UL {
+    return None
+  }
+  guard read_namespace_fields_at(input, first_next, end, field_count)
+    is Some((namespace_fields, total, next)) else {
+    return None
+  }
+  guard read_bytes_at(input, next, end) is Some((name, name_end)) else {
+    return None
+  }
+  if total + name.length() > 4096 {
     return None
   }
   Some(({ namespace_fields, name, }, name_end))
@@ -372,9 +367,8 @@ fn read_parameters_at(
   offset : Int32,
   end : Int32,
 ) -> (Array[MessageParameter], Int32)? {
-  let (count, first_next) = match read_varint_at(input, offset, end) {
-    Some(pair) => pair
-    None => return None
+  guard read_varint_at(input, offset, end) is Some((count, first_next)) else {
+    return None
   }
   if count > (end - first_next).to_uint64() {
     return None
@@ -383,9 +377,8 @@ fn read_parameters_at(
   let mut previous = 0UL
   let mut next = first_next
   for i in 0..<count.to_int() {
-    let (delta, after_delta) = match read_varint_at(input, next, end) {
-      Some(pair) => pair
-      None => return None
+    guard read_varint_at(input, next, end) is Some((delta, after_delta)) else {
+      return None
     }
     if delta > 0xffffffffffffffffUL - previous {
       return None
@@ -408,47 +401,41 @@ fn read_parameters_at(
         Byte(byte)
       }
       0x09 => {
-        let (group, after_group) = match
-          read_varint_at(input, after_delta, end) {
-          Some(pair) => pair
-          None => return None
+        guard read_varint_at(input, after_delta, end)
+          is Some((group, after_group)) else {
+          return None
         }
-        let (object, after_object) = match
-          read_varint_at(input, after_group, end) {
-          Some(pair) => pair
-          None => return None
+        guard read_varint_at(input, after_group, end)
+          is Some((object, after_object)) else {
+          return None
         }
         next = after_object
         Location(group, object)
       }
       0x02 | 0x04 | 0x06 | 0x08 | 0x0a | 0x32 => {
-        let (value, after_value) = match
-          read_varint_at(input, after_delta, end) {
-          Some(pair) => pair
-          None => return None
+        guard read_varint_at(input, after_delta, end)
+          is Some((value, after_value)) else {
+          return None
         }
         next = after_value
         VarInt(value)
       }
       0x03 => {
-        let (value, after_value) = match
-          read_bytes_at(input, after_delta, end) {
-          Some(pair) => pair
-          None => return None
+        guard read_bytes_at(input, after_delta, end)
+          is Some((value, after_value)) else {
+          return None
         }
         next = after_value
         Data(value)
       }
       0x34 => {
-        let (value, after_value) = match
-          read_bytes_at(input, after_delta, end) {
-          Some(pair) => pair
-          None => return None
+        guard read_bytes_at(input, after_delta, end)
+          is Some((value, after_value)) else {
+          return None
         }
-        let (track_namespace, namespace_end) = match
-          read_track_namespace_at(value, 0, value.length()) {
-          Some(pair) => pair
-          None => return None
+        guard read_track_namespace_at(value, 0, value.length())
+          is Some((track_namespace, namespace_end)) else {
+          return None
         }
         if namespace_end != value.length() {
           return None
@@ -457,14 +444,12 @@ fn read_parameters_at(
         NamespacePrefix(track_namespace)
       }
       0x21 => {
-        let (bytes, after_value) = match
-          read_bytes_at(input, after_delta, end) {
-          Some(pair) => pair
-          None => return None
+        guard read_bytes_at(input, after_delta, end)
+          is Some((bytes, after_value)) else {
+          return None
         }
-        let filter = match decode_subscription_filter(bytes) {
-          Some(value) => value
-          None => return None
+        guard decode_subscription_filter(bytes) is Some(filter) else {
+          return None
         }
         next = after_value
         Filter(filter)
@@ -483,30 +468,15 @@ fn read_track_namespace_at(
   offset : Int32,
   end : Int32,
 ) -> (TrackNamespace, Int32)? {
-  let (count, first_next) = match read_varint_at(input, offset, end) {
-    Some(pair) => pair
-    None => return None
+  guard read_varint_at(input, offset, end) is Some((count, first_next)) else {
+    return None
   }
   if count > 32UL {
     return None
   }
-  let fields : Array[Bytes] = []
-  let mut total = 0
-  let mut next = first_next
-  for _ in 0..<count.to_int() {
-    let (field, field_end) = match read_bytes_at(input, next, end) {
-      Some(pair) => pair
-      None => return None
-    }
-    if field.is_empty() {
-      return None
-    }
-    total += field.length()
-    if total > 4096 {
-      return None
-    }
-    fields.push(field)
-    next = field_end
+  guard read_namespace_fields_at(input, first_next, end, count)
+    is Some((fields, _, next)) else {
+    return None
   }
   Some(({ fields, }, next))
 }
@@ -517,9 +487,8 @@ fn read_reason_at(
   offset : Int32,
   end : Int32,
 ) -> (Bytes, Int32)? {
-  let (reason, next) = match read_bytes_at(input, offset, end) {
-    Some(pair) => pair
-    None => return None
+  guard read_bytes_at(input, offset, end) is Some((reason, next)) else {
+    return None
   }
   if reason.length() > 1024 {
     return None

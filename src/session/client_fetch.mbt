@@ -228,10 +228,7 @@ pub fn ClientSession::send_fetch_object(
   if !fetch_object_in_range(fetch, object) {
     return Err(InvalidFetchRange)
   }
-  let stream = match fetch.data_stream {
-    Some(value) => value
-    None => return Err(UnknownStream)
-  }
+  guard fetch.data_stream is Some(stream) else { return Err(UnknownStream) }
   let encoder = match self.outgoing_fetch_streams.get(stream) {
     Some(value) if !value.finishing => value.encoder
     Some(_) => return Err(UnknownStream)
@@ -265,10 +262,7 @@ pub fn ClientSession::send_fetch_range_end(
   if !fetch_location_in_range(fetch, location) {
     return Err(InvalidFetchRange)
   }
-  let stream = match fetch.data_stream {
-    Some(value) => value
-    None => return Err(UnknownStream)
-  }
+  guard fetch.data_stream is Some(stream) else { return Err(UnknownStream) }
   let outgoing = self.outgoing_fetch_streams.get(stream).unwrap()
   if outgoing.finishing {
     return Err(UnknownStream)
@@ -294,10 +288,7 @@ pub fn ClientSession::finish_fetch(
       value
     _ => return Err(UnknownRequest)
   }
-  let stream = match fetch.data_stream {
-    Some(value) => value
-    None => return Err(UnknownStream)
-  }
+  guard fetch.data_stream is Some(stream) else { return Err(UnknownStream) }
   match self.outgoing_fetch_streams.get(stream) {
     Some(outgoing) if !outgoing.finishing => {
       outgoing.finishing = true
@@ -465,9 +456,8 @@ fn ClientSession::finish_inbound_fetch_data(
   self : ClientSession,
   stream : Int64,
 ) -> Result[Array[SessionAction], ClientSessionError] {
-  let inbound = match self.inbound_fetch_streams.get(stream) {
-    Some(value) => value
-    None => return Err(UnknownStream)
+  guard self.inbound_fetch_streams.get(stream) is Some(inbound) else {
+    return Err(UnknownStream)
   }
   let fetch = self.fetches.get(inbound.request_id).unwrap()
   if fetch.lifetime.cancelled || fetch.state == FetchTerminal {
@@ -489,9 +479,8 @@ fn ClientSession::reset_inbound_fetch_data(
   stream : Int64,
   error_code : UInt64,
 ) -> Result[Array[SessionAction], ClientSessionError] {
-  let inbound = match self.inbound_fetch_streams.get(stream) {
-    Some(value) => value
-    None => return Err(UnknownStream)
+  guard self.inbound_fetch_streams.get(stream) is Some(inbound) else {
+    return Err(UnknownStream)
   }
   let fetch = self.fetches.get(inbound.request_id).unwrap()
   Ok(
@@ -518,9 +507,8 @@ fn ClientSession::receive_fetch_data(
   stream : Int64,
   bytes : Bytes,
 ) -> Result[Array[SessionAction], ClientSessionError] {
-  let data = match self.inbound_fetch_streams.get(stream) {
-    Some(value) => value
-    None => return Err(UnknownStream)
+  guard self.inbound_fetch_streams.get(stream) is Some(data) else {
+    return Err(UnknownStream)
   }
   let fetch = self.fetches.get(data.request_id).unwrap()
   if fetch.lifetime.cancelled || fetch.state == FetchTerminal {

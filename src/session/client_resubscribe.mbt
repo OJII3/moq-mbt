@@ -29,11 +29,7 @@ fn copy_desired_subscription(
 fn copy_desired_subscriptions(
   desired_subscriptions : Array[DesiredSubscription],
 ) -> Array[DesiredSubscription] {
-  let result : Array[DesiredSubscription] = []
-  for desired in desired_subscriptions {
-    result.push(copy_desired_subscription(desired))
-  }
-  result
+  desired_subscriptions.map(copy_desired_subscription)
 }
 
 ///|
@@ -52,13 +48,9 @@ pub fn ClientSession::forget_desired_subscriptions(
   self : ClientSession,
   track : @protocol.TrackName,
 ) -> Unit {
-  let remaining : Array[DesiredSubscription] = []
-  for desired in self.desired_subscriptions {
-    if desired.track != track {
-      remaining.push(desired)
-    }
-  }
-  self.desired_subscriptions = remaining
+  self.desired_subscriptions = self.desired_subscriptions.filter(fn(desired) {
+    desired.track != track
+  })
 }
 
 ///|
@@ -76,14 +68,11 @@ fn ClientSession::forget_desired_subscription(
   track : @protocol.TrackName,
   parameters : Array[@protocol.MessageParameter],
 ) -> Unit {
-  let mut index = 0
-  while index < self.desired_subscriptions.length() {
-    let desired = self.desired_subscriptions[index]
-    if desired.track == track && desired.parameters == parameters {
-      ignore(self.desired_subscriptions.remove(index))
-      return
-    }
-    index = index + 1
+  if self.desired_subscriptions.search_by(fn(desired) {
+      desired.track == track && desired.parameters == parameters
+    })
+    is Some(index) {
+    ignore(self.desired_subscriptions.remove(index))
   }
 }
 
@@ -109,10 +98,7 @@ fn ClientSession::resubscribe_desired(
   let actions : Array[SessionAction] = []
   for desired in self.desired_subscriptions {
     match self.start_subscription_request(desired.track, desired.parameters) {
-      Ok((_, request_actions)) =>
-        for action in request_actions {
-          actions.push(action)
-        }
+      Ok((_, request_actions)) => actions.append(request_actions)
       Err(error) => return Err(error)
     }
   }

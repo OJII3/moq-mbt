@@ -340,9 +340,8 @@ pub fn[T] SessionDriver::pending_action_count(self : SessionDriver[T]) -> Int32 
 
 ///|
 fn[T] SessionDriver::notify_update(self : SessionDriver[T]) -> Unit {
-  match self.update_handler {
-    Some(handler) => handler()
-    None => ()
+  if self.update_handler is Some(handler) {
+    handler()
   }
 }
 
@@ -577,14 +576,16 @@ fn[T : SessionTransport] SessionDriver::attempt_pending(
 fn[T : SessionTransport] SessionDriver::deliver_events(
   self : SessionDriver[T],
 ) -> Unit {
-  while self.events.length() > 0 && !self.failed {
-    let event = self.events.remove(0)
+  let mut index = 0
+  while index < self.events.length() && !self.failed {
+    let event = self.events[index]
+    index += 1
     match event {
       @session.TransportFailed(status) => self.fail(status)
       _ =>
         match self.session.receive(event) {
           Ok(actions) =>
-            if actions.length() > 0 {
+            if !actions.is_empty() {
               let existing = self.pending.map(fn(item) { item.action })
               let (count, bytes) = action_size(existing + actions)
               if count > self.config.max_pending_actions ||
@@ -604,6 +605,16 @@ fn[T : SessionTransport] SessionDriver::deliver_events(
             self.abort()
           }
         }
+    }
+  }
+  if index > 0 {
+    let delivered = if index < self.events.length() {
+      index
+    } else {
+      self.events.length()
+    }
+    if delivered > 0 {
+      ignore(self.events.drain(0, delivered))
     }
   }
 }
@@ -663,11 +674,7 @@ fn[T] SessionDriver::note_send_started(
   self : SessionDriver[T],
   stream : Int64,
 ) -> Unit {
-  let count = match self.send_streams.get(stream) {
-    Some(value) => value
-    None => 0
-  }
-  self.send_streams[stream] = count + 1
+  self.send_streams[stream] = self.send_streams.get(stream).unwrap_or(0) + 1
 }
 
 ///|

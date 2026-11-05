@@ -41,11 +41,9 @@ fn handle_subscriber_notices(
           fail("received unexpected group \{header.group_id}")
         }
         for frame in frames {
-          let expected_object_id = match
-            state.next_object_ids.get(header.group_id) {
-            Some(value) => value
-            None => 0UL
-          }
+          let expected_object_id = state.next_object_ids
+            .get(header.group_id)
+            .unwrap_or(0UL)
           guard frame.object_id == expected_object_id else {
             fail(
               "unexpected object order in group \{header.group_id}: got \{frame.object_id}, expected \{expected_object_id}",
@@ -123,10 +121,7 @@ fn handle_subscriber_notices(
         guard state.finished_groups.get(group_id) is None else {
           fail("group \{group_id} finished more than once")
         }
-        let next_object_id = match state.next_object_ids.get(group_id) {
-          Some(value) => value
-          None => 0UL
-        }
+        let next_object_id = state.next_object_ids.get(group_id).unwrap_or(0UL)
         guard next_object_id == state.objects_per_group else {
           fail(
             "group \{group_id} ended after \{next_object_id} Objects; expected \{state.objects_per_group}",

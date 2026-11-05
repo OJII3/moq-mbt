@@ -79,8 +79,8 @@ fn WebTransportStreamManager::enqueue_stream_event(
   if event is ConnectionClosed(_) {
     self.events.clear()
     self.pending_event_bytes.val = 0
-    if self.event_waiters.length() > 0 {
-      while self.event_waiters.length() > 0 {
+    if !self.event_waiters.is_empty() {
+      while !self.event_waiters.is_empty() {
         let waiter = self.event_waiters[0]
         ignore(self.event_waiters.remove(0))
         waiter(event)
@@ -93,7 +93,7 @@ fn WebTransportStreamManager::enqueue_stream_event(
   if self.connection_ended.val || self.locally_closed.val {
     return
   }
-  if self.event_waiters.length() > 0 {
+  if !self.event_waiters.is_empty() {
     let waiter = self.event_waiters[0]
     ignore(self.event_waiters.remove(0))
     waiter(event)
@@ -174,7 +174,7 @@ fn WebTransportStreamManager::stop_stream(
 fn WebTransportStreamManager::next_stream_event(
   self : WebTransportStreamManager,
 ) -> @js.Promise[WebTransportStreamEvent] {
-  if self.events.length() > 0 {
+  if !self.events.is_empty() {
     let event = self.events[0]
     ignore(self.events.remove(0))
     match event {
@@ -326,9 +326,8 @@ fn WebTransportStreamManager::register_stream(
       )
     None => ()
   }
-  match reader {
-    Some(reader) => self.start_reading(id, reader)
-    None => ()
+  if reader is Some(reader) {
+    self.start_reading(id, reader)
   }
   id
 }
@@ -557,29 +556,25 @@ fn WebTransportStreamManager::write_stream(
       }),
     )
   }
-  let state = match self.streams.get(stream) {
-    Some(state) => state
-    None =>
-      return @js.Promise::resolve(
-        Err(WebTransportFailure::{
-          name: "InvalidStateError",
-          message: "unknown stream",
-          source: Some("session"),
-          stream_error_code: None,
-        }),
-      )
+  guard self.streams.get(stream) is Some(state) else {
+    return @js.Promise::resolve(
+      Err(WebTransportFailure::{
+        name: "InvalidStateError",
+        message: "unknown stream",
+        source: Some("session"),
+        stream_error_code: None,
+      }),
+    )
   }
-  let writer = match state.writer {
-    Some(writer) => writer
-    None =>
-      return @js.Promise::resolve(
-        Err(WebTransportFailure::{
-          name: "InvalidStateError",
-          message: "stream has no send side",
-          source: Some("session"),
-          stream_error_code: None,
-        }),
-      )
+  guard state.writer is Some(writer) else {
+    return @js.Promise::resolve(
+      Err(WebTransportFailure::{
+        name: "InvalidStateError",
+        message: "stream has no send side",
+        source: Some("session"),
+        stream_error_code: None,
+      }),
+    )
   }
   if state.write_closed.val {
     return @js.Promise::resolve(

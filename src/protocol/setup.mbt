@@ -72,12 +72,8 @@ pub fn encode_setup(setup : Setup) -> Result[Bytes, CodecError] {
     if payload.length() + delta.length() + value.length() > 65535 {
       return Err(MessageTooLarge)
     }
-    for byte in delta {
-      payload.push(byte)
-    }
-    for byte in value {
-      payload.push(byte)
-    }
+    payload.push_iter(delta.iter())
+    payload.push_iter(value.iter())
     previous = option.kind
     first = false
   }
@@ -94,9 +90,8 @@ pub fn encode_setup(setup : Setup) -> Result[Bytes, CodecError] {
 /// A complete frame with truncated option fields is malformed, not incomplete.
 /// Option semantics (URI, token authorization) are handled by the session.
 pub fn decode_setup(input : Bytes) -> DecodeResult[Setup] {
-  let (kind, header) = match read_vi64(input, 0, input.length()) {
-    Some(pair) => pair
-    None => return Incomplete
+  guard read_vi64(input, 0, input.length()) is Some((kind, header)) else {
+    return Incomplete
   }
   if kind != 0x2f00 {
     return Invalid(UnexpectedMessageType(kind))
@@ -113,9 +108,8 @@ pub fn decode_setup(input : Bytes) -> DecodeResult[Setup] {
   let mut offset = header + 2
   let mut previous = 0UL
   while offset < end {
-    let (delta, next) = match read_vi64(input, offset, end) {
-      Some(pair) => pair
-      None => return Invalid(MalformedOptions)
+    guard read_vi64(input, offset, end) is Some((delta, next)) else {
+      return Invalid(MalformedOptions)
     }
     if delta > 0xffffffffffffffffUL - previous {
       return Invalid(OptionTypeOverflow)
@@ -124,9 +118,8 @@ pub fn decode_setup(input : Bytes) -> DecodeResult[Setup] {
     if !options.is_empty() && delta == 0 && unique_option(kind) {
       return Invalid(DuplicateOption(kind))
     }
-    let (number, next) = match read_vi64(input, next, end) {
-      Some(pair) => pair
-      None => return Invalid(MalformedOptions)
+    guard read_vi64(input, next, end) is Some((number, next)) else {
+      return Invalid(MalformedOptions)
     }
     let value = if (kind & 1) == 0 {
       offset = next

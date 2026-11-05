@@ -72,6 +72,8 @@ pub fn encode_subscribe_ok(SubscribeOkMessage) -> Result[Bytes, CodecError]
 
 pub fn encode_vi64(UInt64) -> Bytes
 
+pub fn find_track_property_varint(Bytes, UInt64) -> Result[UInt64?, CodecError]
+
 pub fn forward_parameter(Bool) -> MessageParameter
 
 pub fn forward_requested(Array[MessageParameter]) -> Bool

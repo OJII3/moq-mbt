@@ -124,10 +124,8 @@ pub fn Client::connect(
 
 ///|
 fn Client::handle(self : Client) -> RawClient raise TransportError {
-  match self.raw {
-    Some(raw) => raw
-    None => raise TransportError("client is closed")
-  }
+  guard self.raw is Some(raw) else { raise TransportError("client is closed") }
+  raw
 }
 
 ///|

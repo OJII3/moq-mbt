@@ -74,15 +74,12 @@ pub fn encode_object_datagram(
   if datagram.object_id != 0UL {
     append_vi64s(bytes, datagram.object_id)
   }
-  match datagram.publisher_priority {
-    Some(priority) => bytes.push(priority)
-    None => ()
+  if datagram.publisher_priority is Some(priority) {
+    bytes.push(priority)
   }
   if has_properties {
     append_vi64s(bytes, datagram.properties.length().to_uint64())
-    for byte in datagram.properties {
-      bytes.push(byte)
-    }
+    bytes.push_iter(datagram.properties.iter())
   }
   if has_status {
     let status = match datagram.status {
@@ -92,9 +89,7 @@ pub fn encode_object_datagram(
     }
     append_vi64s(bytes, status)
   } else {
-    for byte in datagram.payload {
-      bytes.push(byte)
-    }
+    bytes.push_iter(datagram.payload.iter())
   }
   Ok(Bytes::from_array(bytes))
 }
@@ -102,9 +97,8 @@ pub fn encode_object_datagram(
 ///|
 /// Decode one complete Draft 18 OBJECT_DATAGRAM or padding datagram.
 pub fn decode_datagram(input : Bytes) -> DecodeResult[ReceivedDatagram] {
-  let (kind, after_kind) = match read_vi64(input, 0, input.length()) {
-    Some(value) => value
-    None => return Incomplete
+  guard read_vi64(input, 0, input.length()) is Some((kind, after_kind)) else {
+    return Incomplete
   }
   if kind == 0x132b3e29UL {
     return Complete(Padding, input.length())
@@ -114,23 +108,20 @@ pub fn decode_datagram(input : Bytes) -> DecodeResult[ReceivedDatagram] {
     ((kind & 0x20UL) != 0UL && (kind & 0x02UL) != 0UL) {
     return Invalid(InvalidDatagram)
   }
-  let (track_alias, after_alias) = match
-    read_vi64(input, after_kind, input.length()) {
-    Some(value) => value
-    None => return Incomplete
+  guard read_vi64(input, after_kind, input.length())
+    is Some((track_alias, after_alias)) else {
+    return Incomplete
   }
-  let (group_id, after_group) = match
-    read_vi64(input, after_alias, input.length()) {
-    Some(value) => value
-    None => return Incomplete
+  guard read_vi64(input, after_alias, input.length())
+    is Some((group_id, after_group)) else {
+    return Incomplete
   }
   let mut next = after_group
   let object_id = if (kind & 0x04UL) != 0UL {
     0UL
   } else {
-    let (value, after_value) = match read_vi64(input, next, input.length()) {
-      Some(value) => value
-      None => return Incomplete
+    guard read_vi64(input, next, input.length()) is Some((value, after_value)) else {
+      return Incomplete
     }
     next = after_value
     value
@@ -146,9 +137,8 @@ pub fn decode_datagram(input : Bytes) -> DecodeResult[ReceivedDatagram] {
     value
   }
   let properties = if (kind & 0x01UL) != 0UL {
-    let (length, after_length) = match read_vi64(input, next, input.length()) {
-      Some(value) => value
-      None => return Incomplete
+    guard read_vi64(input, next, input.length()) is Some((length, after_length)) else {
+      return Incomplete
     }
     if length == 0UL || length > (input.length() - after_length).to_uint64() {
       return Invalid(InvalidDatagram)
@@ -163,9 +153,8 @@ pub fn decode_datagram(input : Bytes) -> DecodeResult[ReceivedDatagram] {
     b""
   }
   let status = if (kind & 0x20UL) != 0UL {
-    let (value, after_status) = match read_vi64(input, next, input.length()) {
-      Some(value) => value
-      None => return Incomplete
+    guard read_vi64(input, next, input.length()) is Some((value, after_status)) else {
+      return Incomplete
     }
     if after_status != input.length() {
       return Invalid(InvalidDatagram)
@@ -212,33 +201,11 @@ fn valid_object_properties(input : Bytes) -> Bool {
   let mut next = 0
   let mut previous = 0UL
   while next < input.length() {
-    let (delta, after_delta) = match read_vi64(input, next, input.length()) {
-      Some(value) => value
-      None => return false
-    }
-    if delta > 0xffffffffffffffffUL - previous {
+    guard read_key_value_at(input, next, input.length(), previous)
+      is Some((kind, _, after)) else {
       return false
     }
-    let kind = previous + delta
-    next = after_delta
-    if (kind & 1UL) == 0UL {
-      let (_, after_value) = match read_vi64(input, next, input.length()) {
-        Some(value) => value
-        None => return false
-      }
-      next = after_value
-    } else {
-      let (length, after_length) = match
-        read_vi64(input, next, input.length()) {
-        Some(value) => value
-        None => return false
-      }
-      if length > 65535UL ||
-        length > (input.length() - after_length).to_uint64() {
-        return false
-      }
-      next = after_length + length.to_int()
-    }
+    next = after
     previous = kind
   }
   true
