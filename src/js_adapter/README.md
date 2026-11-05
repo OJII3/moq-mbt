@@ -58,9 +58,11 @@ range into MoonBit-owned bytes.
 
 `datagram_capability()` reports whether the browser exposes WebTransport
 datagrams and its current maximum payload size. `send_datagram(bytes)` writes
-those bytes directly; the adapter adds no MoQ or HTTP Datagram framing. The
-send queue is limited to 64 datagrams and 1 MiB. A successful result means the
-local Web Streams write completed. Datagrams are best effort: this does not
+those bytes directly; the adapter adds no MoQ or HTTP Datagram framing. It
+starts the browser write without waiting for `writer.ready` when the writable
+stream has capacity, and it does not await the write promise before issuing the
+next send. The send queue is limited to 64 datagrams and 1 MiB. A successful
+result means the local Web Streams write completed. Datagrams are best effort: this does not
 confirm QUIC acknowledgement, peer receipt, ordering, or application delivery.
 Unsupported datagrams, oversized payloads, a full send queue, connection close,
 and browser write rejection return distinct errors.

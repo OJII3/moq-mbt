@@ -335,6 +335,10 @@ async test "WebTransport connection and session lifecycle" {
   assert_eq(capability.max_length, 7)
   assert_true(connection.send_datagram(b"1234567").wait() is Ok(_))
   assert_eq(ffi_fake_datagram_write(), "1234567")
+  // With free stream capacity the write starts without waiting for
+  // `writer.ready`, so the browser write is issued in the same turn.
+  ignore(connection.send_datagram(b"sync"))
+  assert_eq(ffi_fake_datagram_write(), "sync")
   match connection.send_datagram(b"12345678").wait() {
     Err(DatagramTooLarge(actual, maximum)) => {
       assert_eq(actual, 8)
@@ -355,8 +359,13 @@ async test "WebTransport connection and session lifecycle" {
     _ => fail("datagram above the reduced maximum was accepted")
   }
   ffi_fake_set_max_datagram_size(7)
+  // Force backpressure so the next send waits for `writer.ready` and rechecks
+  // the maximum after that wait.
+  ffi_fake_delay_datagram_writes()
+  let blocking_write = connection.send_datagram(b"block")
   let pending_size_check = connection.send_datagram(b"1234567")
   ffi_fake_set_max_datagram_size(6)
+  ffi_fake_resolve_pending_datagram_writes()
   match pending_size_check.wait() {
     Err(DatagramTooLarge(actual, maximum)) => {
       assert_eq(actual, 7)
@@ -364,6 +373,7 @@ async test "WebTransport connection and session lifecycle" {
     }
     _ => fail("datagram accepted using the stale maximum after ready")
   }
+  assert_true(blocking_write.wait() is Ok(_))
   ffi_fake_set_max_datagram_size(7)
   let view = ffi_fake_offset_view("one")
   ffi_fake_push_datagram(view)

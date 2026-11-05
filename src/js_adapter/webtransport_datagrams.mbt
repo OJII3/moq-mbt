@@ -202,27 +202,52 @@ fn WebTransportDatagramManager::send_datagram(
     return @js.Promise::resolve(Err(DatagramQueueFull))
   }
   self.send_budget.acquire(bytes.length())
-  @js.from_async(async fn() {
-    let result = try {
-      writer.ready().wait()
-      if self.ended.val {
-        Err(DatagramConnectionClosed)
-      } else {
-        let current_max_length : Int32 = self.datagrams["maxDatagramSize"].cast()
-        if bytes.length() > current_max_length {
-          Err(DatagramTooLarge(bytes.length(), current_max_length))
-        } else {
-          let data = bytes_to_uint8array(bytes)
-          writer.write(data.as_any())
-          Ok(())
-        }
-      }
-    } catch {
-      error => Err(DatagramWriteFailed(webtransport_failure(@js.any(error))))
+  let start_write = fn() -> @js.Promise[Result[Unit, WebTransportDatagramError]] {
+    if self.ended.val {
+      self.send_budget.release(bytes.length())
+      return @js.Promise::resolve(Err(DatagramConnectionClosed))
     }
-    self.send_budget.release(bytes.length())
-    result
-  })
+    let current_max_length : Int32 = self.datagrams["maxDatagramSize"].cast()
+    if bytes.length() > current_max_length {
+      self.send_budget.release(bytes.length())
+      return @js.Promise::resolve(
+        Err(DatagramTooLarge(bytes.length(), current_max_length)),
+      )
+    }
+    let data = bytes_to_uint8array(bytes)
+    // Call the browser's write directly instead of the async wrapper, which
+    // awaits the write promise and serializes datagram sends.
+    let write : @js.Promise[Unit] = @js.any(writer)
+      ._call("write", [data.as_any()])
+      .cast()
+    let ok : Result[Unit, WebTransportDatagramError] = Ok(())
+    let written = write.then(fn(_) {
+      self.send_budget.release(bytes.length())
+      @js.Promise::resolve(ok)
+    })
+    written.catch_(fn(error) {
+      self.send_budget.release(bytes.length())
+      @js.Promise::resolve(
+        Err(DatagramWriteFailed(webtransport_failure(@js.any(error)))),
+      )
+    })
+  }
+  // `writer.ready` is only needed when the stream has no capacity. Waiting for
+  // it unconditionally costs a promise round trip per datagram.
+  let desired_size : Int32 = writer.desiredSize().cast()
+  if desired_size > 0 {
+    start_write()
+  } else {
+    writer
+    .ready()
+    .then(fn(_) { start_write() })
+    .catch_(fn(error) {
+      self.send_budget.release(bytes.length())
+      @js.Promise::resolve(
+        Err(DatagramWriteFailed(webtransport_failure(@js.any(error)))),
+      )
+    })
+  }
 }
 
 ///|
