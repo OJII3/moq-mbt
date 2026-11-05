@@ -63,7 +63,9 @@ pub fn encode_subgroup_header(header : SubgroupHeader) -> Bytes {
     stream_type = stream_type | 0x40UL
   }
   let bytes : Array[Byte] = []
-  bytes.push_iter(encode_vi64(stream_type).iter())
+  for byte in encode_vi64(stream_type) {
+    bytes.push(byte)
+  }
   append_vi64s(bytes, header.track_alias)
   append_vi64s(bytes, header.group_id)
   match header.subgroup_id_mode {
@@ -264,7 +266,9 @@ fn append_subgroup_frame(
   append_vi64s(bytes, object_id_delta)
   if header.has_properties {
     append_vi64s(bytes, frame.properties.length().to_uint64())
-    bytes.push_iter(frame.properties.iter())
+    for byte in frame.properties {
+      bytes.push(byte)
+    }
   }
   append_vi64s(bytes, frame.payload.length().to_uint64())
   if frame.payload.is_empty() {
@@ -275,7 +279,9 @@ fn append_subgroup_frame(
     }
     append_vi64s(bytes, status_value)
   }
-  bytes.push_iter(frame.payload.iter())
+  for byte in frame.payload {
+    bytes.push(byte)
+  }
   Ok(())
 }
 
@@ -321,7 +327,9 @@ pub fn encode_subgroup_object_header(
   append_vi64s(bytes, delta)
   if header.has_properties {
     append_vi64s(bytes, properties.length().to_uint64())
-    bytes.push_iter(properties.iter())
+    for byte in properties {
+      bytes.push(byte)
+    }
   }
   append_vi64s(bytes, payload_length)
   if payload_length == 0UL {
@@ -338,7 +346,9 @@ pub fn encode_subgroup_stream(
   frames : Array[SubgroupFrame],
 ) -> Result[Bytes, CodecError] {
   let bytes : Array[Byte] = []
-  bytes.push_iter(encode_subgroup_header(header).iter())
+  for byte in encode_subgroup_header(header) {
+    bytes.push(byte)
+  }
   let mut previous_object_id : UInt64? = None
   for frame in frames {
     match append_subgroup_frame(bytes, header, previous_object_id, frame) {

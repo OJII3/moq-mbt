@@ -394,7 +394,9 @@ pub fn FetchDataEncoder::encode(
       append_vi64s(fields, group_delta)
       append_vi64s(fields, object_id)
       append_vi64s(bytes, flags)
-      bytes.push_iter(fields.iter())
+      for byte in fields {
+        bytes.push(byte)
+      }
     }
     FetchDataObject(object) => {
       let subgroup_mode = if object.datagram_forwarding {
@@ -462,12 +464,18 @@ pub fn FetchDataEncoder::encode(
       }
       if !object.properties.is_empty() {
         append_vi64s(fields, object.properties.length().to_uint64())
-        fields.push_iter(object.properties.iter())
+        for byte in object.properties {
+          fields.push(byte)
+        }
       }
       append_vi64s(fields, object.payload.length().to_uint64())
-      fields.push_iter(object.payload.iter())
+      for byte in object.payload {
+        fields.push(byte)
+      }
       append_vi64s(bytes, flags)
-      bytes.push_iter(fields.iter())
+      for byte in fields {
+        bytes.push(byte)
+      }
       self.previous_group_id = Some(group_id)
       self.previous_object_id = Some(object_id)
       if !object.datagram_forwarding {

@@ -55,7 +55,9 @@ pub fn encode_vi64(value : UInt64) -> Bytes {
 
 ///|
 fn append_vi64s(values : Array[Byte], value : UInt64) -> Unit {
-  values.push_iter(encode_vi64(value).iter())
+  for byte in encode_vi64(value) {
+    values.push(byte)
+  }
 }
 
 ///|

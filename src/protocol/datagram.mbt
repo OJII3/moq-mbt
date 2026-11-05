@@ -79,7 +79,9 @@ pub fn encode_object_datagram(
   }
   if has_properties {
     append_vi64s(bytes, datagram.properties.length().to_uint64())
-    bytes.push_iter(datagram.properties.iter())
+    for byte in datagram.properties {
+      bytes.push(byte)
+    }
   }
   if has_status {
     let status = match datagram.status {
@@ -89,7 +91,9 @@ pub fn encode_object_datagram(
     }
     append_vi64s(bytes, status)
   } else {
-    bytes.push_iter(datagram.payload.iter())
+    for byte in datagram.payload {
+      bytes.push(byte)
+    }
   }
   Ok(Bytes::from_array(bytes))
 }
@@ -201,11 +205,30 @@ fn valid_object_properties(input : Bytes) -> Bool {
   let mut next = 0
   let mut previous = 0UL
   while next < input.length() {
-    guard read_key_value_at(input, next, input.length(), previous)
-      is Some((kind, _, after)) else {
+    guard read_vi64(input, next, input.length()) is Some((delta, after_delta)) else {
       return false
     }
-    next = after
+    if delta > 0xffffffffffffffffUL - previous {
+      return false
+    }
+    let kind = previous + delta
+    next = after_delta
+    if (kind & 1UL) == 0UL {
+      guard read_vi64(input, next, input.length()) is Some((_, after_value)) else {
+        return false
+      }
+      next = after_value
+    } else {
+      guard read_vi64(input, next, input.length())
+        is Some((length, after_length)) else {
+        return false
+      }
+      if length > 65535UL ||
+        length > (input.length() - after_length).to_uint64() {
+        return false
+      }
+      next = after_length + length.to_int()
+    }
     previous = kind
   }
   true

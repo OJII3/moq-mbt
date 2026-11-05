@@ -72,8 +72,12 @@ pub fn encode_setup(setup : Setup) -> Result[Bytes, CodecError] {
     if payload.length() + delta.length() + value.length() > 65535 {
       return Err(MessageTooLarge)
     }
-    payload.push_iter(delta.iter())
-    payload.push_iter(value.iter())
+    for byte in delta {
+      payload.push(byte)
+    }
+    for byte in value {
+      payload.push(byte)
+    }
     previous = option.kind
     first = false
   }

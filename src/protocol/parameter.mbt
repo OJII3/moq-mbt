@@ -117,13 +117,17 @@ fn encode_track_name(track : TrackName) -> Result[Bytes, CodecError] {
       return Err(InvalidTrackName)
     }
     append_vi64s(encoded, field.length().to_uint64())
-    encoded.push_iter(field.iter())
+    for byte in field {
+      encoded.push(byte)
+    }
   }
   if total > 4096 {
     return Err(InvalidTrackName)
   }
   append_vi64s(encoded, track.name.length().to_uint64())
-  encoded.push_iter(track.name.iter())
+  for byte in track.name {
+    encoded.push(byte)
+  }
   Ok(Bytes::from_array(encoded))
 }
 
@@ -163,7 +167,9 @@ fn encode_parameters(
         append_vi64s(encoded, value)
       (0x03, Data(value)) => {
         append_vi64s(encoded, value.length().to_uint64())
-        encoded.push_iter(value.iter())
+        for byte in value {
+          encoded.push(byte)
+        }
       }
       (0x34, NamespacePrefix(value)) => {
         let body = match encode_track_namespace(value) {
@@ -171,7 +177,9 @@ fn encode_parameters(
           Err(error) => return Err(error)
         }
         append_vi64s(encoded, body.length().to_uint64())
-        encoded.push_iter(body.iter())
+        for byte in body {
+          encoded.push(byte)
+        }
       }
       (0x21, Filter(filter)) => {
         let body = match encode_subscription_filter(filter) {
@@ -179,7 +187,9 @@ fn encode_parameters(
           Err(error) => return Err(error)
         }
         append_vi64s(encoded, body.length().to_uint64())
-        encoded.push_iter(body.iter())
+        for byte in body {
+          encoded.push(byte)
+        }
       }
       _ => return Err(UnsupportedParameter(parameter.kind))
     }
@@ -208,7 +218,9 @@ fn encode_track_namespace(
       return Err(InvalidTrackName)
     }
     append_vi64s(encoded, field.length().to_uint64())
-    encoded.push_iter(field.iter())
+    for byte in field {
+      encoded.push(byte)
+    }
   }
   Ok(Bytes::from_array(encoded))
 }
