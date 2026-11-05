@@ -1,89 +1,101 @@
 ///|
+#derive(Debug, Eq)
 pub(all) struct SubscribeMessage {
   request_id : UInt64
   track : TrackName
   parameters : Array[MessageParameter]
-} derive(Debug, Eq)
+}
 
 ///|
+#derive(Debug, Eq)
 pub(all) struct PublishMessage {
   request_id : UInt64
   track : TrackName
   track_alias : UInt64
   parameters : Array[MessageParameter]
   properties : Bytes
-} derive(Debug, Eq)
+}
 
 ///|
+#derive(Debug, Eq)
 pub(all) struct SubscribeOkMessage {
   track_alias : UInt64
   parameters : Array[MessageParameter]
   properties : Bytes
-} derive(Debug, Eq)
+}
 
 ///|
+#derive(Debug, Eq)
 pub(all) struct RequestOkMessage {
   parameters : Array[MessageParameter]
   properties : Bytes
-} derive(Debug, Eq)
+}
 
 ///|
+#derive(Debug, Eq)
 pub(all) struct RequestUpdateMessage {
   request_id : UInt64
   parameters : Array[MessageParameter]
-} derive(Debug, Eq)
+}
 
 ///|
+#derive(Debug, Eq)
 pub(all) struct FetchLocation {
   group : UInt64
   object : UInt64
-} derive(Debug, Eq)
+}
 
 ///|
 /// End Location stores the wire value: Object is exclusive (last Object + 1),
 /// and zero requests the entire Group.
+#derive(Debug, Eq)
 pub(all) enum FetchType {
   StandaloneFetch(TrackName, FetchLocation, FetchLocation)
   RelativeJoiningFetch(UInt64, UInt64)
   AbsoluteJoiningFetch(UInt64, UInt64)
-} derive(Debug, Eq)
+}
 
 ///|
+#derive(Debug, Eq)
 pub(all) struct FetchMessage {
   request_id : UInt64
   fetch_type : FetchType
   parameters : Array[MessageParameter]
-} derive(Debug, Eq)
+}
 
 ///|
+#derive(Debug, Eq)
 pub(all) struct FetchOkMessage {
   end_of_track : Byte
   end_location : FetchLocation
   parameters : Array[MessageParameter]
   track_properties : Bytes
-} derive(Debug, Eq)
+}
 
 ///|
+#derive(Debug, Eq)
 pub(all) struct GoAwayControlMessage {
   uri : Bytes
   timeout_ms : UInt64
   request_id : UInt64
-} derive(Debug, Eq)
+}
 
 ///|
+#derive(Debug, Eq)
 pub(all) struct GoAwayRequestMessage {
   uri : Bytes
   timeout_ms : UInt64
-} derive(Debug, Eq)
+}
 
 ///|
+#derive(Debug, Eq)
 pub(all) enum RequestOkContext {
   Publish
   RequestUpdate
   FetchUpdate
   TrackStatus
   Namespace
-} derive(Debug, Eq)
+}
 
 ///|
 
@@ -91,6 +103,7 @@ pub(all) enum RequestOkContext {
 /// Where a control message was read from, and which request a response answers.
 /// Context matters for REQUEST_OK parameter scope and for GOAWAY fields that
 /// are only present on request streams.
+#derive(Debug, Eq)
 pub(all) enum ControlStreamContext {
   /// Context is unknown; context-specific validation is skipped.
   AnyStream
@@ -100,7 +113,7 @@ pub(all) enum ControlStreamContext {
   RequestStreamFor(RequestOkContext)
   /// A FETCH request stream, whose REQUEST_UPDATE uses the FETCH scope.
   FetchRequestStream
-} derive(Debug, Eq)
+}
 
 ///|
 priv enum ParameterScope {
@@ -116,33 +129,38 @@ priv enum ParameterScope {
 }
 
 ///|
+#derive(Debug, Eq)
 pub(all) struct RequestErrorMessage {
   code : UInt64
   retry_interval : UInt64
   reason : Bytes
   redirect : Bytes
-} derive(Debug, Eq)
+}
 
 ///|
+#derive(Debug, Eq)
 pub(all) struct PublishDoneMessage {
   code : UInt64
   stream_count : UInt64
   reason : Bytes
-} derive(Debug, Eq)
+}
 
 ///|
+#derive(Debug, Eq)
 pub(all) struct NamespaceRequestMessage {
   request_id : UInt64
   track_namespace : TrackNamespace
   parameters : Array[MessageParameter]
-} derive(Debug, Eq)
+}
 
 ///|
+#derive(Debug, Eq)
 pub(all) struct NamespaceSuffixMessage {
   track_namespace : TrackNamespace
-} derive(Debug, Eq)
+}
 
 ///|
+#derive(Debug, Eq)
 pub(all) enum ControlMessage {
   Subscribe(SubscribeMessage)
   Publish(PublishMessage)
@@ -159,7 +177,7 @@ pub(all) enum ControlMessage {
   SubscribeNamespace(NamespaceRequestMessage)
   Namespace(NamespaceSuffixMessage)
   NamespaceDone(NamespaceSuffixMessage)
-} derive(Debug, Eq)
+}
 
 ///|
 fn validate_parameters_scope(

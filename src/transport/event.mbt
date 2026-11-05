@@ -1,4 +1,5 @@
 ///|
+#derive(Debug)
 pub(all) suberror TransportError {
   TransportError(String)
   SendQueueFull
@@ -8,16 +9,17 @@ pub(all) suberror TransportError {
   DatagramSendQueueFull
   DatagramSendAllocationFailed
   DatagramSendFailed(Int32)
-} derive(Debug)
+}
 
 ///|
 pub extend TransportError with @moonbitlang/core/debug.Debug::{to_repr}
 
 ///|
+#derive(Debug, Eq)
 pub(all) enum StreamDirection {
   Unidirectional
   Bidirectional
-} derive(Debug, Eq)
+}
 
 ///|
 pub extend StreamDirection with @moonbitlang/core/debug.Debug::{to_repr}
@@ -26,10 +28,11 @@ pub extend StreamDirection with @moonbitlang/core/debug.Debug::{to_repr}
 pub extend StreamDirection with Eq::{equal, not_equal}
 
 ///|
+#derive(Debug, Eq)
 pub(all) struct DatagramSendCapability {
   enabled : Bool
   max_length : Int32
-} derive(Debug, Eq)
+}
 
 ///|
 pub extend DatagramSendCapability with @moonbitlang/core/debug.Debug::{to_repr}
@@ -38,6 +41,7 @@ pub extend DatagramSendCapability with @moonbitlang/core/debug.Debug::{to_repr}
 pub extend DatagramSendCapability with Eq::{equal, not_equal}
 
 ///|
+#derive(Debug, Eq)
 pub(all) enum DatagramSendState {
   Unknown(Int32)
   Sent
@@ -46,7 +50,7 @@ pub(all) enum DatagramSendState {
   Acknowledged
   AcknowledgedSpurious
   Canceled
-} derive(Debug, Eq)
+}
 
 ///|
 pub extend DatagramSendState with @moonbitlang/core/debug.Debug::{to_repr}
@@ -76,6 +80,7 @@ fn datagram_send_state_from_code(code : Int32) -> DatagramSendState {
 }
 
 ///|
+#derive(Debug)
 pub(all) enum Event {
   Connected
   StreamStarted(Int64, StreamDirection)
@@ -96,7 +101,7 @@ pub(all) enum Event {
   TransportClosed(Int32)
   QueueOverflow
   Timeout
-} derive(Debug)
+}
 
 ///|
 pub extend Event with @moonbitlang/core/debug.Debug::{to_repr}

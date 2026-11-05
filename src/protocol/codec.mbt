@@ -1,5 +1,6 @@
 ///|
 /// Early Draft 18 codecs, using vi64 rather than QUIC's 62-bit varint.
+#derive(Debug, Eq)
 pub(all) enum CodecError {
   UnexpectedMessageType(UInt64)
   MalformedOptions
@@ -22,15 +23,16 @@ pub(all) enum CodecError {
   InvalidSubgroup
   InvalidFetchObject
   InvalidDatagram
-} derive(Debug, Eq)
+}
 
 ///|
 /// Complete includes the number of consumed input bytes.
+#derive(Debug, Eq)
 pub(all) enum DecodeResult[T] {
   Complete(T, Int32)
   Incomplete
   Invalid(CodecError)
-} derive(Debug, Eq)
+}
 
 ///|
 pub fn encode_vi64(value : UInt64) -> Bytes {

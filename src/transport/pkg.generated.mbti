@@ -8,16 +8,17 @@ import {
 // Values
 
 // Errors
+#derive(@debug.Debug)
 pub(all) suberror TransportError {
   TransportError(String)
   SendQueueFull
-  SendTooLarge(Int, Int)
+  SendTooLarge(Int32, Int32)
   DatagramSendUnavailable
-  DatagramTooLarge(Int, Int)
+  DatagramTooLarge(Int32, Int32)
   DatagramSendQueueFull
   DatagramSendAllocationFailed
-  DatagramSendFailed(Int)
-} derive(@debug.Debug)
+  DatagramSendFailed(Int32)
+}
 pub fn TransportError::to_repr(Self) -> @debug.Repr
 
 // Types and methods
@@ -26,38 +27,41 @@ pub struct Client {
 }
 pub fn Client::abort_send(Self, Int64, Int64) -> Unit raise TransportError
 pub fn Client::close(Self, error_code? : Int64) -> Unit
-pub fn Client::connect(String, Int, insecure? : Bool) -> Self raise TransportError
+pub fn Client::connect(String, Int32, insecure? : Bool) -> Self raise TransportError
 pub fn Client::datagram_send_capability(Self) -> DatagramSendCapability raise TransportError
 pub fn Client::has_stream_capacity(Self) -> Bool raise TransportError
-pub fn Client::next_event(Self, Int) -> Event raise TransportError
+pub fn Client::next_event(Self, Int32) -> Event raise TransportError
 pub fn Client::open_bidi(Self) -> Int64 raise TransportError
 pub fn Client::open_uni(Self) -> Int64 raise TransportError
 pub fn Client::send(Self, Int64, Bytes, fin? : Bool) -> Unit raise TransportError
 pub fn Client::send_datagram(Self, Bytes) -> Int64 raise TransportError
 pub fn Client::stop_receiving(Self, Int64, Int64) -> Unit raise TransportError
 
+#derive(Eq, @debug.Debug)
 pub(all) struct DatagramSendCapability {
   enabled : Bool
-  max_length : Int
-} derive(Eq, @debug.Debug)
+  max_length : Int32
+}
 pub fn DatagramSendCapability::equal(Self, Self) -> Bool
 pub fn DatagramSendCapability::not_equal(Self, Self) -> Bool
 pub fn DatagramSendCapability::to_repr(Self) -> @debug.Repr
 
+#derive(Eq, @debug.Debug)
 pub(all) enum DatagramSendState {
-  Unknown(Int)
+  Unknown(Int32)
   Sent
   LostSuspect
   LostDiscarded
   Acknowledged
   AcknowledgedSpurious
   Canceled
-} derive(Eq, @debug.Debug)
+}
 pub fn DatagramSendState::equal(Self, Self) -> Bool
 pub fn DatagramSendState::is_final(Self) -> Bool
 pub fn DatagramSendState::not_equal(Self, Self) -> Bool
 pub fn DatagramSendState::to_repr(Self) -> @debug.Repr
 
+#derive(@debug.Debug)
 pub(all) enum Event {
   Connected
   StreamStarted(Int64, StreamDirection)
@@ -72,16 +76,17 @@ pub(all) enum Event {
   SendComplete(Int64, Bool)
   StreamDataCommitted(Int64)
   Closed(Int64)
-  TransportClosed(Int)
+  TransportClosed(Int32)
   QueueOverflow
   Timeout
-} derive(@debug.Debug)
+}
 pub fn Event::to_repr(Self) -> @debug.Repr
 
+#derive(Eq, @debug.Debug)
 pub(all) enum StreamDirection {
   Unidirectional
   Bidirectional
-} derive(Eq, @debug.Debug)
+}
 pub fn StreamDirection::equal(Self, Self) -> Bool
 pub fn StreamDirection::not_equal(Self, Self) -> Bool
 pub fn StreamDirection::to_repr(Self) -> @debug.Repr

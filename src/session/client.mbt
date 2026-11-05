@@ -1,7 +1,8 @@
 ///|
 /// Identifies a request. Request IDs, Stream IDs, and Track Aliases are
 /// separate namespaces even when their numeric values happen to coincide.
-pub(all) struct RequestId(UInt64) derive(Debug, Eq, Hash)
+#derive(Debug, Eq, Hash)
+pub(all) struct RequestId(UInt64)
 
 ///|
 pub fn RequestId::to_uint64(self : RequestId) -> UInt64 {
@@ -10,7 +11,8 @@ pub fn RequestId::to_uint64(self : RequestId) -> UInt64 {
 
 ///|
 /// Identifies a transport stream owned by the session.
-pub(all) struct StreamId(Int64) derive(Debug, Eq, Hash)
+#derive(Debug, Eq, Hash)
+pub(all) struct StreamId(Int64)
 
 ///|
 pub fn StreamId::to_int64(self : StreamId) -> Int64 {
@@ -19,7 +21,8 @@ pub fn StreamId::to_int64(self : StreamId) -> Int64 {
 
 ///|
 /// Identifies a track within a session's Track Alias namespace.
-pub(all) struct TrackAlias(UInt64) derive(Debug, Eq, Hash)
+#derive(Debug, Eq, Hash)
+pub(all) struct TrackAlias(UInt64)
 
 ///|
 pub fn TrackAlias::to_uint64(self : TrackAlias) -> UInt64 {
@@ -27,40 +30,45 @@ pub fn TrackAlias::to_uint64(self : TrackAlias) -> UInt64 {
 }
 
 ///|
+#derive(Debug, Eq)
 pub(all) enum ClientStreamDirection {
   Unidirectional
   Bidirectional
-} derive(Debug, Eq)
+}
 
 ///|
+#derive(Debug, Eq)
 pub(all) enum ClientStreamPurpose {
   Control
   /// A request stream. `Object` carries the session-local object-stream token.
   Request(RequestId)
   Object(UInt64)
   FetchData(RequestId)
-} derive(Debug, Eq)
+}
 
 ///|
+#derive(Debug, Eq)
 pub(all) enum ClientSessionState {
   Active
   Draining
   Closed
-} derive(Debug, Eq)
+}
 
 ///|
+#derive(Debug, Eq)
 pub(all) enum ClientSessionEnd {
   Local(UInt64, Bytes)
   Peer(UInt64)
   Transport(Int64)
-} derive(Debug, Eq)
+}
 
 ///|
 /// How a local stream send ended.
+#derive(Debug, Eq)
 pub(all) enum SendCompletion {
   Sent
   Reset
-} derive(Debug, Eq)
+}
 
 ///|
 /// `SendCompleted` means the backend's send operation has completed. The
@@ -71,6 +79,7 @@ pub(all) enum SendCompletion {
 /// Supply a fresh Clock before submitting publisher data or finishing a group.
 /// `StreamDataCommitted` is a transport acknowledgement covering all stream
 /// data and FIN; local write completion alone must not produce this event.
+#derive(Debug, Eq)
 pub(all) enum SessionEvent {
   InboundStreamStarted(Int64, ClientStreamDirection)
   StreamData(Int64, Bytes)
@@ -87,9 +96,10 @@ pub(all) enum SessionEvent {
   Clock(UInt64)
   PeerClosed(UInt64)
   TransportFailed(Int64)
-} derive(Debug, Eq)
+}
 
 ///|
+#derive(Debug, Eq)
 pub(all) enum SessionNotice {
   HandshakeComplete(@protocol.Setup)
   ControlMessageReceived(@protocol.ControlMessage)
@@ -215,9 +225,10 @@ pub(all) enum SessionNotice {
   ControlGoAwayReceived(Bytes, UInt64, UInt64)
   RequestGoAwayReceived(RequestId, StreamId, Bytes, UInt64)
   SessionEnded(ClientSessionEnd)
-} derive(Debug, Eq)
+}
 
 ///|
+#derive(Debug, Eq)
 pub(all) enum SessionAction {
   OpenStream(ClientStreamDirection, ClientStreamPurpose)
   SendChunk(Int64, Bytes)
@@ -229,9 +240,10 @@ pub(all) enum SessionAction {
   StopReceiving(Int64, UInt64)
   CloseConnection(UInt64, Bytes)
   EmitNotice(SessionNotice)
-} derive(Debug, Eq)
+}
 
 ///|
+#derive(Debug, Eq)
 pub(all) enum ClientSessionError {
   Handshake(HandshakeError)
   Track(TrackSessionError)
@@ -258,7 +270,7 @@ pub(all) enum ClientSessionError {
   BufferLimitExceeded
   DatagramSendUnavailable
   DatagramTooLarge(Int32, Int32)
-} derive(Debug, Eq)
+}
 
 ///|
 priv enum InboundStreamKind {

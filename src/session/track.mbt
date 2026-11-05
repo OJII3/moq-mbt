@@ -1,4 +1,5 @@
 ///|
+#derive(Debug, Eq)
 pub(all) enum TrackSessionError {
   InvalidControlMessage
   TrackMismatch
@@ -10,7 +11,7 @@ pub(all) enum TrackSessionError {
   IncompleteObjectStream
   ObjectIdNotIncreasing
   ObjectStreamsStillOpen
-} derive(Debug, Eq)
+}
 
 ///|
 pub extend TrackSessionError with @moonbitlang/core/debug.Debug::{to_repr}

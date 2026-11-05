@@ -1,9 +1,10 @@
 ///|
 /// FETCH data streams begin with a request-scoped header instead of a
 /// Track Alias routed Subgroup header.
+#derive(Debug, Eq)
 pub(all) struct FetchHeader {
   request_id : UInt64
-} derive(Debug, Eq)
+}
 
 ///|
 pub fn encode_fetch_header(header : FetchHeader) -> Bytes {
@@ -30,14 +31,16 @@ pub fn decode_fetch_header(input : Bytes) -> DecodeResult[FetchHeader] {
 }
 
 ///|
+#derive(Debug, Eq)
 pub(all) enum FetchGroupOrder {
   Ascending
   Descending
-} derive(Debug, Eq)
+}
 
 ///|
 /// Object contents carried by a FETCH data stream. `subgroup_id` is nil for
 /// datagram-forwarded Objects; publisher priority is resolved from stream state.
+#derive(Debug, Eq)
 pub(all) struct FetchObject {
   group_id : UInt64
   subgroup_id : UInt64?
@@ -46,26 +49,29 @@ pub(all) struct FetchObject {
   datagram_forwarding : Bool
   properties : Bytes
   payload : Bytes
-} derive(Debug, Eq)
+}
 
 ///|
+#derive(Debug, Eq)
 pub(all) enum FetchRangeKind {
   EndOfNonExistentRange
   EndOfUnknownRange
-} derive(Debug, Eq)
+}
 
 ///|
+#derive(Debug, Eq)
 pub(all) struct FetchRangeEnd {
   group_id : UInt64
   object_id : UInt64
   kind : FetchRangeKind
-} derive(Debug, Eq)
+}
 
 ///|
+#derive(Debug, Eq)
 pub(all) enum FetchDataFrame {
   FetchDataObject(FetchObject)
   FetchDataRangeEnd(FetchRangeEnd)
-} derive(Debug, Eq)
+}
 
 ///|
 /// Stateful parser for the sequence following a FETCH_HEADER. Each call

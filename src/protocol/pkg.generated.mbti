@@ -81,6 +81,7 @@ pub fn join_track_namespace(TrackNamespace, TrackNamespace) -> Result[TrackNames
 // Errors
 
 // Types and methods
+#derive(Eq, @debug.Debug)
 pub(all) enum CodecError {
   UnexpectedMessageType(UInt64)
   MalformedOptions
@@ -103,11 +104,12 @@ pub(all) enum CodecError {
   InvalidSubgroup
   InvalidFetchObject
   InvalidDatagram
-} derive(Eq, @debug.Debug)
+}
 pub fn CodecError::equal(Self, Self) -> Bool
 pub fn CodecError::not_equal(Self, Self) -> Bool
 pub fn CodecError::to_repr(Self) -> @debug.Repr
 
+#derive(Eq, @debug.Debug)
 pub(all) enum ControlMessage {
   Subscribe(SubscribeMessage)
   Publish(PublishMessage)
@@ -124,27 +126,29 @@ pub(all) enum ControlMessage {
   SubscribeNamespace(NamespaceRequestMessage)
   Namespace(NamespaceSuffixMessage)
   NamespaceDone(NamespaceSuffixMessage)
-} derive(Eq, @debug.Debug)
+}
 pub fn ControlMessage::equal(Self, Self) -> Bool
 pub fn ControlMessage::not_equal(Self, Self) -> Bool
 pub fn ControlMessage::to_repr(Self) -> @debug.Repr
 
+#derive(Eq, @debug.Debug)
 pub(all) enum ControlStreamContext {
   AnyStream
   ControlStream
   RequestStream
   RequestStreamFor(RequestOkContext)
   FetchRequestStream
-} derive(Eq, @debug.Debug)
+}
 pub fn ControlStreamContext::equal(Self, Self) -> Bool
 pub fn ControlStreamContext::not_equal(Self, Self) -> Bool
 pub fn ControlStreamContext::to_repr(Self) -> @debug.Repr
 
+#derive(Eq, @debug.Debug)
 pub(all) enum DecodeResult[T] {
-  Complete(T, Int)
+  Complete(T, Int32)
   Incomplete
   Invalid(CodecError)
-} derive(Eq, @debug.Debug)
+}
 pub fn[T : Eq] DecodeResult::equal(Self[T], Self[T]) -> Bool
 pub fn[T : Eq] DecodeResult::not_equal(Self[T], Self[T]) -> Bool
 pub fn[T : @debug.Debug] DecodeResult::to_repr(Self[T]) -> @debug.Repr
@@ -164,46 +168,52 @@ pub struct FetchDataEncoder {
 pub fn FetchDataEncoder::encode(Self, FetchDataFrame) -> Result[Bytes, CodecError]
 pub fn FetchDataEncoder::new(FetchGroupOrder) -> Self
 
+#derive(Eq, @debug.Debug)
 pub(all) enum FetchDataFrame {
   FetchDataObject(FetchObject)
   FetchDataRangeEnd(FetchRangeEnd)
-} derive(Eq, @debug.Debug)
+}
 pub fn FetchDataFrame::equal(Self, Self) -> Bool
 pub fn FetchDataFrame::not_equal(Self, Self) -> Bool
 pub fn FetchDataFrame::to_repr(Self) -> @debug.Repr
 
+#derive(Eq, @debug.Debug)
 pub(all) enum FetchGroupOrder {
   Ascending
   Descending
-} derive(Eq, @debug.Debug)
+}
 pub fn FetchGroupOrder::equal(Self, Self) -> Bool
 pub fn FetchGroupOrder::not_equal(Self, Self) -> Bool
 pub fn FetchGroupOrder::to_repr(Self) -> @debug.Repr
 
+#derive(Eq, @debug.Debug)
 pub(all) struct FetchHeader {
   request_id : UInt64
-} derive(Eq, @debug.Debug)
+}
 pub fn FetchHeader::equal(Self, Self) -> Bool
 pub fn FetchHeader::not_equal(Self, Self) -> Bool
 pub fn FetchHeader::to_repr(Self) -> @debug.Repr
 
+#derive(Eq, @debug.Debug)
 pub(all) struct FetchLocation {
   group : UInt64
   object : UInt64
-} derive(Eq, @debug.Debug)
+}
 pub fn FetchLocation::equal(Self, Self) -> Bool
 pub fn FetchLocation::not_equal(Self, Self) -> Bool
 pub fn FetchLocation::to_repr(Self) -> @debug.Repr
 
+#derive(Eq, @debug.Debug)
 pub(all) struct FetchMessage {
   request_id : UInt64
   fetch_type : FetchType
   parameters : Array[MessageParameter]
-} derive(Eq, @debug.Debug)
+}
 pub fn FetchMessage::equal(Self, Self) -> Bool
 pub fn FetchMessage::not_equal(Self, Self) -> Bool
 pub fn FetchMessage::to_repr(Self) -> @debug.Repr
 
+#derive(Eq, @debug.Debug)
 pub(all) struct FetchObject {
   group_id : UInt64
   subgroup_id : UInt64?
@@ -212,88 +222,98 @@ pub(all) struct FetchObject {
   datagram_forwarding : Bool
   properties : Bytes
   payload : Bytes
-} derive(Eq, @debug.Debug)
+}
 pub fn FetchObject::equal(Self, Self) -> Bool
 pub fn FetchObject::not_equal(Self, Self) -> Bool
 pub fn FetchObject::to_repr(Self) -> @debug.Repr
 
+#derive(Eq, @debug.Debug)
 pub(all) struct FetchOkMessage {
   end_of_track : Byte
   end_location : FetchLocation
   parameters : Array[MessageParameter]
   track_properties : Bytes
-} derive(Eq, @debug.Debug)
+}
 pub fn FetchOkMessage::equal(Self, Self) -> Bool
 pub fn FetchOkMessage::not_equal(Self, Self) -> Bool
 pub fn FetchOkMessage::to_repr(Self) -> @debug.Repr
 
+#derive(Eq, @debug.Debug)
 pub(all) struct FetchRangeEnd {
   group_id : UInt64
   object_id : UInt64
   kind : FetchRangeKind
-} derive(Eq, @debug.Debug)
+}
 pub fn FetchRangeEnd::equal(Self, Self) -> Bool
 pub fn FetchRangeEnd::not_equal(Self, Self) -> Bool
 pub fn FetchRangeEnd::to_repr(Self) -> @debug.Repr
 
+#derive(Eq, @debug.Debug)
 pub(all) enum FetchRangeKind {
   EndOfNonExistentRange
   EndOfUnknownRange
-} derive(Eq, @debug.Debug)
+}
 pub fn FetchRangeKind::equal(Self, Self) -> Bool
 pub fn FetchRangeKind::not_equal(Self, Self) -> Bool
 pub fn FetchRangeKind::to_repr(Self) -> @debug.Repr
 
+#derive(Eq, @debug.Debug)
 pub(all) enum FetchType {
   StandaloneFetch(TrackName, FetchLocation, FetchLocation)
   RelativeJoiningFetch(UInt64, UInt64)
   AbsoluteJoiningFetch(UInt64, UInt64)
-} derive(Eq, @debug.Debug)
+}
 pub fn FetchType::equal(Self, Self) -> Bool
 pub fn FetchType::not_equal(Self, Self) -> Bool
 pub fn FetchType::to_repr(Self) -> @debug.Repr
 
+#derive(Eq, @debug.Debug)
 pub(all) struct GoAwayControlMessage {
   uri : Bytes
   timeout_ms : UInt64
   request_id : UInt64
-} derive(Eq, @debug.Debug)
+}
 pub fn GoAwayControlMessage::equal(Self, Self) -> Bool
 pub fn GoAwayControlMessage::not_equal(Self, Self) -> Bool
 pub fn GoAwayControlMessage::to_repr(Self) -> @debug.Repr
 
+#derive(Eq, @debug.Debug)
 pub(all) struct GoAwayRequestMessage {
   uri : Bytes
   timeout_ms : UInt64
-} derive(Eq, @debug.Debug)
+}
 pub fn GoAwayRequestMessage::equal(Self, Self) -> Bool
 pub fn GoAwayRequestMessage::not_equal(Self, Self) -> Bool
 pub fn GoAwayRequestMessage::to_repr(Self) -> @debug.Repr
 
+#derive(Eq, @debug.Debug)
 pub(all) struct MessageParameter {
   kind : UInt64
   value : ParameterValue
-} derive(Eq, @debug.Debug)
+}
 pub fn MessageParameter::equal(Self, Self) -> Bool
 pub fn MessageParameter::not_equal(Self, Self) -> Bool
 pub fn MessageParameter::to_repr(Self) -> @debug.Repr
 
+#derive(Eq, @debug.Debug)
 pub(all) struct NamespaceRequestMessage {
   request_id : UInt64
   track_namespace : TrackNamespace
   parameters : Array[MessageParameter]
-} derive(Eq, @debug.Debug)
+}
 pub fn NamespaceRequestMessage::equal(Self, Self) -> Bool
 pub fn NamespaceRequestMessage::not_equal(Self, Self) -> Bool
 pub fn NamespaceRequestMessage::to_repr(Self) -> @debug.Repr
 
+#derive(Eq, @debug.Debug)
 pub(all) struct NamespaceSuffixMessage {
   track_namespace : TrackNamespace
-} derive(Eq, @debug.Debug)
+}
 pub fn NamespaceSuffixMessage::equal(Self, Self) -> Bool
 pub fn NamespaceSuffixMessage::not_equal(Self, Self) -> Bool
 pub fn NamespaceSuffixMessage::to_repr(Self) -> @debug.Repr
 
+#derive(Eq, @debug.Debug)
 pub(all) struct ObjectDatagram {
   track_alias : UInt64
   group_id : UInt64
@@ -303,28 +323,31 @@ pub(all) struct ObjectDatagram {
   properties : Bytes
   status : ObjectStatus
   payload : Bytes
-} derive(Eq, @debug.Debug)
+}
 pub fn ObjectDatagram::equal(Self, Self) -> Bool
 pub fn ObjectDatagram::not_equal(Self, Self) -> Bool
 pub fn ObjectDatagram::to_repr(Self) -> @debug.Repr
 
+#derive(Eq, @debug.Debug)
 pub(all) enum ObjectStatus {
   Normal
   EndOfGroup
   EndOfTrack
-} derive(Eq, @debug.Debug)
+}
 pub fn ObjectStatus::equal(Self, Self) -> Bool
 pub fn ObjectStatus::not_equal(Self, Self) -> Bool
 pub fn ObjectStatus::to_repr(Self) -> @debug.Repr
 
+#derive(Eq, @debug.Debug)
 pub(all) enum OptionValue {
   Integer(UInt64)
   Data(Bytes)
-} derive(Eq, @debug.Debug)
+}
 pub fn OptionValue::equal(Self, Self) -> Bool
 pub fn OptionValue::not_equal(Self, Self) -> Bool
 pub fn OptionValue::to_repr(Self) -> @debug.Repr
 
+#derive(Eq, @debug.Debug)
 pub(all) enum ParameterValue {
   VarInt(UInt64)
   Byte(Byte)
@@ -332,88 +355,97 @@ pub(all) enum ParameterValue {
   Location(UInt64, UInt64)
   Filter(SubscriptionFilter)
   NamespacePrefix(TrackNamespace)
-} derive(Eq, @debug.Debug)
+}
 pub fn ParameterValue::equal(Self, Self) -> Bool
 pub fn ParameterValue::not_equal(Self, Self) -> Bool
 pub fn ParameterValue::to_repr(Self) -> @debug.Repr
 
+#derive(Eq, @debug.Debug)
 pub(all) struct PublishDoneMessage {
   code : UInt64
   stream_count : UInt64
   reason : Bytes
-} derive(Eq, @debug.Debug)
+}
 pub fn PublishDoneMessage::equal(Self, Self) -> Bool
 pub fn PublishDoneMessage::not_equal(Self, Self) -> Bool
 pub fn PublishDoneMessage::to_repr(Self) -> @debug.Repr
 
+#derive(Eq, @debug.Debug)
 pub(all) struct PublishMessage {
   request_id : UInt64
   track : TrackName
   track_alias : UInt64
   parameters : Array[MessageParameter]
   properties : Bytes
-} derive(Eq, @debug.Debug)
+}
 pub fn PublishMessage::equal(Self, Self) -> Bool
 pub fn PublishMessage::not_equal(Self, Self) -> Bool
 pub fn PublishMessage::to_repr(Self) -> @debug.Repr
 
+#derive(Eq, @debug.Debug)
 pub(all) enum ReceivedDatagram {
   Object(ObjectDatagram)
   Padding
-} derive(Eq, @debug.Debug)
+}
 pub fn ReceivedDatagram::equal(Self, Self) -> Bool
 pub fn ReceivedDatagram::not_equal(Self, Self) -> Bool
 pub fn ReceivedDatagram::to_repr(Self) -> @debug.Repr
 
+#derive(Eq, @debug.Debug)
 pub(all) struct RequestErrorMessage {
   code : UInt64
   retry_interval : UInt64
   reason : Bytes
   redirect : Bytes
-} derive(Eq, @debug.Debug)
+}
 pub fn RequestErrorMessage::equal(Self, Self) -> Bool
 pub fn RequestErrorMessage::not_equal(Self, Self) -> Bool
 pub fn RequestErrorMessage::to_repr(Self) -> @debug.Repr
 
+#derive(Eq, @debug.Debug)
 pub(all) enum RequestOkContext {
   Publish
   RequestUpdate
   FetchUpdate
   TrackStatus
   Namespace
-} derive(Eq, @debug.Debug)
+}
 pub fn RequestOkContext::equal(Self, Self) -> Bool
 pub fn RequestOkContext::not_equal(Self, Self) -> Bool
 pub fn RequestOkContext::to_repr(Self) -> @debug.Repr
 
+#derive(Eq, @debug.Debug)
 pub(all) struct RequestOkMessage {
   parameters : Array[MessageParameter]
   properties : Bytes
-} derive(Eq, @debug.Debug)
+}
 pub fn RequestOkMessage::equal(Self, Self) -> Bool
 pub fn RequestOkMessage::not_equal(Self, Self) -> Bool
 pub fn RequestOkMessage::to_repr(Self) -> @debug.Repr
 
+#derive(Eq, @debug.Debug)
 pub(all) struct RequestUpdateMessage {
   request_id : UInt64
   parameters : Array[MessageParameter]
-} derive(Eq, @debug.Debug)
+}
 pub fn RequestUpdateMessage::equal(Self, Self) -> Bool
 pub fn RequestUpdateMessage::not_equal(Self, Self) -> Bool
 pub fn RequestUpdateMessage::to_repr(Self) -> @debug.Repr
 
+#derive(Eq, @debug.Debug)
 pub(all) struct Setup {
   options : Array[SetupOption]
-} derive(Eq, @debug.Debug)
+}
 pub fn Setup::equal(Self, Self) -> Bool
 pub fn Setup::for_webtransport(Self) -> Self
 pub fn Setup::not_equal(Self, Self) -> Bool
 pub fn Setup::to_repr(Self) -> @debug.Repr
 
+#derive(Eq, @debug.Debug)
 pub(all) struct SetupOption {
   kind : UInt64
   value : OptionValue
-} derive(Eq, @debug.Debug)
+}
 pub fn SetupOption::equal(Self, Self) -> Bool
 pub fn SetupOption::not_equal(Self, Self) -> Bool
 pub fn SetupOption::to_repr(Self) -> @debug.Repr
@@ -426,16 +458,18 @@ pub fn SubgroupDecoder::decode_next(Self, Bytes) -> DecodeResult[SubgroupFrame]
 pub fn SubgroupDecoder::new(SubgroupHeader) -> Self
 pub fn SubgroupDecoder::subgroup_id(Self) -> UInt64?
 
+#derive(Eq, @debug.Debug)
 pub(all) struct SubgroupFrame {
   object_id : UInt64
   status : ObjectStatus
   properties : Bytes
   payload : Bytes
-} derive(Eq, @debug.Debug)
+}
 pub fn SubgroupFrame::equal(Self, Self) -> Bool
 pub fn SubgroupFrame::not_equal(Self, Self) -> Bool
 pub fn SubgroupFrame::to_repr(Self) -> @debug.Repr
 
+#derive(Eq, @debug.Debug)
 pub(all) struct SubgroupHeader {
   track_alias : UInt64
   group_id : UInt64
@@ -444,52 +478,57 @@ pub(all) struct SubgroupHeader {
   end_of_group : Bool
   first_object : Bool
   has_properties : Bool
-} derive(Eq, @debug.Debug)
+}
 pub fn SubgroupHeader::equal(Self, Self) -> Bool
 pub fn SubgroupHeader::not_equal(Self, Self) -> Bool
 pub fn SubgroupHeader::to_repr(Self) -> @debug.Repr
 
+#derive(Eq, @debug.Debug)
 pub(all) enum SubgroupIdMode {
   Zero
   FirstObject
   Explicit(UInt64)
-} derive(Eq, @debug.Debug)
+}
 pub fn SubgroupIdMode::equal(Self, Self) -> Bool
 pub fn SubgroupIdMode::not_equal(Self, Self) -> Bool
 pub fn SubgroupIdMode::to_repr(Self) -> @debug.Repr
 
+#derive(Eq, @debug.Debug)
 pub(all) struct SubscribeMessage {
   request_id : UInt64
   track : TrackName
   parameters : Array[MessageParameter]
-} derive(Eq, @debug.Debug)
+}
 pub fn SubscribeMessage::equal(Self, Self) -> Bool
 pub fn SubscribeMessage::not_equal(Self, Self) -> Bool
 pub fn SubscribeMessage::to_repr(Self) -> @debug.Repr
 
+#derive(Eq, @debug.Debug)
 pub(all) struct SubscribeOkMessage {
   track_alias : UInt64
   parameters : Array[MessageParameter]
   properties : Bytes
-} derive(Eq, @debug.Debug)
+}
 pub fn SubscribeOkMessage::equal(Self, Self) -> Bool
 pub fn SubscribeOkMessage::not_equal(Self, Self) -> Bool
 pub fn SubscribeOkMessage::to_repr(Self) -> @debug.Repr
 
+#derive(Eq, @debug.Debug)
 pub(all) enum SubscriptionFilter {
   NextGroupStart
   LargestObject
   AbsoluteStart(UInt64, UInt64)
   AbsoluteRange(UInt64, UInt64, UInt64)
-} derive(Eq, @debug.Debug)
+}
 pub fn SubscriptionFilter::equal(Self, Self) -> Bool
 pub fn SubscriptionFilter::not_equal(Self, Self) -> Bool
 pub fn SubscriptionFilter::to_repr(Self) -> @debug.Repr
 
+#derive(Eq, @debug.Debug)
 pub(all) struct TrackName {
   namespace_fields : Array[Bytes]
   name : Bytes
-} derive(Eq, @debug.Debug)
+}
 pub fn TrackName::equal(Self, Self) -> Bool
 pub fn TrackName::from_utf8_field(String, String) -> Self
 pub fn TrackName::from_utf8_fields(Array[String], String) -> Self
@@ -497,9 +536,10 @@ pub fn TrackName::not_equal(Self, Self) -> Bool
 pub fn TrackName::to_display_string(Self) -> String
 pub fn TrackName::to_repr(Self) -> @debug.Repr
 
+#derive(Eq, @debug.Debug)
 pub(all) struct TrackNamespace {
   fields : Array[Bytes]
-} derive(Eq, @debug.Debug)
+}
 pub fn TrackNamespace::equal(Self, Self) -> Bool
 pub fn TrackNamespace::not_equal(Self, Self) -> Bool
 pub fn TrackNamespace::to_repr(Self) -> @debug.Repr

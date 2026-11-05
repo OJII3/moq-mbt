@@ -1,9 +1,10 @@
 ///|
+#derive(Eq)
 priv enum ClientFetchState {
   FetchPending
   FetchAccepted
   FetchTerminal
-} derive(Eq)
+}
 
 ///|
 priv struct ClientFetch {

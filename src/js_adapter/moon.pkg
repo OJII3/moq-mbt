@@ -10,7 +10,11 @@ import {
 }
 
 import {
-  "moonbitlang/async",
+  "moonbitlang/core/async",
 } for "test"
 
 supported_targets = "js"
+
+options(
+  "allow-experimental-packages": [ "moonbitlang/core/async" ],
+)

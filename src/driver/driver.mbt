@@ -5,17 +5,19 @@
 /// its completion through the callback passed with the action. `Retry` means
 /// the action was not taken and must be attempted again later, usually because
 /// the transport queue is full. `Fatal` ends the session with `TransportFailed`.
+#derive(Debug, Eq)
 pub(all) enum TransportAcceptance {
   Accepted
   Retry
   Fatal(Int64)
-} derive(Debug, Eq)
+}
 
 ///|
+#derive(Debug, Eq)
 pub(all) enum TransportOpenOutcome {
   Opened(Int64)
   OpenFailed(Int64)
-} derive(Debug, Eq)
+}
 
 ///|
 /// Local completion of a stream write or datagram send, not peer delivery.
@@ -23,21 +25,23 @@ pub(all) enum TransportOpenOutcome {
 /// `Abandoned` reports that the transport will never report this send again,
 /// for example after a local abort. It only releases the driver's in-flight
 /// slot and does not produce a session event.
+#derive(Debug, Eq)
 pub(all) enum TransportWriteOutcome {
   Written
   WriteCanceled
   WriteReset(UInt64)
   WriteFailed(Int64)
   Abandoned
-} derive(Debug, Eq)
+}
 
 ///|
 /// Reason a `SessionDriver` entered its terminal failure state.
+#derive(Debug, Eq)
 pub(all) enum SessionDriverFailureReason {
   SessionError(@session.ClientSessionError)
   Transport(Int64)
   PendingOverflow
-} derive(Debug, Eq)
+}
 
 ///|
 /// Transport operations required by `SessionDriver`.
@@ -67,6 +71,7 @@ pub(open) trait SessionTransport {
 /// In-flight limits may be disabled with zero. Pending action and byte limits
 /// must be positive; control actions are exempt so aborts remain available.
 /// Stream writes are divided into chunks of at most max_send_chunk_bytes.
+#derive(Debug, Eq)
 pub(all) struct SessionDriverConfig {
   max_in_flight_opens : Int32
   max_in_flight_sends : Int32
@@ -74,15 +79,16 @@ pub(all) struct SessionDriverConfig {
   max_pending_actions : Int32
   max_pending_bytes : Int64
   max_send_chunk_bytes : Int32
-} derive(Debug, Eq)
+}
 
 ///|
+#derive(Debug, Eq)
 pub(all) enum DriverDispatchResult {
   Accepted
   QueueFull
   TooLarge
   DriverFailed
-} derive(Debug, Eq)
+}
 
 ///|
 priv struct PendingAction {

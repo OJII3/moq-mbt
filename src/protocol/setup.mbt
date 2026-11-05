@@ -1,20 +1,23 @@
 ///|
+#derive(Debug, Eq)
 pub(all) enum OptionValue {
   Integer(UInt64)
   Data(Bytes)
-} derive(Debug, Eq)
+}
 
 ///|
 /// Options retain unknown types and duplicate unknown values.
+#derive(Debug, Eq)
 pub(all) struct SetupOption {
   kind : UInt64
   value : OptionValue
-} derive(Debug, Eq)
+}
 
 ///|
+#derive(Debug, Eq)
 pub(all) struct Setup {
   options : Array[SetupOption]
-} derive(Debug, Eq)
+}
 
 ///|
 /// Return a copy without the Native-only PATH (1) and AUTHORITY (5) options.
