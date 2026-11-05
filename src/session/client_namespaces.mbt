@@ -1,9 +1,10 @@
 ///|
+#derive(Eq)
 priv enum NamespaceRequestState {
   NamespacePending
   NamespaceAccepted
   NamespaceTerminal
-} derive(Eq)
+}
 
 ///|
 priv struct NamespaceRequest {

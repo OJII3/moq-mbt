@@ -1,11 +1,13 @@
 ///|
 /// The transport selects the version before constructing the handshake.
+#derive(Debug, Eq)
 pub(all) enum Version {
   Draft18
-} derive(Debug, Eq)
+}
 
 ///|
 /// Errors carry the MoQT connection-close code to use at the transport boundary.
+#derive(Debug, Eq)
 pub(all) enum HandshakeError {
   InvalidSetup(@protocol.CodecError)
   DuplicateControlStream
@@ -13,7 +15,7 @@ pub(all) enum HandshakeError {
   InvalidServerPath
   InvalidServerAuthority
   AlreadyCompleted
-} derive(Debug, Eq)
+}
 
 ///|
 pub fn HandshakeError::close_code(self : HandshakeError) -> UInt64 {
@@ -28,10 +30,11 @@ pub fn HandshakeError::close_code(self : HandshakeError) -> UInt64 {
 ///|
 /// Ready includes any bytes following SETUP on the same control stream.
 /// The caller retains that stream for later control messages; it must not FIN it.
+#derive(Debug, Eq)
 pub(all) enum HandshakeProgress {
   Pending
   Ready(@protocol.Setup, Bytes)
-} derive(Debug, Eq)
+}
 
 ///|
 /// Client-side SETUP exchange only. No sockets, clocks, or transport stream IDs

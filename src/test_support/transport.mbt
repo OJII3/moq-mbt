@@ -1,6 +1,7 @@
 ///|
 /// Calls made by `SessionDriver`, including attempts that return `Retry` or
 /// `Fatal`. Send completion is controlled separately from these observations.
+#derive(Debug, Eq)
 pub(all) enum TransportCall {
   OpenStream(@session.ClientStreamDirection, @session.ClientStreamPurpose)
   Send(Int64, Bytes, Bool)
@@ -8,7 +9,7 @@ pub(all) enum TransportCall {
   AbortSend(Int64, UInt64)
   StopReceiving(Int64, UInt64)
   CloseConnection(UInt64, Bytes)
-} derive(Debug, Eq)
+}
 
 ///|
 /// In-memory transport for tests using the public `SessionDriver`.

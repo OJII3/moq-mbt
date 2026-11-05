@@ -1,22 +1,25 @@
 ///|
 /// How the Subgroup ID is represented by a Subgroup stream header.
+#derive(Debug, Eq)
 pub(all) enum SubgroupIdMode {
   Zero
   FirstObject
   Explicit(UInt64)
-} derive(Debug, Eq)
+}
 
 ///|
 /// Status values defined by Draft 18 for subscription Objects.
+#derive(Debug, Eq)
 pub(all) enum ObjectStatus {
   Normal
   EndOfGroup
   EndOfTrack
-} derive(Debug, Eq)
+}
 
 ///|
 /// The decoded Subgroup stream header. A nil publisher priority means the
 /// stream inherits the priority negotiated by the subscription.
+#derive(Debug, Eq)
 pub(all) struct SubgroupHeader {
   track_alias : UInt64
   group_id : UInt64
@@ -25,17 +28,18 @@ pub(all) struct SubgroupHeader {
   end_of_group : Bool
   first_object : Bool
   has_properties : Bool
-} derive(Debug, Eq)
+}
 
 ///|
 /// One Object frame on a Subgroup stream. object_id is absolute in memory;
 /// the wire format encodes it as an ID or a delta depending on stream position.
+#derive(Debug, Eq)
 pub(all) struct SubgroupFrame {
   object_id : UInt64
   status : ObjectStatus
   properties : Bytes
   payload : Bytes
-} derive(Debug, Eq)
+}
 
 ///|
 /// Encode a Subgroup stream header according to Draft 18.

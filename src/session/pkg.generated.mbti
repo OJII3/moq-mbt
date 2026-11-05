@@ -42,7 +42,7 @@ pub fn ClientSession::finish_fetch(Self, RequestId) -> Result[Array[SessionActio
 pub fn ClientSession::finish_object_stream(Self, StreamId) -> Result[Array[SessionAction], ClientSessionError]
 pub fn ClientSession::finish_subscription_updates(Self, RequestId) -> Result[Array[SessionAction], ClientSessionError]
 pub fn ClientSession::forget_desired_subscriptions(Self, @protocol.TrackName) -> Unit
-pub fn ClientSession::max_datagram_length(Self) -> Int
+pub fn ClientSession::max_datagram_length(Self) -> Int32
 pub fn ClientSession::new(Version, @protocol.Setup, desired_subscriptions? : Array[DesiredSubscription], max_object_buffer_bytes? : UInt64) -> Result[Self, @protocol.CodecError]
 pub fn ClientSession::open_object_group(Self, StreamId, UInt64, end_of_group? : Bool, has_properties? : Bool) -> Result[(ObjectGroupWriter, Array[SessionAction]), ClientSessionError]
 pub fn ClientSession::open_object_stream(Self, StreamId, @protocol.SubgroupHeader) -> Result[Array[SessionAction], ClientSessionError]
@@ -79,15 +79,17 @@ pub fn ClientSession::update_published_namespace(Self, RequestId, Array[@protoco
 pub fn ClientSession::update_subscription(Self, RequestId, Array[@protocol.MessageParameter]) -> Result[(RequestId, Array[SessionAction]), ClientSessionError]
 pub fn ClientSession::withdraw_application_namespace(Self, @protocol.TrackNamespace) -> Result[Array[SessionAction], ClientSessionError]
 
+#derive(Eq, @debug.Debug)
 pub(all) enum ClientSessionEnd {
   Local(UInt64, Bytes)
   Peer(UInt64)
   Transport(Int64)
-} derive(Eq, @debug.Debug)
+}
 pub fn ClientSessionEnd::equal(Self, Self) -> Bool
 pub fn ClientSessionEnd::not_equal(Self, Self) -> Bool
 pub fn ClientSessionEnd::to_repr(Self) -> @debug.Repr
 
+#derive(Eq, @debug.Debug)
 pub(all) enum ClientSessionError {
   Handshake(HandshakeError)
   Track(TrackSessionError)
@@ -113,8 +115,8 @@ pub(all) enum ClientSessionError {
   ObjectPayloadLengthMismatch
   BufferLimitExceeded
   DatagramSendUnavailable
-  DatagramTooLarge(Int, Int)
-} derive(Eq, @debug.Debug)
+  DatagramTooLarge(Int32, Int32)
+}
 pub fn ClientSessionError::close_code(Self) -> UInt64?
 pub fn ClientSessionError::equal(Self, Self) -> Bool
 pub fn ClientSessionError::message(Self) -> String
@@ -124,41 +126,46 @@ pub fn ClientSessionError::to_repr(Self) -> @debug.Repr
 pub fn ClientSessionError::to_string(Self) -> String
 pub impl Show for ClientSessionError
 
+#derive(Eq, @debug.Debug)
 pub(all) enum ClientSessionState {
   Active
   Draining
   Closed
-} derive(Eq, @debug.Debug)
+}
 pub fn ClientSessionState::equal(Self, Self) -> Bool
 pub fn ClientSessionState::not_equal(Self, Self) -> Bool
 pub fn ClientSessionState::to_repr(Self) -> @debug.Repr
 
+#derive(Eq, @debug.Debug)
 pub(all) enum ClientStreamDirection {
   Unidirectional
   Bidirectional
-} derive(Eq, @debug.Debug)
+}
 pub fn ClientStreamDirection::equal(Self, Self) -> Bool
 pub fn ClientStreamDirection::not_equal(Self, Self) -> Bool
 pub fn ClientStreamDirection::to_repr(Self) -> @debug.Repr
 
+#derive(Eq, @debug.Debug)
 pub(all) enum ClientStreamPurpose {
   Control
   Request(RequestId)
   Object(UInt64)
   FetchData(RequestId)
-} derive(Eq, @debug.Debug)
+}
 pub fn ClientStreamPurpose::equal(Self, Self) -> Bool
 pub fn ClientStreamPurpose::not_equal(Self, Self) -> Bool
 pub fn ClientStreamPurpose::to_repr(Self) -> @debug.Repr
 
+#derive(Eq, @debug.Debug)
 pub(all) struct DesiredSubscription {
   track : @protocol.TrackName
   mut parameters : Array[@protocol.MessageParameter]
-} derive(Eq, @debug.Debug)
+}
 pub fn DesiredSubscription::equal(Self, Self) -> Bool
 pub fn DesiredSubscription::not_equal(Self, Self) -> Bool
 pub fn DesiredSubscription::to_repr(Self) -> @debug.Repr
 
+#derive(Eq, @debug.Debug)
 pub(all) enum HandshakeError {
   InvalidSetup(@protocol.CodecError)
   DuplicateControlStream
@@ -166,16 +173,17 @@ pub(all) enum HandshakeError {
   InvalidServerPath
   InvalidServerAuthority
   AlreadyCompleted
-} derive(Eq, @debug.Debug)
+}
 pub fn HandshakeError::close_code(Self) -> UInt64
 pub fn HandshakeError::equal(Self, Self) -> Bool
 pub fn HandshakeError::not_equal(Self, Self) -> Bool
 pub fn HandshakeError::to_repr(Self) -> @debug.Repr
 
+#derive(Eq, @debug.Debug)
 pub(all) enum HandshakeProgress {
   Pending
   Ready(@protocol.Setup, Bytes)
-} derive(Eq, @debug.Debug)
+}
 pub fn HandshakeProgress::equal(Self, Self) -> Bool
 pub fn HandshakeProgress::not_equal(Self, Self) -> Bool
 pub fn HandshakeProgress::to_repr(Self) -> @debug.Repr
@@ -196,9 +204,10 @@ pub struct ObjectWriter {
 pub fn ObjectWriter::finish(Self) -> Result[Array[SessionAction], ClientSessionError]
 pub fn ObjectWriter::write(Self, Bytes) -> Result[Array[SessionAction], ClientSessionError]
 
-pub(all) struct RequestId(UInt64) derive(Eq, Hash, @debug.Debug)
+#derive(Eq, Hash, @debug.Debug)
+pub(all) struct RequestId(UInt64)
 pub fn RequestId::equal(Self, Self) -> Bool
-pub fn RequestId::hash(Self) -> Int
+pub fn RequestId::hash(Self) -> Int32
 pub fn RequestId::hash_combine(Self, Hasher) -> Unit
 pub fn RequestId::not_equal(Self, Self) -> Bool
 pub fn RequestId::output(Self, &Logger) -> Unit
@@ -207,14 +216,16 @@ pub fn RequestId::to_string(Self) -> String
 pub fn RequestId::to_uint64(Self) -> UInt64
 pub impl Show for RequestId
 
+#derive(Eq, @debug.Debug)
 pub(all) enum SendCompletion {
   Sent
   Reset
-} derive(Eq, @debug.Debug)
+}
 pub fn SendCompletion::equal(Self, Self) -> Bool
 pub fn SendCompletion::not_equal(Self, Self) -> Bool
 pub fn SendCompletion::to_repr(Self) -> @debug.Repr
 
+#derive(Eq, @debug.Debug)
 pub(all) enum SessionAction {
   OpenStream(ClientStreamDirection, ClientStreamPurpose)
   SendChunk(Int64, Bytes)
@@ -226,16 +237,17 @@ pub(all) enum SessionAction {
   StopReceiving(Int64, UInt64)
   CloseConnection(UInt64, Bytes)
   EmitNotice(SessionNotice)
-} derive(Eq, @debug.Debug)
+}
 pub fn SessionAction::equal(Self, Self) -> Bool
 pub fn SessionAction::not_equal(Self, Self) -> Bool
 pub fn SessionAction::to_repr(Self) -> @debug.Repr
 
+#derive(Eq, @debug.Debug)
 pub(all) enum SessionEvent {
   InboundStreamStarted(Int64, ClientStreamDirection)
   StreamData(Int64, Bytes)
   DatagramReceived(Bytes)
-  DatagramSendCapabilityChanged(enabled~ : Bool, max_length~ : Int)
+  DatagramSendCapabilityChanged(enabled~ : Bool, max_length~ : Int32)
   StreamOpened(ClientStreamPurpose, Int64)
   InboundStreamFinished(Int64)
   StreamReset(Int64, UInt64)
@@ -247,11 +259,12 @@ pub(all) enum SessionEvent {
   Clock(UInt64)
   PeerClosed(UInt64)
   TransportFailed(Int64)
-} derive(Eq, @debug.Debug)
+}
 pub fn SessionEvent::equal(Self, Self) -> Bool
 pub fn SessionEvent::not_equal(Self, Self) -> Bool
 pub fn SessionEvent::to_repr(Self) -> @debug.Repr
 
+#derive(Eq, @debug.Debug)
 pub(all) enum SessionNotice {
   HandshakeComplete(@protocol.Setup)
   ControlMessageReceived(@protocol.ControlMessage)
@@ -310,14 +323,15 @@ pub(all) enum SessionNotice {
   ControlGoAwayReceived(Bytes, UInt64, UInt64)
   RequestGoAwayReceived(RequestId, StreamId, Bytes, UInt64)
   SessionEnded(ClientSessionEnd)
-} derive(Eq, @debug.Debug)
+}
 pub fn SessionNotice::equal(Self, Self) -> Bool
 pub fn SessionNotice::not_equal(Self, Self) -> Bool
 pub fn SessionNotice::to_repr(Self) -> @debug.Repr
 
-pub(all) struct StreamId(Int64) derive(Eq, Hash, @debug.Debug)
+#derive(Eq, Hash, @debug.Debug)
+pub(all) struct StreamId(Int64)
 pub fn StreamId::equal(Self, Self) -> Bool
-pub fn StreamId::hash(Self) -> Int
+pub fn StreamId::hash(Self) -> Int32
 pub fn StreamId::hash_combine(Self, Hasher) -> Unit
 pub fn StreamId::not_equal(Self, Self) -> Bool
 pub fn StreamId::output(Self, &Logger) -> Unit
@@ -326,9 +340,10 @@ pub fn StreamId::to_repr(Self) -> @debug.Repr
 pub fn StreamId::to_string(Self) -> String
 pub impl Show for StreamId
 
-pub(all) struct TrackAlias(UInt64) derive(Eq, Hash, @debug.Debug)
+#derive(Eq, Hash, @debug.Debug)
+pub(all) struct TrackAlias(UInt64)
 pub fn TrackAlias::equal(Self, Self) -> Bool
-pub fn TrackAlias::hash(Self) -> Int
+pub fn TrackAlias::hash(Self) -> Int32
 pub fn TrackAlias::hash_combine(Self, Hasher) -> Unit
 pub fn TrackAlias::not_equal(Self, Self) -> Bool
 pub fn TrackAlias::output(Self, &Logger) -> Unit
@@ -337,6 +352,7 @@ pub fn TrackAlias::to_string(Self) -> String
 pub fn TrackAlias::to_uint64(Self) -> UInt64
 pub impl Show for TrackAlias
 
+#derive(Eq, @debug.Debug)
 pub(all) enum TrackSessionError {
   InvalidControlMessage
   TrackMismatch
@@ -348,14 +364,15 @@ pub(all) enum TrackSessionError {
   IncompleteObjectStream
   ObjectIdNotIncreasing
   ObjectStreamsStillOpen
-} derive(Eq, @debug.Debug)
+}
 pub fn TrackSessionError::equal(Self, Self) -> Bool
 pub fn TrackSessionError::not_equal(Self, Self) -> Bool
 pub fn TrackSessionError::to_repr(Self) -> @debug.Repr
 
+#derive(Eq, @debug.Debug)
 pub(all) enum Version {
   Draft18
-} derive(Eq, @debug.Debug)
+}
 pub fn Version::equal(Self, Self) -> Bool
 pub fn Version::not_equal(Self, Self) -> Bool
 pub fn Version::to_repr(Self) -> @debug.Repr

@@ -1,15 +1,17 @@
 ///|
+#derive(Eq)
 priv enum ClientRequestKind {
   Publishing
   Subscribing
-} derive(Eq)
+}
 
 ///|
+#derive(Eq)
 priv enum ClientRequestState {
   RequestPending
   RequestAccepted
   RequestTerminal
-} derive(Eq)
+}
 
 ///|
 priv struct ClientRequest {
@@ -166,11 +168,12 @@ priv struct InboundSubscription {
 }
 
 ///|
+#derive(Eq)
 priv enum SubscriptionState {
   Pending
   Active
   Ended
-} derive(Eq)
+}
 
 ///|
 fn ClientSession::allocate_request_id(self : ClientSession) -> UInt64 {

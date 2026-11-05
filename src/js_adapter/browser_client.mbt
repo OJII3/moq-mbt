@@ -8,12 +8,13 @@ pub struct BrowserClient {
 
 ///|
 /// Why `BrowserClient::connect` could not create a session.
+#derive(Debug, Eq)
 pub(all) enum BrowserClientError {
   /// The WebTransport constructor or URL conversion failed.
   Connection(String)
   /// The local SETUP could not be encoded for a Draft 18 client.
   InvalidSetup(@protocol.CodecError)
-} derive(Debug, Eq)
+}
 
 ///|
 pub fn BrowserClientError::message(self : BrowserClientError) -> String {

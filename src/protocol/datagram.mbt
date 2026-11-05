@@ -2,6 +2,7 @@
 /// One Object carried by a Draft 18 OBJECT_DATAGRAM. A zero object ID and a
 /// nil publisher priority use their omitted wire forms; Normal status is
 /// implicit when the payload is non-empty.
+#derive(Debug, Eq)
 pub(all) struct ObjectDatagram {
   track_alias : UInt64
   group_id : UInt64
@@ -11,14 +12,15 @@ pub(all) struct ObjectDatagram {
   properties : Bytes
   status : ObjectStatus
   payload : Bytes
-} derive(Debug, Eq)
+}
 
 ///|
 /// A datagram received on the MOQT transport.
+#derive(Debug, Eq)
 pub(all) enum ReceivedDatagram {
   Object(ObjectDatagram)
   Padding
-} derive(Debug, Eq)
+}
 
 ///|
 pub extend ReceivedDatagram with Debug::{to_repr}

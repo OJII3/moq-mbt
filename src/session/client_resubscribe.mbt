@@ -1,9 +1,10 @@
 ///|
 /// A track subscription the application wants restored after reconnecting.
+#derive(Debug, Eq)
 pub(all) struct DesiredSubscription {
   track : @protocol.TrackName
   mut parameters : Array[@protocol.MessageParameter]
-} derive(Debug, Eq)
+}
 
 ///|
 pub extend DesiredSubscription with @moonbitlang/core/debug.Debug::{to_repr}

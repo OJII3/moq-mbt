@@ -1,9 +1,10 @@
 ///|
 /// One full track name. Namespace fields and track names are opaque bytes.
+#derive(Debug, Eq)
 pub(all) struct TrackName {
   namespace_fields : Array[Bytes]
   name : Bytes
-} derive(Debug, Eq)
+}
 
 ///|
 /// Build a track name with a single namespace field, for the common
@@ -43,11 +44,13 @@ pub fn TrackName::to_display_string(self : TrackName) -> String {
 
 ///|
 /// A namespace is an opaque tuple of non-empty byte fields.
+#derive(Debug, Eq)
 pub(all) struct TrackNamespace {
   fields : Array[Bytes]
-} derive(Debug, Eq)
+}
 
 ///|
+#derive(Debug, Eq)
 pub(all) enum ParameterValue {
   VarInt(UInt64)
   Byte(Byte)
@@ -55,21 +58,23 @@ pub(all) enum ParameterValue {
   Location(UInt64, UInt64)
   Filter(SubscriptionFilter)
   NamespacePrefix(TrackNamespace)
-} derive(Debug, Eq)
+}
 
 ///|
+#derive(Debug, Eq)
 pub(all) enum SubscriptionFilter {
   NextGroupStart
   LargestObject
   AbsoluteStart(UInt64, UInt64)
   AbsoluteRange(UInt64, UInt64, UInt64)
-} derive(Debug, Eq)
+}
 
 ///|
+#derive(Debug, Eq)
 pub(all) struct MessageParameter {
   kind : UInt64
   value : ParameterValue
-} derive(Debug, Eq)
+}
 
 ///|
 let forward_parameter_kind : UInt64 = 0x10
