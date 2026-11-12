@@ -162,9 +162,15 @@ fn ClientSession::receive_peer_request(
               }
               actions.push(SendFin(stream, error))
             } else {
-              guard self.find_publisher(request.track)
-                is Some(publisher_request_id) else {
-                return Err(TrackNotPublished)
+              let publisher_request_id = match
+                self.find_publisher(request.track) {
+                Some(value) => value
+                None =>
+                  match self.find_namespace_publisher(request.track) {
+                    Some(_) =>
+                      self.register_namespace_publisher_track(request.track)
+                    None => return Err(TrackNotPublished)
+                  }
               }
               self.inbound_subscriptions[stream] = {
                 request_id: request.request_id,
@@ -242,13 +248,83 @@ fn ClientSession::find_publisher(
   self : ClientSession,
   track : @protocol.TrackName,
 ) -> UInt64? {
-  for request_id in self.published_requests {
-    let request = self.requests.get(request_id).unwrap()
-    if request.track == track && request.is_accepted() && !request.is_terminal() {
+  for (request_id, request) in self.requests {
+    if request.kind == Publishing &&
+      request.track == track &&
+      request.is_accepted() &&
+      !request.is_terminal() {
       return Some(request_id)
     }
   }
   None
+}
+
+///|
+fn ClientSession::find_namespace_publisher(
+  self : ClientSession,
+  track : @protocol.TrackName,
+) -> UInt64? {
+  for (request_id, request) in self.namespace_requests {
+    if request.locally_initiated &&
+      request.state == NamespaceAccepted &&
+      !request.lifetime.cancelled &&
+      !request.lifetime.peer_send_closed &&
+      track.namespace_fields.has_prefix(request.track_namespace.fields) {
+      return Some(request_id)
+    }
+  }
+  None
+}
+
+///|
+fn ClientSession::track_alias_in_use(
+  self : ClientSession,
+  track_alias : UInt64,
+) -> Bool {
+  for (_, request) in self.requests {
+    if request.track_alias == Some(track_alias) {
+      return true
+    }
+  }
+  false
+}
+
+///|
+/// Register an inbound SUBSCRIBE that falls under an accepted PUBLISH_NAMESPACE
+/// as a publishing track so the existing subscription and Object paths can
+/// assign a Track Alias and forward Objects.
+fn ClientSession::register_namespace_publisher_track(
+  self : ClientSession,
+  track : @protocol.TrackName,
+) -> UInt64 {
+  let request_id = self.allocate_request_id()
+  let mut track_alias = self.next_track_alias
+  while self.track_alias_in_use(track_alias) {
+    track_alias = track_alias + 1UL
+  }
+  self.next_track_alias = track_alias + 1UL
+  self.requests[request_id] = {
+    kind: Publishing,
+    properties: b"",
+    track,
+    track_alias: Some(track_alias),
+    stream: None,
+    response_buffer: b"",
+    state: RequestAccepted,
+    dynamic_groups: false,
+    lifetime: RequestLifetime::new(),
+    object_drain: {
+      observed_streams: 0UL,
+      active_streams: 0UL,
+      pending_done: None,
+    },
+    parameters: [],
+    joining_location: None,
+    pending_local_update: None,
+    update_failed: false,
+    namespace_publisher: true,
+  }
+  request_id
 }
 
 ///|
@@ -350,6 +426,7 @@ pub fn ClientSession::reject_subscription(
     inbound.request_id,
     request_error_invalid_joining_request_id,
   )
+  self.finish_idle_namespace_publisher(inbound.publisher_request_id)
   Ok(
     self.finish_actions(
       [
@@ -408,5 +485,23 @@ fn ClientSession::end_inbound_subscription(
       ),
     )
   }
+  self.finish_idle_namespace_publisher(inbound.publisher_request_id)
   actions
+}
+
+///|
+fn ClientSession::finish_idle_namespace_publisher(
+  self : ClientSession,
+  request_id : UInt64,
+) -> Unit {
+  guard self.requests.get(request_id) is Some(request) &&
+    request.namespace_publisher else {
+    return
+  }
+  for (_, inbound) in self.inbound_subscriptions {
+    if inbound.publisher_request_id == request_id && inbound.state != Ended {
+      return
+    }
+  }
+  request.mark_terminal()
 }

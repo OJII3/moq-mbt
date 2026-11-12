@@ -106,6 +106,17 @@ test "SUBSCRIBE_NAMESPACE restores full names, including empty suffixes, then wi
     client.receive(
       @session.StreamData(
         30,
+        @protocol.encode_namespace({
+          track_namespace: test_namespace([b"room"]),
+        }).unwrap(),
+      ),
+    ),
+    Ok([]),
+  )
+  assert_eq(
+    client.receive(
+      @session.StreamData(
+        30,
         @protocol.encode_namespace({ track_namespace: test_namespace([]), }).unwrap(),
       ),
     ),

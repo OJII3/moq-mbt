@@ -78,7 +78,7 @@ request stream の ID 索引は session の存続中 tombstone として保持�
 
 Draft 18 では `MAX_REQUEST_ID` / `REQUESTS_BLOCKED` と独立したキャンセルメッセージが削除されている。購読更新には `REQUEST_UPDATE`、キャンセルには開いているストリーム方向への `STOP_SENDING` / reset を使う。仕様の [§3.3.2](https://www.ietf.org/archive/id/draft-ietf-moq-transport-18.html#section-3.3.2)、[§10.9](https://www.ietf.org/archive/id/draft-ietf-moq-transport-18.html#section-10.9)、[Appendix A.2](https://www.ietf.org/archive/id/draft-ietf-moq-transport-18.html#appendix-A.2) を参照する。
 
-`scripts/check-interop.sh` は moqtail relay に対する Draft 18 SETUP と複数 Group/Object の publish/subscribe、Native QUIC の証明書検証を確認する。`scripts/check-moqtail-dual.sh` は同じ moqtail endpoint に raw QUIC と WebTransport のクライアントを同時接続し、両方の SETUP、証明書 pin、Node 接続、Native/Browser 双方向 publish/subscribe を確認する。
+`scripts/check-interop.sh` は moqtail relay に対する Draft 18 SETUP と複数 Group/Object の publish/subscribe、Native QUIC の証明書検証を確認する。同じ relay に対して `track_probe` の moq-interop-runner client mode も実行し、固定 relay が対応する scenario の TAP 結果を確認する。`scripts/check-moqtail-dual.sh` は同じ moqtail endpoint に raw QUIC と WebTransport のクライアントを同時接続し、両方の SETUP、証明書 pin、Node 接続、Native/Browser 双方向 publish/subscribe を確認する。
 
 この E2E 経路は Browser WebTransport ↔ moqtail relay ↔ Native raw QUIC である。Native WebTransport はこの経路に含まず、M6 の実装対象として扱う。Origin allowlist / 拒否は #92 の対象外で [#104](https://github.com/OJII3/moq-mbt/issues/104) で扱う。FETCH、Namespace withdrawal などの追加シナリオは [interop notes](interop.md) のコマンドで個別に確認する。
 

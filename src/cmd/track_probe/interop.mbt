@@ -1,6 +1,8 @@
 ///|
 let interop_test_cases : Array[String] = [
-  "setup-only", "announce-only", "publish-namespace-done", "subscribe-error",
+  "setup-only", "announce-only", "publish-namespace-done", "subscribe-namespace-lifecycle",
+  "publish-namespace-multi-publisher-retention", "subscribe-error", "rendezvous-timeout",
+  "announce-subscribe", "subscribe-before-announce",
 ]
 
 ///|
@@ -20,9 +22,28 @@ priv struct InteropOptions {
 }
 
 ///|
-priv enum InteropResponse {
-  NamespaceAccepted(UInt64)
-  SubscribeRejected(UInt64)
+priv struct InteropContext {
+  endpoint : InteropEndpoint
+  insecure : Bool
+  roles : Array[String]
+}
+
+///|
+fn InteropContext::new(
+  endpoint : InteropEndpoint,
+  insecure : Bool,
+) -> InteropContext {
+  { endpoint, insecure, roles: [], }
+}
+
+///|
+fn InteropContext::connect(
+  self : InteropContext,
+  role : String,
+) -> LifecyclePeer raise {
+  let peer = interop_peer(self.endpoint, self.insecure)
+  self.roles.push(role)
+  peer
 }
 
 ///|
@@ -30,6 +51,7 @@ fn interop_client_mode(args : Array[String]) -> Bool {
   if args.length() > 1 {
     match args[1] {
       "--list"
+      | "-l"
       | "-r"
       | "--relay"
       | "-t"
@@ -63,7 +85,7 @@ fn parse_interop_options(args : Array[String]) -> InteropOptions raise {
   while index < args.length() {
     let arg = args[index]
     match arg {
-      "--list" => list = true
+      "--list" | "-l" => list = true
       "--tls-disable-verify" => insecure = true
       "--verbose" | "-v" => ()
       "--help" | "-h" => help = true
@@ -144,161 +166,83 @@ fn interop_peer(
 }
 
 ///|
-fn interop_response_seen(
-  notices : Array[@session.SessionNotice],
-  expected : InteropResponse,
-) -> Bool raise {
-  for notice in notices {
-    match (notice, expected) {
-      (@session.NamespacePublicationAccepted(id, _), NamespaceAccepted(wanted)) if id ==
-        wanted => return true
-      (
-        @session.NamespacePublicationRejected(id, _, error),
-        NamespaceAccepted(wanted),
-      ) if id == wanted =>
-        fail("PUBLISH_NAMESPACE rejected: \{error.to_repr()}")
-      (@session.SubscribeRejected(id, _), SubscribeRejected(wanted)) if id ==
-        wanted => return true
-      (@session.SubscribeEstablished(id, _), SubscribeRejected(wanted)) if id ==
-        wanted => fail("SUBSCRIBE unexpectedly succeeded")
-      (@session.SessionEnded(end), _) =>
-        fail("relay ended the session: \{end.to_repr()}")
-      _ => ()
-    }
-  }
-  false
-}
-
-///|
-fn wait_interop_response(
-  peer : LifecyclePeer,
-  expected : InteropResponse,
-  initial : Array[@session.SessionNotice],
-  timeout_ms : UInt64,
-) -> Unit raise {
-  if interop_response_seen(initial, expected) {
-    return
-  }
-  let deadline = @env.now() + timeout_ms
-  while @env.now() < deadline {
-    if interop_response_seen(lifecycle_poll(peer, 50), expected) {
-      return
-    }
-  }
-  fail("timed out waiting for the expected relay response")
-}
-
-///|
-fn wait_interop_withdrawal(
-  peer : LifecyclePeer,
-  request_id : UInt64,
-  request_stream : Int64,
-  initial : Array[@session.SessionNotice],
-) -> Unit raise {
-  let mut withdrawn = false
-  for notice in initial {
-    match notice {
-      @session.NamespaceWithdrawn(id, stream) if id == request_id &&
-        stream == request_stream => withdrawn = true
-      @session.NamespacePublicationRejected(id, _, error) if id == request_id =>
-        fail("PUBLISH_NAMESPACE withdrawal failed: \{error.to_repr()}")
-      _ => ()
-    }
-  }
-  let deadline = @env.now() + 2000UL
-  while @env.now() < deadline &&
-        (!withdrawn || peer.closed_streams.get(request_stream) is None) {
-    for notice in lifecycle_poll(peer, 50) {
-      match notice {
-        @session.NamespaceWithdrawn(id, stream) if id == request_id &&
-          stream == request_stream => withdrawn = true
-        @session.NamespacePublicationRejected(id, _, error) if id == request_id =>
-          fail("PUBLISH_NAMESPACE withdrawal failed: \{error.to_repr()}")
-        @session.SessionEnded(end) =>
-          fail("relay ended the session during withdrawal: \{end.to_repr()}")
-        _ => ()
-      }
-    }
-  }
-  guard withdrawn && peer.closed_streams.get(request_stream) is Some(_) else {
-    fail("namespace request stream did not close cleanly")
-  }
-}
-
-///|
-fn run_interop_test(
-  test_case : String,
-  endpoint : InteropEndpoint,
-  insecure : Bool,
-) -> Unit raise {
+fn run_interop_test(test_case : String, context : InteropContext) -> Unit raise {
   match test_case {
-    "setup-only" => {
-      let (client, _) = setup_client(
-        endpoint.host,
-        endpoint.port,
-        endpoint.path,
-        insecure,
-        timeout_ms=2000UL,
-      )
-      defer client.close()
-    }
-    "announce-only" | "publish-namespace-done" => {
-      let peer = interop_peer(endpoint, insecure)
-      defer peer.client.close()
-      let track_namespace : @protocol.TrackNamespace = {
-        fields: [b"moq-test", b"interop"],
-      }
-      let (request_id, actions) = peer.session
-        .publish_namespace(track_namespace, [])
-        .unwrap()
-      let request_id = request_id.to_uint64()
-      let (notices, opened) = drive_session_actions(
-        peer.client,
-        peer.session,
-        actions,
-        peer.driver,
-      )
-      wait_interop_response(
-        peer,
-        NamespaceAccepted(request_id),
-        notices,
-        2000UL,
-      )
-      if test_case == "publish-namespace-done" {
-        let request_stream = lifecycle_request_stream(opened, request_id)
-        let (notices, _) = drive_session_result(
-          peer.client,
-          peer.session,
-          peer.session.cancel_request(request_id),
-          peer.driver,
-        )
-        wait_interop_withdrawal(peer, request_id, request_stream, notices)
-      }
-    }
-    "subscribe-error" => {
-      let peer = interop_peer(endpoint, insecure)
-      defer peer.client.close()
-      let track = @protocol.TrackName::from_utf8_fields(
-        ["nonexistent", "namespace"],
-        "test-track",
-      )
-      let (request_id, actions) = peer.session.subscribe_track(track).unwrap()
-      let request_id = request_id.to_uint64()
-      let (notices, _) = drive_session_actions(
-        peer.client,
-        peer.session,
-        actions,
-        peer.driver,
-      )
-      wait_interop_response(
-        peer,
-        SubscribeRejected(request_id),
-        notices,
-        2000UL,
-      )
-    }
+    "setup-only" => interop_setup_only(context)
+    "announce-only" => interop_announce_only(context)
+    "publish-namespace-done" => interop_publish_namespace_done(context)
+    "subscribe-namespace-lifecycle" =>
+      interop_subscribe_namespace_lifecycle(context)
+    "publish-namespace-multi-publisher-retention" =>
+      interop_publish_namespace_multi_publisher_retention(context)
+    "subscribe-error" => interop_subscribe_error(context)
+    "rendezvous-timeout" => interop_rendezvous_timeout(context)
+    "announce-subscribe" => interop_announce_subscribe(context)
+    "subscribe-before-announce" => interop_subscribe_before_announce(context)
     _ => fail("unsupported test case")
   }
+}
+
+///|
+fn interop_yaml_quote(value : String) -> String {
+  let escaped : Array[Byte] = [b'"']
+  for byte in @utf8.encode(value) {
+    let code = byte.to_int()
+    if code == 0x22 {
+      escaped.push(b'\\')
+      escaped.push(b'"')
+    } else if code == 0x5c {
+      escaped.push(b'\\')
+      escaped.push(b'\\')
+    } else if code == 0x0a {
+      escaped.push(b'\\')
+      escaped.push(b'n')
+    } else if code == 0x0d {
+      escaped.push(b'\\')
+      escaped.push(b'r')
+    } else if code == 0x09 {
+      escaped.push(b'\\')
+      escaped.push(b't')
+    } else if code < 0x20 {
+      escaped.push(b' ')
+    } else {
+      escaped.push(byte)
+    }
+  }
+  escaped.push(b'"')
+  @utf8.decode_lossy(Bytes::from_array(escaped))
+}
+
+///|
+fn print_interop_tap_point(
+  index : Int32,
+  test_case : String,
+  passed : Bool,
+  skipped : Bool,
+  duration_ms : UInt64,
+  roles : Array[String],
+  message : String,
+) -> Unit {
+  let status = if passed { "ok" } else { "not ok" }
+  if skipped {
+    println("\{status} \{index} - \{test_case} # SKIP unsupported")
+    return
+  }
+  println("\{status} \{index} - \{test_case}")
+  println("  ---")
+  println("  duration_ms: \{duration_ms}")
+  if !roles.is_empty() {
+    println("  sessions:")
+    for role in roles {
+      println("    \{role}:")
+      println("      moqt_version: \"moqt-18\"")
+      println("      transport: \"quic\"")
+    }
+  }
+  if !passed && !message.is_empty() {
+    println("  message: \{interop_yaml_quote(message)}")
+  }
+  println("  ...")
 }
 
 ///|
@@ -349,22 +293,33 @@ fn run_interop_client(args : Array[String]) -> Unit {
   let mut unsupported = false
   for (index, test_case) in test_cases.iter2() {
     if !interop_test_cases.contains(test_case) {
-      println("ok \{index + 1} - \{test_case} # SKIP unsupported")
+      print_interop_tap_point(index + 1, test_case, true, true, 0UL, [], "")
       unsupported = true
     } else {
+      let context = InteropContext::new(endpoint, options.insecure)
+      let started = @env.now()
+      let mut message = ""
       let passed = try {
-        run_interop_test(test_case, endpoint, options.insecure)
+        run_interop_test(test_case, context)
         true
       } catch {
         error => {
-          eprintln("\{test_case}: \{error.to_string()}")
+          message = error.to_string()
+          eprintln("\{test_case}: \{message}")
           false
         }
       }
-      if passed {
-        println("ok \{index + 1} - \{test_case}")
-      } else {
-        println("not ok \{index + 1} - \{test_case}")
+      let duration_ms = @env.now() - started
+      print_interop_tap_point(
+        index + 1,
+        test_case,
+        passed,
+        false,
+        duration_ms,
+        context.roles,
+        message,
+      )
+      if !passed {
         failures += 1
       }
     }

@@ -29,6 +29,7 @@ priv struct ClientRequest {
   mut joining_location : @protocol.FetchLocation?
   mut pending_local_update : PendingSubscriptionUpdate?
   mut update_failed : Bool
+  namespace_publisher : Bool
 }
 
 ///|
@@ -604,9 +605,9 @@ pub fn ClientSession::publish_track(
   if !self.ready {
     return Err(HandshakeNotComplete)
   }
-  for request_id in self.published_requests {
-    let request = self.requests.get(request_id).unwrap()
-    if !request.is_terminal() &&
+  for (_, request) in self.requests {
+    if request.kind == Publishing &&
+      !request.is_terminal() &&
       (request.track == track || request.track_alias == Some(track_alias)) {
       return Err(AliasInUse)
     }
@@ -634,8 +635,8 @@ pub fn ClientSession::publish_track(
     joining_location: None,
     pending_local_update: None,
     update_failed: false,
+    namespace_publisher: false,
   }
-  self.published_requests.push(request_id)
   Ok(
     (
       RequestId(request_id),
@@ -695,6 +696,7 @@ fn ClientSession::start_subscription_request(
     joining_location: None,
     pending_local_update: None,
     update_failed: false,
+    namespace_publisher: false,
   }
   Ok(
     (

@@ -80,6 +80,8 @@ pub fn forward_requested(Array[MessageParameter]) -> Bool
 
 pub fn join_track_namespace(TrackNamespace, TrackNamespace) -> Result[TrackNamespace, CodecError]
 
+pub fn rendezvous_timeout_parameter(UInt64) -> MessageParameter
+
 // Errors
 
 // Types and methods
