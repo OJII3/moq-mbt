@@ -103,3 +103,28 @@ if ! wait "$publisher_pid"; then
 fi
 publisher_pid=
 cat "$task_tmp/publisher.log" "$task_tmp/subscriber.log"
+
+# Run the moq-interop-runner client scenarios that the fixed relay supports.
+# Retention and rendezvous-timeout are implemented by the client but are not
+# expected to pass against this relay build.
+runner_client=_build/native/release/build/cmd/track_probe/track_probe.exe
+runner_tests=(
+  setup-only
+  announce-only
+  publish-namespace-done
+  subscribe-namespace-lifecycle
+  subscribe-error
+  announce-subscribe
+  subscribe-before-announce
+)
+for test_case in "${runner_tests[@]}"; do
+  if ! RELAY_URL="moqt://127.0.0.1:$port/interop" TLS_DISABLE_VERIFY=1 \
+    "$runner_client" --test "$test_case" \
+    >"$task_tmp/runner-$test_case.log" 2>&1; then
+    cat "$task_tmp/runner-$test_case.log" >&2
+    cat "$task_tmp/relay.log" >&2
+    echo "moq-interop-runner client test failed: $test_case" >&2
+    exit 1
+  fi
+done
+echo "moq-interop-runner client scenarios passed"

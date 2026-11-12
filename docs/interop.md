@@ -14,6 +14,14 @@ Playwright Chromium と WebTransport 実装も Nix flake で固定する。workf
 
 仕様は [Draft 18](https://www.ietf.org/archive/id/draft-ietf-moq-transport-18.txt) に固定する。vi64 は QUIC の 62-bit varint と異なり、1〜9 bytes で UInt64 全域を表現する。SETUP の type 0x2f00 は制御ストリームの type も兼ねるので、別のストリームヘッダーを付けない。制御ストリームは SETUP の後も開いたままにする。
 
+## moq-interop-runner クライアント
+
+`track_probe` は [moq-interop-runner](https://github.com/englishm/moq-interop-runner) の test client interface を兼ねる。`--list` で対応する identifier を出力し、各 test case の結果を TAP version 14 と YAML diagnostics で書き出す。diagnostics には duration_ms、session role ごとの negotiated version と transport、失敗理由を含める。QUIC Initial Destination Connection ID は transport API が公開していないため省略する。
+
+対応する scenario は `setup-only`、`announce-only`、`publish-namespace-done`、`subscribe-namespace-lifecycle`、`publish-namespace-multi-publisher-retention`、`subscribe-error`、`rendezvous-timeout`、`announce-subscribe`、`subscribe-before-announce` の9個である。media 系の `publish-subscribe-media` と `cmsf-*` は fixture の生成と decode の検証が必要なため実装しない。
+
+`scripts/check-interop.sh` は固定 moqtail relay に対して、このうち `setup-only`、`announce-only`、`publish-namespace-done`、`subscribe-namespace-lifecycle`、`subscribe-error`、`announce-subscribe`、`subscribe-before-announce` の7個を実行する。`publish-namespace-multi-publisher-retention` は、固定 moqtail が同じ namespace を広告する publisher をまだ保持している状態で、一方の withdrawal により共有 namespace の NAMESPACE_DONE を送るため失敗する。`rendezvous-timeout` は固定 moqtail が RENDEZVOUS_TIMEOUT を解釈せず DOES_NOT_EXIST を返すため失敗する。クライアントの期待は Draft 18 の仕様に合わせてあり、どちらも relay 側の差分として記録する。
+
 ## ローカルで再現する
 
 ~~~sh

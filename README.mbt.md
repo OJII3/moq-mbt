@@ -102,8 +102,11 @@ moon run src/cmd/track_probe -- datagram-smoke 127.0.0.1 4443 /interop --insecur
 
 `track_probe` also provides the Draft 18 native-QUIC test-client interface for
 [`moq-interop-runner`](https://github.com/englishm/moq-interop-runner). It
-supports `setup-only`, `announce-only`, `publish-namespace-done`, and
-`subscribe-error`.
+supports `setup-only`, `announce-only`, `publish-namespace-done`,
+`subscribe-namespace-lifecycle`,
+`publish-namespace-multi-publisher-retention`, `subscribe-error`,
+`rendezvous-timeout`, `announce-subscribe`, and `subscribe-before-announce`.
+The media test cases are not implemented.
 
 ```sh
 moon run src/cmd/track_probe -- --list
@@ -113,7 +116,10 @@ RELAY_URL=moqt://127.0.0.1:4443/interop \
 ```
 
 The Runner may pass the same settings as `--relay`, `--test`, and
-`--tls-disable-verify`. Results are written to stdout in TAP version 14 format.
+`--tls-disable-verify`. Results are written to stdout in TAP version 14 format,
+with YAML diagnostics for duration, session roles, negotiated version and
+transport, and failure messages. The QUIC Initial Destination Connection ID is
+omitted because the transport layer does not expose it.
 
 Build the Runner-compatible Docker image from the repository root:
 

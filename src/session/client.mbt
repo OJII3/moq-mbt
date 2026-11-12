@@ -304,6 +304,7 @@ pub struct ClientSession {
   priv mut next_request_id : UInt64
   priv mut next_object_token : UInt64
   priv mut next_datagram_token : UInt64
+  priv mut next_track_alias : UInt64
   priv mut peer_control_stream : Int64?
   priv mut control_buffer : Bytes
   priv mut control_goaway_sent : Bool
@@ -341,7 +342,6 @@ pub struct ClientSession {
     InboundNamespaceSubscription,
   ]
   priv application_namespaces : Array[@protocol.TrackNamespace]
-  priv published_requests : Array[UInt64]
   priv largest_published_locations : Map[UInt64, (UInt64, UInt64)]
   priv aliases : Map[UInt64, UInt64]
   priv incoming_object_streams : Map[Int64, IncomingObjectStream]
@@ -384,6 +384,7 @@ pub fn ClientSession::new(
         next_request_id: 0UL,
         next_object_token: 0UL,
         next_datagram_token: 0UL,
+        next_track_alias: 1UL,
         peer_control_stream: None,
         control_buffer: b"",
         control_goaway_sent: false,
@@ -418,7 +419,6 @@ pub fn ClientSession::new(
         namespace_subscription_streams: {},
         inbound_namespace_subscriptions: {},
         application_namespaces: [],
-        published_requests: [],
         largest_published_locations: {},
         aliases: {},
         incoming_object_streams: {},

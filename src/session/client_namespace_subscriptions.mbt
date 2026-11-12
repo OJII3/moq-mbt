@@ -781,10 +781,13 @@ fn ClientSession::receive_namespace_subscription_response(
             Err(_) => return Err(UnexpectedMessage)
           }
           if request.active_namespaces.contains(ns) {
-            return Err(UnexpectedMessage)
+            // A relay can fan out the same namespace from several publishers,
+            // so a repeated NAMESPACE is idempotent rather than a violation.
+            []
+          } else {
+            request.active_namespaces.push(ns)
+            [EmitNotice(NamespaceDiscovered(RequestId(request_id), ns))]
           }
-          request.active_namespaces.push(ns)
-          [EmitNotice(NamespaceDiscovered(RequestId(request_id), ns))]
         }
         (true, @protocol.NamespaceDone(suffix)) => {
           let ns = match

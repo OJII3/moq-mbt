@@ -101,6 +101,13 @@ pub fn forward_parameter(enabled : Bool) -> MessageParameter {
 }
 
 ///|
+/// Build the RENDEZVOUS_TIMEOUT parameter used by SUBSCRIBE. The value is the
+/// time in milliseconds the subscriber is willing to wait for a publisher.
+pub fn rendezvous_timeout_parameter(milliseconds : UInt64) -> MessageParameter {
+  { kind: 0x04, value: VarInt(milliseconds), }
+}
+
+///|
 fn encode_track_name(track : TrackName) -> Result[Bytes, CodecError] {
   if track.namespace_fields.length() > 32 {
     return Err(InvalidTrackName)

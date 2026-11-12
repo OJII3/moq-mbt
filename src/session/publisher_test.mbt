@@ -52,6 +52,62 @@ fn publisher_announced() -> @session.ClientSession raise {
 }
 
 ///|
+test "inbound SUBSCRIBE under an accepted PUBLISH_NAMESPACE is published" {
+  let publisher = client_session_ready()
+  let track_namespace : @protocol.TrackNamespace = { fields: [b"demo"], }
+  let (namespace_request, _) = publisher
+    .publish_namespace(track_namespace, [])
+    .unwrap()
+  ignore(
+    publisher
+    .receive(@session.StreamOpened(@session.Request(namespace_request), 20))
+    .unwrap(),
+  )
+  let accepted = @protocol.encode_request_ok_for(
+    { parameters: [], properties: b"", },
+    @protocol.Namespace,
+  ).unwrap()
+  ignore(publisher.receive(@session.StreamData(20, accepted)).unwrap())
+  let track : @protocol.TrackName = {
+    namespace_fields: [b"demo"],
+    name: b"video",
+  }
+  ignore(
+    publisher
+    .receive(@session.InboundStreamStarted(40, @session.Bidirectional))
+    .unwrap(),
+  )
+  assert_eq(
+    publisher.receive(
+      @session.StreamData(
+        40,
+        @protocol.encode_subscribe({ request_id: 1, track, parameters: [], }).unwrap(),
+      ),
+    ),
+    Ok([@session.EmitNotice(@session.SubscriptionRequested(1, 40, track))]),
+  )
+  assert_eq(
+    publisher.accept_subscription(@session.StreamId(40)),
+    Ok([
+      @session.SendChunk(40, b"\x04\x00\x02\x01\x00"),
+      @session.EmitNotice(@session.SubscriptionAccepted(1, 40, 1)),
+    ]),
+  )
+  let header : @protocol.SubgroupHeader = {
+    track_alias: 1,
+    group_id: 0UL,
+    subgroup_id_mode: @protocol.Zero,
+    publisher_priority: None,
+    end_of_group: true,
+    first_object: true,
+    has_properties: false,
+  }
+  assert_true(
+    publisher.open_object_stream(@session.StreamId(40), header) is Ok(_),
+  )
+}
+
+///|
 fn publisher_started() -> @session.ClientSession raise {
   let publisher = publisher_announced()
   ignore(
