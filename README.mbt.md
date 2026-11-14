@@ -105,8 +105,8 @@ moon run src/cmd/track_probe -- datagram-smoke 127.0.0.1 4443 /interop --insecur
 supports `setup-only`, `announce-only`, `publish-namespace-done`,
 `subscribe-namespace-lifecycle`,
 `publish-namespace-multi-publisher-retention`, `subscribe-error`,
-`rendezvous-timeout`, `announce-subscribe`, and `subscribe-before-announce`.
-The media test cases are not implemented.
+`rendezvous-timeout`, `announce-subscribe`, `subscribe-before-announce`, and
+`data-subgroup-basic`. The media test cases are not implemented.
 
 ```sh
 moon run src/cmd/track_probe -- --list

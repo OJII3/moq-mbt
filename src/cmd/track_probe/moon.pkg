@@ -7,6 +7,7 @@ import {
   "OJII3/moq-mbt/transport",
   "moonbitlang/core/encoding/utf8",
   "moonbitlang/core/env",
+  "moonbitlang/core/random",
   "moonbitlang/core/string",
 }
 
