@@ -116,6 +116,7 @@ runner_tests=(
   subscribe-error
   announce-subscribe
   subscribe-before-announce
+  data-subgroup-basic
 )
 for test_case in "${runner_tests[@]}"; do
   if ! RELAY_URL="moqt://127.0.0.1:$port/interop" TLS_DISABLE_VERIFY=1 \
