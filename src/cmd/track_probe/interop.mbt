@@ -2,7 +2,7 @@
 let interop_test_cases : Array[String] = [
   "setup-only", "announce-only", "publish-namespace-done", "subscribe-namespace-lifecycle",
   "publish-namespace-multi-publisher-retention", "subscribe-error", "rendezvous-timeout",
-  "announce-subscribe", "subscribe-before-announce",
+  "announce-subscribe", "subscribe-before-announce", "data-subgroup-basic",
 ]
 
 ///|
@@ -179,6 +179,7 @@ fn run_interop_test(test_case : String, context : InteropContext) -> Unit raise 
     "rendezvous-timeout" => interop_rendezvous_timeout(context)
     "announce-subscribe" => interop_announce_subscribe(context)
     "subscribe-before-announce" => interop_subscribe_before_announce(context)
+    "data-subgroup-basic" => interop_data_subgroup_basic(context)
     _ => fail("unsupported test case")
   }
 }
