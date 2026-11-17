@@ -53,7 +53,7 @@
         devShells.default = pkgs.mkShell {
           packages = [
             pkgs.libmsquic
-            pkgs.moonbit-bin.latest
+            pkgs.moonbit-bin.nightly
             moqtailRelay
             pkgs.nodejs
             pkgs.playwright-driver
@@ -69,7 +69,7 @@
         devShells.interop-client = pkgs.mkShell {
           packages = [
             pkgs.libmsquic
-            pkgs.moonbit-bin.latest
+            pkgs.moonbit-bin.nightly
             pkgs.cacert
           ];
           shellHook = ''
