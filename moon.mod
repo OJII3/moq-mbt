@@ -17,7 +17,8 @@ source = "src"
 preferred_target = "native"
 
 // Keep every compiler warning enabled and fix warnings in code. The proof-only
-// loop lints stay off because this module does not carry Why3 proofs.
+// loop lints stay off because only src/lifecycle is proof-enabled and its
+// verified transitions contain no proof-relevant loops.
 
 warnings = "+all-missing_invariant-missing_reasoning"
 

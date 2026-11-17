@@ -176,7 +176,7 @@ fn ClientSession::receive_peer_request(
                 publisher_request_id,
                 state: Pending,
                 parameters: request.parameters,
-                lifetime: RequestLifetime::new(),
+                lifetime: @lifecycle.RequestLifetime::new(),
               }
               actions.push(
                 EmitNotice(
@@ -311,7 +311,7 @@ fn ClientSession::register_namespace_publisher_track(
     response_buffer: b"",
     state: RequestAccepted,
     dynamic_groups: false,
-    lifetime: RequestLifetime::new(),
+    lifetime: @lifecycle.RequestLifetime::new(),
     object_drain: {
       observed_streams: 0UL,
       active_streams: 0UL,
@@ -443,7 +443,7 @@ pub fn ClientSession::reject_subscription(
 fn ClientSession::end_inbound_subscription(
   self : ClientSession,
   stream : Int64,
-  event : RequestLifetimeEvent,
+  event : @lifecycle.RequestLifetimeEvent,
 ) -> Array[SessionAction] {
   self.request_goaway_deadlines.remove(stream)
   guard self.inbound_subscriptions.get(stream) is Some(inbound) else {
@@ -454,7 +454,9 @@ fn ClientSession::end_inbound_subscription(
     !inbound.lifetime.cancelled {
     return []
   }
-  let effects = inbound.lifetime.transition(event, true)
+  let update = inbound.lifetime.transition(event, true)
+  inbound.lifetime = update.state
+  let effects = update.actions
   if !effects.abort_send && !effects.stop_receiving && !effects.notify_end {
     return []
   }

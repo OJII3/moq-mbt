@@ -26,6 +26,7 @@ Media over QUIC (MoQ) Transport implementation in [MoonBit](https://www.moonbitl
 ```text
 src/
 ├── protocol/       # Wire format, vi64 integer codec, control and data messages
+├── lifecycle/      # Verified request lifecycle transitions (`moon prove`)
 ├── session/        # Sans-I/O session state machine (tracks, requests, streams)
 ├── transport/      # Native MsQuic QUIC transport adapter
 ├── test_support/   # Scripted in-memory transport for session tests
@@ -41,6 +42,7 @@ src/
 | Package | Description | Target |
 | :--- | :--- | :--- |
 | `OJII3/moq-mbt/protocol` | Framing, message serialization, and deserialization | Native, JS |
+| `OJII3/moq-mbt/lifecycle` | Request lifecycle state machine verified with `moon prove` | Native, JS |
 | `OJII3/moq-mbt/session` | Session state machine and request lifecycles | Native, JS |
 | `OJII3/moq-mbt/transport` | Native QUIC client using `libmsquic` | Native |
 | `OJII3/moq-mbt/test_support` | Scripted transport for tests using `SessionDriver` | Native, JS |

@@ -51,15 +51,15 @@ jobs:
           moon build --target js src/cmd/web_interop_probe
 
       - name: Check portable packages on WebAssembly
-        run: moon check --target wasm-gc --deny-warn src/protocol src/session src/driver
+        run: moon check --target wasm-gc --deny-warn src/protocol src/lifecycle src/session src/driver
 
       - name: Run MoonBit tests
         run: moon test
 
       - name: Run protocol and session tests on JavaScript and WebAssembly
         run: |
-          moon test --target js src/protocol src/session src/js_adapter
-          moon test --target wasm-gc src/protocol src/session src/driver
+          moon test --target js src/protocol src/lifecycle src/session src/js_adapter
+          moon test --target wasm-gc src/protocol src/lifecycle src/session src/driver
 
       - name: Check formatting
         run: moon fmt --check
@@ -89,6 +89,9 @@ jobs:
 
       - name: Update MoonBit package registry
         run: nix develop -c moon update
+
+      - name: Prove verified lifecycle state machine
+        run: nix develop -c moon prove src/lifecycle
 
       - name: Run Native moqtail interoperability
         run: nix develop -c bash scripts/check-interop.sh

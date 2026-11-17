@@ -75,12 +75,13 @@ fn ClientSession::finish_request_stream(
   if self.inbound_subscriptions.get(stream) is Some(_) ||
     self.request_streams.get(stream) is Some(_) {
     match self.inbound_subscriptions.get(stream) {
-      Some(inbound) => ignore(inbound.lifetime.transition(PeerFin, true))
+      Some(inbound) =>
+        inbound.lifetime = inbound.lifetime.advance(PeerFin, true)
       None =>
         match self.request_streams.get(stream) {
           Some(request_id) => {
             let request = self.requests.get(request_id).unwrap()
-            ignore(request.lifetime.transition(PeerFin, true))
+            request.lifetime = request.lifetime.advance(PeerFin, true)
             request.response_buffer = b""
           }
           None => ()

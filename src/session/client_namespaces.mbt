@@ -16,7 +16,7 @@ priv struct NamespaceRequest {
   mut response_buffer : Bytes
   mut state : NamespaceRequestState
   mut ignore_late_bytes : Bool
-  lifetime : RequestLifetime
+  mut lifetime : @lifecycle.RequestLifetime
   mut pending_updates : Array[(UInt64, Array[@protocol.MessageParameter])]
   mut pending_local_update_id : UInt64?
   mut pending_local_update_parameters : Array[@protocol.MessageParameter]
@@ -61,7 +61,7 @@ fn ClientSession::receive_peer_namespace_publication(
     response_buffer: b"",
     state: NamespacePending,
     ignore_late_bytes: false,
-    lifetime: RequestLifetime::new(),
+    lifetime: @lifecycle.RequestLifetime::new(),
     pending_updates: [],
     pending_local_update_id: None,
     pending_local_update_parameters: [],
@@ -221,7 +221,7 @@ pub fn ClientSession::publish_namespace(
     response_buffer: b"",
     state: NamespacePending,
     ignore_late_bytes: false,
-    lifetime: RequestLifetime::new(),
+    lifetime: @lifecycle.RequestLifetime::new(),
     pending_updates: [],
     pending_local_update_id: None,
     pending_local_update_parameters: [],
@@ -604,7 +604,7 @@ fn ClientSession::receive_peer_namespace_update(
     }
     request.pending_updates = []
     request.state = NamespaceTerminal
-    ignore(request.lifetime.transition(LocalFin, true))
+    request.lifetime = request.lifetime.advance(LocalFin, true)
     let actions = self.end_namespace_request(
       stream,
       Cancel(request_reset_going_away),
@@ -661,7 +661,7 @@ fn merge_namespace_parameters(
 fn ClientSession::end_namespace_request(
   self : ClientSession,
   stream : Int64,
-  event : RequestLifetimeEvent,
+  event : @lifecycle.RequestLifetimeEvent,
 ) -> Array[SessionAction] {
   guard self.namespace_request_streams.get(stream) is Some(request_id) else {
     return []
@@ -669,7 +669,9 @@ fn ClientSession::end_namespace_request(
   let request = self.namespace_requests.get(request_id).unwrap()
   let was_active = request.locally_initiated &&
     request.state == NamespaceAccepted
-  let effects = request.lifetime.transition(event, true)
+  let update = request.lifetime.transition(event, true)
+  request.lifetime = update.state
+  let effects = update.actions
   if !effects.abort_send && !effects.stop_receiving && !effects.notify_end {
     return []
   }
@@ -740,7 +742,7 @@ fn ClientSession::finish_namespace_stream(
         !self.inbound_buffers.get(stream).unwrap_or(b"").is_empty() {
         return Some(Err(UnexpectedMessage))
       }
-      ignore(request.lifetime.transition(PeerFin, true))
+      request.lifetime = request.lifetime.advance(PeerFin, true)
       request.response_buffer = b""
       self.inbound_buffers.remove(stream)
       Some(Ok([]))
@@ -799,11 +801,12 @@ fn ClientSession::reject_namespace_requests_for_goaway(
       request.pending_local_update_id = None
       request.pending_local_update_parameters = []
       request.pending_updates = []
-      let effects = request.lifetime.transition(
+      let update = request.lifetime.transition(
         Cancel(request_reset_going_away),
         request.stream is Some(_),
       )
-      request.lifetime.end_notified = true
+      request.lifetime = update.state.with_end_notified()
+      let effects = update.actions
       if request.stream is Some(stream) {
         if effects.abort_send {
           actions.push(AbortSend(stream, request_reset_going_away))

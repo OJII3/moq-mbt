@@ -1,0 +1,56 @@
+predicate fresh(l : RequestLifetime) {
+  !l.local_send_closed() &&
+  !l.peer_send_closed() &&
+  !l.cancelled() &&
+  (match l.cancel_error_code() {
+    None => true
+    Some(_) => false
+  }) &&
+  !l.end_notified()
+}
+
+predicate lifetime_inv(l : RequestLifetime) {
+  match l.cancel_error_code() {
+    None => true
+    Some(_) => l.cancelled()
+  }
+}
+
+predicate terminal_event(ev : RequestLifetimeEvent) {
+  match ev {
+    Cancel(_) => true
+    PeerReset(_) => true
+    PeerStop(_) => true
+    _ => false
+  }
+}
+
+predicate step_post(
+  before : RequestLifetime,
+  event : RequestLifetimeEvent,
+  after : RequestLifetime,
+  actions : RequestLifetimeActions,
+) {
+  lifetime_inv(after) &&
+  (terminal_event(event) → after.cancelled()) &&
+  (before.local_send_closed() → after.local_send_closed()) &&
+  (before.peer_send_closed() → after.peer_send_closed()) &&
+  (before.cancelled() → after.cancelled()) &&
+  (before.end_notified() → after.end_notified()) &&
+  (actions.notify_end() → (
+    !before.end_notified() && after.end_notified()
+  )) &&
+  ((!actions.notify_end()) → (
+    after.end_notified() == before.end_notified()
+  )) &&
+  (actions.abort_send() → !before.local_send_closed()) &&
+  (actions.stop_receiving() → !before.peer_send_closed()) &&
+  (match before.cancel_error_code() {
+    None => true
+    Some(code) =>
+      match after.cancel_error_code() {
+        Some(next) => code == next
+        None => false
+      }
+  })
+}

@@ -16,7 +16,7 @@ priv struct ClientFetch {
   mut stream : Int64?
   mut response_buffer : Bytes
   mut state : ClientFetchState
-  lifetime : RequestLifetime
+  mut lifetime : @lifecycle.RequestLifetime
   mut parameters : Array[@protocol.MessageParameter]
   mut end_location : @protocol.FetchLocation?
   mut end_of_track : Bool
@@ -190,7 +190,7 @@ pub fn ClientSession::reject_fetch(
     Ok(value) => value
     Err(codec_error) => return Err(Encoding(codec_error))
   }
-  ignore(fetch.lifetime.transition(LocalFin, true))
+  fetch.lifetime = fetch.lifetime.advance(LocalFin, true)
   Ok(
     self.finish_actions(
       [SendFin(fetch.stream.unwrap(), bytes)] +
@@ -313,7 +313,9 @@ pub fn ClientSession::cancel_fetch(
   if fetch.state == FetchTerminal || fetch.lifetime.cancelled {
     return Ok([])
   }
-  let effects = fetch.lifetime.transition(Cancel(1UL), fetch.stream is Some(_))
+  let update = fetch.lifetime.transition(Cancel(1UL), fetch.stream is Some(_))
+  fetch.lifetime = update.state
+  let effects = update.actions
   let actions : Array[SessionAction] = []
   match fetch.stream {
     Some(stream) => {

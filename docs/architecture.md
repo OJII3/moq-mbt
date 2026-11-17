@@ -9,12 +9,13 @@
 | パッケージ | 責務 |
 | --- | --- |
 | `protocol` | Draft 18 のメッセージ、wire format、エンコードとデコード |
+| `lifecycle` | リクエストのライフサイクル状態機械。純粋な遷移関数を持ち、`moon prove` の検証対象とする |
 | `session` | MoQ セッションの状態、制御メッセージ、受信イベントと送信アクション |
 | `driver` | 送信アクションをトランスポートへ流す portable な pump と queue 管理 |
 | `transport` | セッションと QUIC / WebTransport の接続、ストリームと接続のライフサイクル処理 |
 | `test_support` | 公開 `SessionTransport` / `SessionDriver` を使う scripted transport |
 
-依存の向きは `session` から `protocol`、`driver` から `session`、各トランスポートアダプターから `session` と `driver` とする。セッションは MsQuic や WebTransport の API に依存しない。
+依存の向きは `session` から `lifecycle` と `protocol`、`driver` から `session`、各トランスポートアダプターから `session` と `driver` とする。セッションは MsQuic や WebTransport の API に依存しない。`lifecycle` の検証範囲と制約は [verification notes](verification.md) に記録する。
 
 ## セッションとトランスポートの境界
 
@@ -87,6 +88,7 @@ Draft 18 では `MAX_REQUEST_ID` / `REQUESTS_BLOCKED` と独立したキャン�
 ```text
 src/
 ├── protocol/
+├── lifecycle/
 ├── session/
 ├── driver/
 ├── js_adapter/

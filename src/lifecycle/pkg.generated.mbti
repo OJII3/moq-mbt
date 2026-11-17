@@ -1,0 +1,44 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "OJII3/moq-mbt/lifecycle"
+
+// Values
+
+// Errors
+
+// Types and methods
+pub struct RequestLifetime {
+  local_send_closed : Bool
+  peer_send_closed : Bool
+  cancelled : Bool
+  cancel_error_code : UInt64?
+  end_notified : Bool
+}
+pub fn RequestLifetime::advance(Self, RequestLifetimeEvent, Bool) -> Self
+pub fn RequestLifetime::new() -> Self
+pub fn RequestLifetime::terminated(Self) -> Self
+pub fn RequestLifetime::transition(Self, RequestLifetimeEvent, Bool) -> RequestLifetimeUpdate
+pub fn RequestLifetime::with_end_notified(Self) -> Self
+pub fn RequestLifetime::with_local_send_closed(Self) -> Self
+
+pub struct RequestLifetimeActions {
+  abort_send : Bool
+  stop_receiving : Bool
+  notify_end : Bool
+}
+
+pub(all) enum RequestLifetimeEvent {
+  LocalFin
+  PeerFin
+  Cancel(UInt64)
+  PeerReset(UInt64)
+  PeerStop(UInt64)
+}
+
+pub struct RequestLifetimeUpdate {
+  state : RequestLifetime
+  actions : RequestLifetimeActions
+}
+
+// Type aliases
+
+// Traits
