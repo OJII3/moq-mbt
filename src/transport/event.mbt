@@ -1,4 +1,5 @@
 ///|
+/// An error raised by the transport client for stream and datagram operations.
 #derive(Debug)
 pub(all) suberror TransportError {
   TransportError(String)
@@ -15,6 +16,7 @@ pub(all) suberror TransportError {
 pub extend TransportError with @moonbitlang/core/debug.Debug::{to_repr}
 
 ///|
+/// The direction of a stream opened by a local or remote endpoint.
 #derive(Debug, Eq)
 pub(all) enum StreamDirection {
   Unidirectional
@@ -28,6 +30,7 @@ pub extend StreamDirection with @moonbitlang/core/debug.Debug::{to_repr}
 pub extend StreamDirection with Eq::{equal, not_equal}
 
 ///|
+/// Whether datagrams can be sent and the maximum payload length.
 #derive(Debug, Eq)
 pub(all) struct DatagramSendCapability {
   enabled : Bool
@@ -41,6 +44,7 @@ pub extend DatagramSendCapability with @moonbitlang/core/debug.Debug::{to_repr}
 pub extend DatagramSendCapability with Eq::{equal, not_equal}
 
 ///|
+/// The transport-reported state of a queued datagram send.
 #derive(Debug, Eq)
 pub(all) enum DatagramSendState {
   Unknown(Int32)
@@ -59,6 +63,7 @@ pub extend DatagramSendState with @moonbitlang/core/debug.Debug::{to_repr}
 pub extend DatagramSendState with Eq::{equal, not_equal}
 
 ///|
+/// Whether this state ends tracking of the datagram send.
 pub fn DatagramSendState::is_final(self : DatagramSendState) -> Bool {
   match self {
     LostDiscarded | Acknowledged | AcknowledgedSpurious | Canceled => true
@@ -80,6 +85,8 @@ fn datagram_send_state_from_code(code : Int32) -> DatagramSendState {
 }
 
 ///|
+/// An event produced by the transport client for connection, stream, and
+/// datagram activity.
 #derive(Debug)
 pub(all) enum Event {
   Connected

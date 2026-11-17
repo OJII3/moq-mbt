@@ -13,8 +13,8 @@ fn client_stream_direction(
   direction : @transport.StreamDirection,
 ) -> @session.ClientStreamDirection {
   match direction {
-    @transport.Unidirectional => @session.Unidirectional
-    @transport.Bidirectional => @session.Bidirectional
+    Unidirectional => Unidirectional
+    Bidirectional => Bidirectional
   }
 }
 
@@ -42,14 +42,14 @@ impl @driver.SessionTransport for ProbeTransport with fn open_stream(
 ) {
   let opened = try {
     match direction {
-      @session.Unidirectional => self.client.open_uni()
-      @session.Bidirectional => self.client.open_bidi()
+      Unidirectional => self.client.open_uni()
+      Bidirectional => self.client.open_bidi()
     }
   } catch {
-    _ => return @driver.Fatal(-1L)
+    _ => return Fatal(-1L)
   }
-  on_done(@driver.Opened(opened))
-  @driver.Accepted
+  on_done(Opened(opened))
+  Accepted
 }
 
 ///|
@@ -64,15 +64,15 @@ impl @driver.SessionTransport for ProbeTransport with fn send(
     self.client.send(stream, bytes, fin~)
     true
   } catch {
-    @transport.SendQueueFull => false
-    _ => return @driver.Fatal(-1L)
+    SendQueueFull => false
+    _ => return Fatal(-1L)
   }
   if !accepted {
-    return @driver.Retry
+    return Retry
   }
   let waiters = self.send_waiters.get_or_init(stream, fn() { [] })
   waiters.push(on_done)
-  @driver.Accepted
+  Accepted
 }
 
 ///|
@@ -85,14 +85,14 @@ impl @driver.SessionTransport for ProbeTransport with fn send_datagram(
     ignore(self.client.send_datagram(bytes))
     true
   } catch {
-    @transport.DatagramSendQueueFull => false
-    _ => return @driver.Fatal(-1L)
+    DatagramSendQueueFull => false
+    _ => return Fatal(-1L)
   }
   if !accepted {
-    return @driver.Retry
+    return Retry
   }
   self.datagram_waiters.push(on_done)
-  @driver.Accepted
+  Accepted
 }
 
 ///|
@@ -141,7 +141,7 @@ fn ProbeTransport::complete_send(
       if waiters.is_empty() {
         self.send_waiters.remove(stream)
       }
-      callback(if canceled { @driver.WriteCanceled } else { @driver.Written })
+      callback(if canceled { WriteCanceled } else { Written })
     }
     _ => ()
   }
@@ -151,7 +151,7 @@ fn ProbeTransport::complete_send(
 fn ProbeTransport::complete_datagram(self : ProbeTransport) -> Unit {
   if !self.datagram_waiters.is_empty() {
     let callback = self.datagram_waiters.remove(0)
-    callback(@driver.Written)
+    callback(Written)
   }
 }
 
@@ -161,7 +161,7 @@ fn ProbeTransport::abandon_send(self : ProbeTransport, stream : Int64) -> Unit {
     Some(waiters) => {
       self.send_waiters.remove(stream)
       for waiter in waiters {
-        waiter(@driver.Abandoned)
+        waiter(Abandoned)
       }
     }
     None => ()
@@ -228,7 +228,7 @@ fn SessionActionDriver::committed(
   stream : Int64,
 ) -> Unit {
   if self.inner is Some(inner) {
-    inner.receive(@session.StreamDataCommitted(stream))
+    inner.receive(StreamDataCommitted(stream))
   }
 }
 
@@ -281,7 +281,7 @@ fn drive_session_actions(
 ) raise {
   let inner = driver.ensure(client, session)
   match inner.dispatch(initial) {
-    @driver.Accepted => ()
+    Accepted => ()
     result => fail("driver rejected actions: \{result.to_repr()}")
   }
   match inner.failure() {
@@ -315,7 +315,7 @@ fn receive_session_event(
   session : @session.ClientSession,
   event : @session.SessionEvent,
 ) -> Result[Array[@session.SessionAction], @session.ClientSessionError] {
-  match session.receive(@session.Clock(@env.now())) {
+  match session.receive(Clock(@env.now())) {
     Err(error) => Err(error)
     Ok(clock_actions) =>
       match session.receive(event) {
@@ -329,7 +329,7 @@ fn receive_session_event(
 fn receive_session_clock(
   session : @session.ClientSession,
 ) -> Result[Array[@session.SessionAction], @session.ClientSessionError] {
-  session.receive(@session.Clock(@env.now()))
+  session.receive(Clock(@env.now()))
 }
 
 ///|
@@ -356,7 +356,7 @@ fn setup_client(
   let capability = client.datagram_send_capability()
   ignore(
     session.receive(
-      @session.DatagramSendCapabilityChanged(
+      DatagramSendCapabilityChanged(
         enabled=capability.enabled,
         max_length=capability.max_length,
       ),
@@ -378,7 +378,7 @@ fn setup_client(
         )
         ignore(notices)
         for (purpose, stream) in opened {
-          if purpose is @session.Control {
+          if purpose is Control {
             setup_stream = Some(stream)
           }
         }
@@ -389,10 +389,7 @@ fn setup_client(
           session,
           receive_session_event(
             session,
-            @session.InboundStreamStarted(
-              stream,
-              client_stream_direction(direction),
-            ),
+            InboundStreamStarted(stream, client_stream_direction(direction)),
           ),
           driver,
         )
@@ -402,12 +399,12 @@ fn setup_client(
         let (notices, _) = drive_session_result(
           client,
           session,
-          receive_session_event(session, @session.StreamData(stream, bytes)),
+          receive_session_event(session, StreamData(stream, bytes)),
           driver,
         )
         for notice in notices {
           match notice {
-            @session.HandshakeComplete(setup) => {
+            HandshakeComplete(setup) => {
               eprintln(
                 "MoQT Draft 18 SETUP complete (\{setup.options.length()} options)",
               )
@@ -421,7 +418,7 @@ fn setup_client(
         let (notices, _) = drive_session_result(
           client,
           session,
-          receive_session_event(session, @session.DatagramReceived(bytes)),
+          receive_session_event(session, DatagramReceived(bytes)),
           driver,
         )
         ignore(notices)
@@ -448,7 +445,7 @@ fn setup_client(
           session,
           receive_session_event(
             session,
-            @session.DatagramSendCapabilityChanged(
+            DatagramSendCapabilityChanged(
               enabled=capability.enabled,
               max_length=capability.max_length,
             ),
@@ -473,7 +470,7 @@ fn setup_client(
           session,
           receive_session_event(
             session,
-            @session.PeerClosed(code.reinterpret_as_uint64()),
+            PeerClosed(code.reinterpret_as_uint64()),
           ),
           driver,
         )
@@ -484,10 +481,7 @@ fn setup_client(
         let (notices, _) = drive_session_result(
           client,
           session,
-          receive_session_event(
-            session,
-            @session.TransportFailed(status.to_int64()),
-          ),
+          receive_session_event(session, TransportFailed(status.to_int64())),
           driver,
         )
         ignore(notices)

@@ -12,19 +12,19 @@ impl @driver.SessionTransport for WebTransportTransport with fn open_stream(
   on_done,
 ) {
   let opening = match direction {
-    @session.Unidirectional => self.connection.open_unidirectional()
-    @session.Bidirectional => self.connection.open_bidirectional()
+    Unidirectional => self.connection.open_unidirectional()
+    Bidirectional => self.connection.open_bidirectional()
   }
   ignore(
     opening.then(fn(result) {
       match result {
-        Ok(stream) => on_done(@driver.Opened(stream))
-        Err(_) => on_done(@driver.OpenFailed(-1L))
+        Ok(stream) => on_done(Opened(stream))
+        Err(_) => on_done(OpenFailed(-1L))
       }
       @js.Promise::resolve(())
     }),
   )
-  @driver.Accepted
+  Accepted
 }
 
 ///|
@@ -39,23 +39,22 @@ impl @driver.SessionTransport for WebTransportTransport with fn send(
   ignore(
     writing.then(fn(result) {
       match result {
-        Ok(_) => on_done(@driver.Written)
+        Ok(_) => on_done(Written)
         Err(failure) =>
           match failure.stream_error_code {
-            Some(code) =>
-              on_done(@driver.WriteReset(code.reinterpret_as_uint64()))
+            Some(code) => on_done(WriteReset(code.reinterpret_as_uint64()))
             None =>
               if failure.source == Some("session") {
-                on_done(@driver.WriteFailed(-1L))
+                on_done(WriteFailed(-1L))
               } else {
-                on_done(@driver.WriteCanceled)
+                on_done(WriteCanceled)
               }
           }
       }
       @js.Promise::resolve(())
     }),
   )
-  @driver.Accepted
+  Accepted
 }
 
 ///|
@@ -68,13 +67,13 @@ impl @driver.SessionTransport for WebTransportTransport with fn send_datagram(
   ignore(
     sending.then(fn(result) {
       match result {
-        Ok(_) => on_done(@driver.Written)
-        Err(_) => on_done(@driver.WriteFailed(-4L))
+        Ok(_) => on_done(Written)
+        Err(_) => on_done(WriteFailed(-4L))
       }
       @js.Promise::resolve(())
     }),
   )
-  @driver.Accepted
+  Accepted
 }
 
 ///|
@@ -145,6 +144,7 @@ fn WebTransportSessionDriver::config() -> @driver.SessionDriverConfig {
 }
 
 ///|
+/// Create a session driver for an established WebTransport connection.
 pub fn WebTransportSessionDriver::new(
   connection : WebTransportConnection,
   session : @session.ClientSession,
@@ -156,7 +156,7 @@ pub fn WebTransportSessionDriver::new(
     WebTransportSessionDriver::config(),
   )
   driver.set_clock(fn() { ffi_webtransport_monotonic_now().to_uint64() })
-  let result : WebTransportSessionDriver = {
+  let result = WebTransportSessionDriver::{
     connection,
     driver,
     notices: [],
@@ -182,7 +182,7 @@ pub fn WebTransportSessionDriver::from_setup(
 ) -> Result[WebTransportSessionDriver, @protocol.CodecError] {
   match
     @session.ClientSession::new(
-      @session.Draft18,
+      Draft18,
       setup.for_webtransport(),
       desired_subscriptions~,
     ) {
@@ -203,7 +203,7 @@ pub fn WebTransportSessionDriver::start(
   self.active = true
   let capability = self.connection.datagram_capability()
   self.driver.receive(
-    @session.DatagramSendCapabilityChanged(
+    DatagramSendCapabilityChanged(
       enabled=capability.enabled,
       max_length=capability.max_length,
     ),
@@ -232,7 +232,7 @@ pub fn WebTransportSessionDriver::start(
                 match self.driver.dispatch(actions) {
                   Accepted => ()
                   QueueFull | TooLarge | DriverFailed => {
-                    self.receive_event(@session.TransportFailed(-7L))
+                    self.receive_event(TransportFailed(-7L))
                     self.fail_close()
                   }
                 }
@@ -241,7 +241,7 @@ pub fn WebTransportSessionDriver::start(
             self.flush()
           }
           Err(_) => {
-            self.receive_event(@session.TransportFailed(-1L))
+            self.receive_event(TransportFailed(-1L))
             self.fail_close()
           }
         }
@@ -262,7 +262,7 @@ pub fn WebTransportSessionDriver::dispatch(
 ) -> @driver.DriverDispatchResult {
   let result = self.driver.dispatch(actions)
   self.flush()
-  if result == @driver.DriverFailed {
+  if result == DriverFailed {
     self.fail_close()
   }
   result
@@ -354,7 +354,7 @@ fn WebTransportSessionDriver::receive_event(
   self.driver.receive(event)
   self.flush()
   match event {
-    @session.PeerClosed(_) => self.finish()
+    PeerClosed(_) => self.finish()
     _ => ()
   }
 }
@@ -389,36 +389,34 @@ fn WebTransportSessionDriver::read_stream_events(
         LocalStreamOpened(_, _) => ()
         StreamStarted(stream, direction) =>
           self.receive_event(
-            @session.InboundStreamStarted(
+            InboundStreamStarted(
               stream,
               match direction {
-                Unidirectional => @session.Unidirectional
-                Bidirectional => @session.Bidirectional
+                Unidirectional => Unidirectional
+                Bidirectional => Bidirectional
               },
             ),
           )
-        Data(stream, bytes) =>
-          self.receive_event(@session.StreamData(stream, bytes))
+        Data(stream, bytes) => self.receive_event(StreamData(stream, bytes))
         StreamFinished(stream) =>
-          self.receive_event(@session.InboundStreamFinished(stream))
+          self.receive_event(InboundStreamFinished(stream))
         StreamDataCommitted(stream) => {
-          self.driver.receive(@session.StreamDataCommitted(stream))
+          self.driver.receive(StreamDataCommitted(stream))
           self.flush()
         }
         StreamReset(stream, failure) => {
           let code = failure.stream_error_code
             .map(fn(c) { c.reinterpret_as_uint64() })
             .unwrap_or(0UL)
-          self.receive_event(@session.StreamReset(stream, code))
+          self.receive_event(StreamReset(stream, code))
         }
         SendStopped(stream, failure) => {
           let code = failure.stream_error_code
             .map(fn(c) { c.reinterpret_as_uint64() })
             .unwrap_or(0UL)
-          self.receive_event(@session.SendStopped(stream, code))
+          self.receive_event(SendStopped(stream, code))
         }
-        StreamQueueOverflow(_) =>
-          self.receive_event(@session.TransportFailed(-2L))
+        StreamQueueOverflow(_) => self.receive_event(TransportFailed(-2L))
         // The connection.closed() promise carries the close cause into the
         // session state machine. Stop this reader while it is being handled.
         ConnectionClosed(_) => connection_closed = true
@@ -444,15 +442,13 @@ fn WebTransportSessionDriver::read_datagrams(
     .then(fn(event) {
       let mut continue_reading = true
       match event {
-        DatagramReceived(bytes) =>
-          self.receive_event(@session.DatagramReceived(bytes))
-        DatagramReceiveQueueFull =>
-          self.receive_event(@session.TransportFailed(-3L))
+        DatagramReceived(bytes) => self.receive_event(DatagramReceived(bytes))
+        DatagramReceiveQueueFull => self.receive_event(TransportFailed(-3L))
         DatagramsClosed => {
           continue_reading = false
           self.datagram_read_ended = true
           self.receive_event(
-            @session.DatagramSendCapabilityChanged(enabled=false, max_length=0),
+            DatagramSendCapabilityChanged(enabled=false, max_length=0),
           )
         }
       }
@@ -471,7 +467,7 @@ fn WebTransportSessionDriver::refresh_datagram_capability(
   if !self.datagram_read_ended {
     let capability = self.connection.datagram_capability()
     self.receive_event(
-      @session.DatagramSendCapabilityChanged(
+      DatagramSendCapabilityChanged(
         enabled=capability.enabled,
         max_length=capability.max_length,
       ),
@@ -490,9 +486,9 @@ fn WebTransportSessionDriver::read_close(
       match close {
         PeerClose(info) =>
           self.receive_event(
-            @session.PeerClosed(info.close_code.reinterpret_as_uint64()),
+            PeerClosed(info.close_code.reinterpret_as_uint64()),
           )
-        Failed(_) => self.receive_event(@session.TransportFailed(-1L))
+        Failed(_) => self.receive_event(TransportFailed(-1L))
         LocalClose => self.finish()
       }
       self.finish()
@@ -520,7 +516,7 @@ fn WebTransportSessionDriver::schedule_clock(
           if self.active {
             self.refresh_datagram_capability()
             let now = ffi_webtransport_monotonic_now().to_uint64()
-            self.receive_event(@session.Clock(now))
+            self.receive_event(Clock(now))
             self.schedule_clock()
           }
         },

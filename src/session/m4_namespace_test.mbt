@@ -8,12 +8,10 @@ test "namespace subscription enumerates previously published application namespa
   ignore(publisher.publish_application_namespace(ns).unwrap())
   ignore(publisher.publish_application_namespace(outside).unwrap())
 
-  ignore(
-    publisher.receive(@session.InboundStreamStarted(40, @session.Bidirectional)),
-  )
+  ignore(publisher.receive(InboundStreamStarted(40, Bidirectional)))
   ignore(
     publisher.receive(
-      @session.StreamData(
+      StreamData(
         40,
         @protocol.encode_subscribe_namespace({
           request_id: 1UL,
@@ -25,23 +23,23 @@ test "namespace subscription enumerates previously published application namespa
   )
 
   assert_eq(
-    publisher.accept_namespace_subscription(@session.StreamId(40), []).unwrap(),
+    publisher.accept_namespace_subscription(StreamId(40), []).unwrap(),
     [
-      @session.SendChunk(
+      SendChunk(
         40,
         @protocol.encode_request_ok_for(
           { parameters: [], properties: b"", },
-          @protocol.Namespace,
+          Namespace,
         ).unwrap(),
       ),
-      @session.EmitNotice(@session.NamespaceSubscriptionEstablished(1UL, 40)),
-      @session.SendChunk(
+      EmitNotice(NamespaceSubscriptionEstablished(1UL, 40)),
+      SendChunk(
         40,
         @protocol.encode_namespace({
           track_namespace: test_namespace([b"child"]),
         }).unwrap(),
       ),
-      @session.EmitNotice(@session.NamespaceDiscovered(1UL, ns)),
+      EmitNotice(NamespaceDiscovered(1UL, ns)),
     ],
   )
 }

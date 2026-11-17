@@ -40,15 +40,15 @@ fn NamespaceProbeState::observe(
 ) -> Unit raise {
   for notice in notices {
     match notice {
-      @session.PublishAccepted(id, _, _) if publisher &&
+      PublishAccepted(id, _, _) if publisher &&
         id.to_uint64() == self.independent_publish =>
         self.independent_published = true
-      @session.SubscribeEstablished(id, track_alias) if !publisher &&
+      SubscribeEstablished(id, track_alias) if !publisher &&
         Some(id.to_uint64()) == self.independent_subscribe => {
         self.independent_alias = Some(track_alias.to_uint64())
         self.independent_subscribed = true
       }
-      @session.ObjectReceived(id, _, header, frames) if !publisher &&
+      ObjectReceived(id, _, header, frames) if !publisher &&
         Some(id.to_uint64()) == self.independent_subscribe => {
         guard Some(header.track_alias) == self.independent_alias &&
           header.group_id == 0UL &&
@@ -69,14 +69,14 @@ fn NamespaceProbeState::observe(
           "Received independent track group 0 after Namespace cancellation",
         )
       }
-      @session.GroupFinished(id, group) if !publisher &&
+      GroupFinished(id, group) if !publisher &&
         Some(id.to_uint64()) == self.independent_subscribe => {
         guard group == 0UL && self.independent_object_received else {
           fail("independent track Group finished before its Object")
         }
         self.independent_group_finished = true
       }
-      @session.NamespaceSubscriptionEstablished(id, stream) if !publisher &&
+      NamespaceSubscriptionEstablished(id, stream) if !publisher &&
         id.to_uint64() == self.subscription => {
         guard stream.to_int64() == self.subscription_stream && !self.established else {
           fail("unexpected Namespace subscription establishment")
@@ -84,7 +84,7 @@ fn NamespaceProbeState::observe(
         self.established = true
         println("SUBSCRIBE_NAMESPACE established")
       }
-      @session.NamespacePublicationAccepted(id, stream) if publisher &&
+      NamespacePublicationAccepted(id, stream) if publisher &&
         Some(id.to_uint64()) == self.publication => {
         guard Some(stream.to_int64()) == self.publication_stream &&
           !self.accepted else {
@@ -93,7 +93,7 @@ fn NamespaceProbeState::observe(
         self.accepted = true
         println("PUBLISH_NAMESPACE accepted")
       }
-      @session.NamespaceDiscovered(id, track_namespace) if !publisher &&
+      NamespaceDiscovered(id, track_namespace) if !publisher &&
         id.to_uint64() == self.subscription => {
         guard self.established &&
           track_namespace == self.track_namespace &&
@@ -103,7 +103,7 @@ fn NamespaceProbeState::observe(
         self.discovered = true
         println("NAMESPACE discovered with matching prefix and suffix")
       }
-      @session.NamespaceWithdrawn(id, stream) if publisher &&
+      NamespaceWithdrawn(id, stream) if publisher &&
         Some(id.to_uint64()) == self.publication => {
         guard self.cancelling_publication &&
           Some(stream.to_int64()) == self.publication_stream else {
@@ -112,7 +112,7 @@ fn NamespaceProbeState::observe(
         self.withdrawn = true
         println("Namespace publication cancelled")
       }
-      @session.NamespaceNoLongerAvailable(id, track_namespace) if !publisher &&
+      NamespaceNoLongerAvailable(id, track_namespace) if !publisher &&
         id.to_uint64() == self.subscription => {
         // Cancellation also clears discoveries locally. Require this notice
         // while discovery is still active, before cancelling the subscription.
@@ -126,7 +126,7 @@ fn NamespaceProbeState::observe(
         self.unavailable = true
         println("NAMESPACE_DONE received for withdrawn namespace")
       }
-      @session.NamespaceSubscriptionEnded(id, stream) if !publisher &&
+      NamespaceSubscriptionEnded(id, stream) if !publisher &&
         id.to_uint64() == self.subscription => {
         guard self.cancelling_subscription && stream == self.subscription_stream else {
           fail("Namespace subscription ended before cancellation")
@@ -134,13 +134,13 @@ fn NamespaceProbeState::observe(
         self.ended = true
         println("Namespace subscription cancelled")
       }
-      @session.NamespacePublicationRejected(_, _, error) =>
+      NamespacePublicationRejected(_, _, error) =>
         fail("PUBLISH_NAMESPACE rejected (code \{error.code})")
-      @session.NamespaceSubscriptionRejected(_, _, error) =>
+      NamespaceSubscriptionRejected(_, _, error) =>
         fail("SUBSCRIBE_NAMESPACE rejected (code \{error.code})")
-      @session.NamespaceAcceptanceRevoked(_, _) =>
+      NamespaceAcceptanceRevoked(_, _) =>
         fail("Namespace publication acceptance revoked")
-      @session.SessionEnded(end) =>
+      SessionEnded(end) =>
         if publisher && self.cancelling_publication && self.withdrawn {
           self.publisher_session_ended = true
           println(
@@ -208,6 +208,7 @@ fn wait_namespace_stage(
 }
 
 ///|
+/// Run the namespace publish and subscribe probe against `host`.
 pub fn run_namespace(
   host : String,
   port : Int32,
@@ -218,7 +219,7 @@ pub fn run_namespace(
     host, port, path, insecure,
   )
   defer subscriber_client.close()
-  let subscriber : LifecyclePeer = {
+  let subscriber = LifecyclePeer::{
     client: subscriber_client,
     session: subscriber_session,
     driver: SessionActionDriver::new(),
@@ -228,16 +229,16 @@ pub fn run_namespace(
     host, port, path, insecure,
   )
   defer publisher_client.close()
-  let publisher : LifecyclePeer = {
+  let publisher = LifecyclePeer::{
     client: publisher_client,
     session: publisher_session,
     driver: SessionActionDriver::new(),
     closed_streams: {},
   }
-  let prefix : @protocol.TrackNamespace = {
+  let prefix = @protocol.TrackNamespace::{
     fields: [b"interop", @utf8.encode("namespace-\{@env.now()}")],
   }
-  let track_namespace : @protocol.TrackNamespace = {
+  let track_namespace = @protocol.TrackNamespace::{
     fields: prefix.fields + [b"child"],
   }
   let independent_track = lifecycle_track("namespace-independent")
@@ -271,7 +272,7 @@ pub fn run_namespace(
     subscribe_actions,
     subscriber.driver,
   )
-  let state : NamespaceProbeState = {
+  let state = NamespaceProbeState::{
     subscription,
     subscription_stream: lifecycle_request_stream(opened, subscription),
     track_namespace,
@@ -368,7 +369,7 @@ pub fn run_namespace(
     host, port, path, insecure,
   )
   defer continuation_client.close()
-  let continuation_publisher : LifecyclePeer = {
+  let continuation_publisher = LifecyclePeer::{
     client: continuation_client,
     session: continuation_session,
     driver: SessionActionDriver::new(),
@@ -390,9 +391,9 @@ pub fn run_namespace(
   let mut continuation_accepted = false
   for notice in continuation_notices {
     match notice {
-      @session.PublishAccepted(id, _, _) if id.to_uint64() ==
-        continuation_publish => continuation_accepted = true
-      @session.PublishRejected(_, error) =>
+      PublishAccepted(id, _, _) if id.to_uint64() == continuation_publish =>
+        continuation_accepted = true
+      PublishRejected(_, error) =>
         fail("independent track republish rejected: \{error.to_repr()}")
       _ => ()
     }
@@ -401,9 +402,9 @@ pub fn run_namespace(
   while !continuation_accepted && @env.now() < accept_deadline {
     for notice in lifecycle_poll(continuation_publisher, 20) {
       match notice {
-        @session.PublishAccepted(id, _, _) if id.to_uint64() ==
-          continuation_publish => continuation_accepted = true
-        @session.PublishRejected(_, error) =>
+        PublishAccepted(id, _, _) if id.to_uint64() == continuation_publish =>
+          continuation_accepted = true
+        PublishRejected(_, error) =>
           fail("independent track republish rejected: \{error.to_repr()}")
         _ => ()
       }
@@ -418,7 +419,7 @@ pub fn run_namespace(
     continuation_session.open_object_stream(continuation_stream, {
       track_alias: 7UL,
       group_id: 0UL,
-      subgroup_id_mode: @protocol.Zero,
+      subgroup_id_mode: Zero,
       publisher_priority: Some(128),
       end_of_group: true,
       first_object: true,
@@ -429,7 +430,7 @@ pub fn run_namespace(
   let mut object_stream : Int64? = None
   for (purpose, stream) in object_streams {
     match purpose {
-      @session.Object(_) => object_stream = Some(stream)
+      Object(_) => object_stream = Some(stream)
       _ => ()
     }
   }
@@ -440,7 +441,7 @@ pub fn run_namespace(
       continuation_session,
       continuation_session.send_object(object_stream, {
         object_id: 0UL,
-        status: @protocol.Normal,
+        status: Normal,
         properties: probe_properties(),
         payload: probe_payload(0UL, 0UL),
       }),

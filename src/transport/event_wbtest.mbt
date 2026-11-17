@@ -14,7 +14,7 @@ test "datagram send states distinguish interim and final results" {
 
 ///|
 test "datagram send preflight reports disabled, size, and queue limits" {
-  let capability : DatagramSendCapability = { enabled: false, max_length: 0, }
+  let capability = DatagramSendCapability::{ enabled: false, max_length: 0, }
   let disabled = try {
     validate_datagram_send(1, capability, 0, 0)
     0
@@ -24,7 +24,7 @@ test "datagram send preflight reports disabled, size, and queue limits" {
   }
   assert_eq(disabled, 1)
 
-  let capability : DatagramSendCapability = { enabled: true, max_length: 5, }
+  let capability = DatagramSendCapability::{ enabled: true, max_length: 5, }
   let oversized = try {
     validate_datagram_send(6, capability, 0, 0)
     0
@@ -46,7 +46,7 @@ test "datagram send preflight reports disabled, size, and queue limits" {
 
 ///|
 test "stream send completion releases only its matching queued buffer" {
-  let client : Client = {
+  let client = Client::{
     raw: None,
     streams: {},
     send_sizes: [(7L, 4), (11L, 6)],
@@ -67,7 +67,7 @@ test "stream send completion releases only its matching queued buffer" {
 
 ///|
 test "interim datagram states retain buffers and final states release them" {
-  let client : Client = {
+  let client = Client::{
     raw: None,
     streams: {},
     send_sizes: [],

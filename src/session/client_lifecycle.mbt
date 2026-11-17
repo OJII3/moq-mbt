@@ -177,6 +177,7 @@ fn ClientSession::clock(
 }
 
 ///|
+/// Return the current session lifecycle state.
 pub fn ClientSession::state(self : ClientSession) -> ClientSessionState {
   self.state
 }
@@ -247,7 +248,7 @@ fn ClientSession::reject_local_request_for_goaway(
   )
   request.response_buffer = b""
   request.pending_local_update = None
-  let error : @protocol.RequestErrorMessage = {
+  let error = @protocol.RequestErrorMessage::{
     code: request_error_going_away,
     retry_interval: 0UL,
     reason: b"",

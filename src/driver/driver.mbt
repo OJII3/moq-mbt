@@ -13,6 +13,7 @@ pub(all) enum TransportAcceptance {
 }
 
 ///|
+/// The result of an asynchronous stream open.
 #derive(Debug, Eq)
 pub(all) enum TransportOpenOutcome {
   Opened(Int64)
@@ -82,6 +83,7 @@ pub(all) struct SessionDriverConfig {
 }
 
 ///|
+/// The result of handing one action to the driver.
 #derive(Debug, Eq)
 pub(all) enum DriverDispatchResult {
   Accepted
@@ -140,6 +142,7 @@ pub struct SessionDriver[T] {
 }
 
 ///|
+/// Create a driver that pumps `session` through `transport` under `config`.
 pub fn[T] SessionDriver::new(
   transport : T,
   session : @session.ClientSession,
@@ -182,6 +185,7 @@ pub fn[T] SessionDriver::set_update_handler(
 }
 
 ///|
+/// Return the session driven by this driver.
 pub fn[T] SessionDriver::session(
   self : SessionDriver[T],
 ) -> @session.ClientSession {
@@ -189,6 +193,7 @@ pub fn[T] SessionDriver::session(
 }
 
 ///|
+/// Whether the driver has entered its terminal failure state.
 pub fn[T] SessionDriver::failed(self : SessionDriver[T]) -> Bool {
   self.failed
 }
@@ -237,15 +242,15 @@ fn action_size(actions : Array[@session.SessionAction]) -> (Int32, Int64) {
   let mut bytes = 0L
   for action in actions {
     match action {
-      @session.SendChunk(_, data)
-      | @session.SendFin(_, data)
-      | @session.SendObjectChunk(_, data, _)
-      | @session.SendDatagram(_, data)
-      | @session.SendObjectDatagram(_, data, _) => {
+      SendChunk(_, data)
+      | SendFin(_, data)
+      | SendObjectChunk(_, data, _)
+      | SendDatagram(_, data)
+      | SendObjectDatagram(_, data, _) => {
         count = count + 1
         bytes = bytes + data.length().to_int64()
       }
-      @session.OpenStream(_, _) => count = count + 1
+      OpenStream(_, _) => count = count + 1
       _ => ()
     }
   }
@@ -395,7 +400,7 @@ fn[T : SessionTransport] SessionDriver::attempt_pending(
   let aborted_streams : Array[Int64] = []
   // Cancellation takes precedence over data already waiting in the queue.
   for item in self.pending {
-    if item.action is @session.AbortSend(stream, _) {
+    if item.action is AbortSend(stream, _) {
       aborted_streams.push(stream)
     }
   }
@@ -414,7 +419,7 @@ fn[T : SessionTransport] SessionDriver::attempt_pending(
       continue
     }
     match action {
-      @session.OpenStream(direction, purpose) =>
+      OpenStream(direction, purpose) =>
         if self.blocked_opens || self.at_open_limit() {
           remaining.push(item)
         } else {
@@ -437,15 +442,15 @@ fn[T : SessionTransport] SessionDriver::attempt_pending(
             }
           }
         }
-      @session.SendChunk(stream, bytes)
-      | @session.SendFin(stream, bytes)
-      | @session.SendObjectChunk(stream, bytes, _) =>
+      SendChunk(stream, bytes)
+      | SendFin(stream, bytes)
+      | SendObjectChunk(stream, bytes, _) =>
         if aborted_streams.contains(stream) {
           self.repump = true
-        } else if action is @session.SendObjectChunk(_, _, deadline) &&
+        } else if action is SendObjectChunk(_, _, deadline) &&
           self.current_time() > deadline {
           aborted_streams.push(stream)
-          self.events.push(@session.SendStopped(stream, 2UL))
+          self.events.push(SendStopped(stream, 2UL))
           self.repump = true
         } else if self.blocked_streams.contains(stream) ||
           self.chunk_blocked_streams.contains(stream) ||
@@ -458,7 +463,7 @@ fn[T : SessionTransport] SessionDriver::attempt_pending(
           self.chunk_blocked_streams.push(stream)
         } else {
           let fin = match action {
-            @session.SendFin(_, _) => true
+            SendFin(_, _) => true
             _ => false
           }
           let end = Int32::min(
@@ -505,11 +510,10 @@ fn[T : SessionTransport] SessionDriver::attempt_pending(
             }
           }
         }
-      @session.SendDatagram(token, bytes)
-      | @session.SendObjectDatagram(token, bytes, _) =>
-        if action is @session.SendObjectDatagram(_, _, deadline) &&
+      SendDatagram(token, bytes) | SendObjectDatagram(token, bytes, _) =>
+        if action is SendObjectDatagram(_, _, deadline) &&
           self.current_time() > deadline {
-          self.events.push(@session.DatagramSendComplete(token))
+          self.events.push(DatagramSendComplete(token))
           self.repump = true
         } else if self.blocked_datagrams || self.at_datagram_limit() {
           remaining.push(item)
@@ -531,20 +535,20 @@ fn[T : SessionTransport] SessionDriver::attempt_pending(
             }
           }
         }
-      @session.AbortSend(stream, code) => {
+      AbortSend(stream, code) => {
         aborted_streams.push(stream)
         self.transport.abort_send(stream, code)
         self.repump = true
       }
-      @session.StopReceiving(stream, code) => {
+      StopReceiving(stream, code) => {
         self.transport.stop_receiving(stream, code)
         self.repump = true
       }
-      @session.CloseConnection(code, reason) => {
+      CloseConnection(code, reason) => {
         self.transport.close_connection(code, reason)
         self.repump = true
       }
-      @session.EmitNotice(notice) => {
+      EmitNotice(notice) => {
         self.notices.push(notice)
         self.repump = true
       }
@@ -561,11 +565,10 @@ fn[T : SessionTransport] SessionDriver::attempt_pending(
   let filtered : Array[PendingAction] = []
   for item in remaining {
     match item.action {
-      @session.SendChunk(stream, _)
-      | @session.SendFin(stream, _)
-      | @session.SendObjectChunk(stream, _, _) if aborted_streams.contains(
-          stream,
-        ) => self.repump = true
+      SendChunk(stream, _)
+      | SendFin(stream, _)
+      | SendObjectChunk(stream, _, _) if aborted_streams.contains(stream) =>
+        self.repump = true
       _ => filtered.push(item)
     }
   }
@@ -581,7 +584,7 @@ fn[T : SessionTransport] SessionDriver::deliver_events(
     let event = self.events[index]
     index += 1
     match event {
-      @session.TransportFailed(status) => self.fail(status)
+      TransportFailed(status) => self.fail(status)
       _ =>
         match self.session.receive(event) {
           Ok(actions) =>
@@ -633,10 +636,10 @@ fn[T : SessionTransport] SessionDriver::note_open(
   }
   match outcome {
     Opened(stream) => {
-      self.opened_streams.push((purpose, @session.StreamId(stream)))
-      self.events.push(@session.StreamOpened(purpose, stream))
+      self.opened_streams.push((purpose, StreamId(stream)))
+      self.events.push(StreamOpened(purpose, stream))
     }
-    OpenFailed(status) => self.events.push(@session.TransportFailed(status))
+    OpenFailed(status) => self.events.push(TransportFailed(status))
   }
   if !self.pumping {
     self.pump()
@@ -657,11 +660,10 @@ fn[T : SessionTransport] SessionDriver::note_send(
     return
   }
   match outcome {
-    Written => self.events.push(@session.SendCompleted(stream, @session.Sent))
-    WriteCanceled =>
-      self.events.push(@session.SendCompleted(stream, @session.Reset))
-    WriteReset(code) => self.events.push(@session.StreamReset(stream, code))
-    WriteFailed(status) => self.events.push(@session.TransportFailed(status))
+    Written => self.events.push(SendCompleted(stream, Sent))
+    WriteCanceled => self.events.push(SendCompleted(stream, Reset))
+    WriteReset(code) => self.events.push(StreamReset(stream, code))
+    WriteFailed(status) => self.events.push(TransportFailed(status))
     Abandoned => ()
   }
   if !self.pumping {
@@ -702,15 +704,12 @@ fn[T : SessionTransport] SessionDriver::note_datagram(
     return
   }
   match outcome {
-    Written => self.events.push(@session.DatagramSendComplete(token))
-    WriteCanceled => self.events.push(@session.DatagramSendFailed(token, 0))
+    Written => self.events.push(DatagramSendComplete(token))
+    WriteCanceled => self.events.push(DatagramSendFailed(token, 0))
     WriteReset(code) =>
-      self.events.push(
-        @session.DatagramSendFailed(token, code.reinterpret_as_int64()),
-      )
-    WriteFailed(status) =>
-      self.events.push(@session.DatagramSendFailed(token, status))
-    Abandoned => self.events.push(@session.DatagramSendComplete(token))
+      self.events.push(DatagramSendFailed(token, code.reinterpret_as_int64()))
+    WriteFailed(status) => self.events.push(DatagramSendFailed(token, status))
+    Abandoned => self.events.push(DatagramSendComplete(token))
   }
   if !self.pumping {
     self.pump()
@@ -757,12 +756,12 @@ fn[T : SessionTransport] SessionDriver::fail(
   self.failed = true
   self.pending = []
   self.events = []
-  match self.session.receive(@session.TransportFailed(status)) {
+  match self.session.receive(TransportFailed(status)) {
     Ok(actions) =>
       for action in actions {
         match action {
-          @session.EmitNotice(notice) => self.notices.push(notice)
-          @session.CloseConnection(code, reason) =>
+          EmitNotice(notice) => self.notices.push(notice)
+          CloseConnection(code, reason) =>
             self.transport.close_connection(code, reason)
           _ => ()
         }

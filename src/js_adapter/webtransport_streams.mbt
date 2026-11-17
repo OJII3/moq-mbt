@@ -1,10 +1,12 @@
 ///|
+/// The direction of a WebTransport stream.
 pub(all) enum WebTransportStreamDirection {
   Unidirectional
   Bidirectional
 }
 
 ///|
+/// An event from a browser WebTransport stream.
 pub(all) enum WebTransportStreamEvent {
   StreamStarted(Int64, WebTransportStreamDirection)
   LocalStreamOpened(Int64, WebTransportStreamDirection)
@@ -293,7 +295,7 @@ fn WebTransportStreamManager::register_stream(
     None
   }
   let id = self.allocate_stream_ref()
-  let state = {
+  let state = WebTransportStreamState::{
     reader,
     writer,
     read_cancelled: Ref(false),
@@ -465,7 +467,7 @@ fn WebTransportStreamManager::open_stream(
 ) -> @js.Promise[Result[Int64, WebTransportFailure]] {
   if self.locally_closed.val || self.connection_ended.val {
     return @js.Promise::resolve(
-      Err(WebTransportFailure::{
+      Err({
         name: "InvalidStateError",
         message: "connection is closed",
         source: Some("session"),
@@ -475,7 +477,7 @@ fn WebTransportStreamManager::open_stream(
   }
   if self.pending_stream_opens.val >= max_pending_stream_opens {
     return @js.Promise::resolve(
-      Err(WebTransportFailure::{
+      Err({
         name: "QuotaExceededError",
         message: "stream open queue is full",
         source: Some("session"),
@@ -498,7 +500,7 @@ fn WebTransportStreamManager::open_stream(
         direction is Unidirectional,
       )
       @js.Promise::resolve(
-        Err(WebTransportFailure::{
+        Err({
           name: "AbortError",
           message: "connection closed while opening stream",
           source: Some("session"),
@@ -510,7 +512,7 @@ fn WebTransportStreamManager::open_stream(
       let id = self.register_stream(stream, direction, true)
       if id == 0L {
         @js.Promise::resolve(
-          Err(WebTransportFailure::{
+          Err({
             name: "QuotaExceededError",
             message: "active stream limit reached",
             source: Some("session"),
@@ -534,11 +536,11 @@ fn WebTransportStreamManager::write_stream(
   self : WebTransportStreamManager,
   stream : Int64,
   bytes : Bytes,
-  fin~ : Bool = false,
+  fin~ : Bool,
 ) -> @js.Promise[Result[Unit, WebTransportFailure]] {
   if self.locally_closed.val || self.connection_ended.val {
     return @js.Promise::resolve(
-      Err(WebTransportFailure::{
+      Err({
         name: "InvalidStateError",
         message: "connection is closed",
         source: Some("session"),
@@ -548,7 +550,7 @@ fn WebTransportStreamManager::write_stream(
   }
   if !self.send_budget.has_capacity(bytes.length()) {
     return @js.Promise::resolve(
-      Err(WebTransportFailure::{
+      Err({
         name: "QuotaExceededError",
         message: "stream send queue is full",
         source: Some("session"),
@@ -558,7 +560,7 @@ fn WebTransportStreamManager::write_stream(
   }
   guard self.streams.get(stream) is Some(state) else {
     return @js.Promise::resolve(
-      Err(WebTransportFailure::{
+      Err({
         name: "InvalidStateError",
         message: "unknown stream",
         source: Some("session"),
@@ -568,7 +570,7 @@ fn WebTransportStreamManager::write_stream(
   }
   guard state.writer is Some(writer) else {
     return @js.Promise::resolve(
-      Err(WebTransportFailure::{
+      Err({
         name: "InvalidStateError",
         message: "stream has no send side",
         source: Some("session"),
@@ -578,7 +580,7 @@ fn WebTransportStreamManager::write_stream(
   }
   if state.write_closed.val {
     return @js.Promise::resolve(
-      Err(WebTransportFailure::{
+      Err({
         name: "InvalidStateError",
         message: "stream send side is already closed",
         source: Some("session"),
@@ -639,7 +641,7 @@ fn WebTransportStreamManager::cancel_stream_read(
           })
         None =>
           @js.Promise::resolve(
-            Err(WebTransportFailure::{
+            Err({
               name: "InvalidStateError",
               message: "stream has no receive side",
               source: Some("session"),
@@ -649,7 +651,7 @@ fn WebTransportStreamManager::cancel_stream_read(
       }
     None =>
       @js.Promise::resolve(
-        Err(WebTransportFailure::{
+        Err({
           name: "InvalidStateError",
           message: "unknown stream",
           source: Some("session"),
@@ -688,7 +690,7 @@ fn WebTransportStreamManager::abort_stream_write(
           })
         None =>
           @js.Promise::resolve(
-            Err(WebTransportFailure::{
+            Err({
               name: "InvalidStateError",
               message: "stream has no send side",
               source: Some("session"),
@@ -698,7 +700,7 @@ fn WebTransportStreamManager::abort_stream_write(
       }
     None =>
       @js.Promise::resolve(
-        Err(WebTransportFailure::{
+        Err({
           name: "InvalidStateError",
           message: "unknown stream",
           source: Some("session"),

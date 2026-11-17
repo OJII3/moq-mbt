@@ -43,10 +43,10 @@ pub fn ClientSession::open_object_group(
     is Some(track_alias) else {
     return Err(UnknownRequest)
   }
-  let header : @protocol.SubgroupHeader = {
+  let header = @protocol.SubgroupHeader::{
     track_alias,
     group_id,
-    subgroup_id_mode: @protocol.Zero,
+    subgroup_id_mode: Zero,
     publisher_priority: None,
     end_of_group,
     first_object: true,
@@ -93,7 +93,7 @@ pub fn ObjectGroupWriter::send(
 ) -> Result[Array[SessionAction], ClientSessionError] {
   self.send_frame({
     object_id: self.next_object_id,
-    status: @protocol.Normal,
+    status: Normal,
     properties: b"",
     payload,
   })

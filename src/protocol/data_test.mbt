@@ -1,18 +1,18 @@
 ///|
 test "streaming object header matches complete frame encoding" {
-  let header : @protocol.SubgroupHeader = {
+  let header = @protocol.SubgroupHeader::{
     track_alias: 1,
     group_id: 0,
-    subgroup_id_mode: @protocol.Zero,
+    subgroup_id_mode: Zero,
     publisher_priority: None,
     end_of_group: false,
     first_object: true,
     has_properties: true,
   }
   for payload in [b"", b"hello"] {
-    let frame : @protocol.SubgroupFrame = {
+    let frame = @protocol.SubgroupFrame::{
       object_id: 3,
-      status: @protocol.Normal,
+      status: Normal,
       properties: b"p",
       payload,
     }
@@ -32,18 +32,18 @@ test "streaming object header matches complete frame encoding" {
 
 ///|
 test "one reliable subgroup frame round-trips including empty payload" {
-  let header : @protocol.SubgroupHeader = {
+  let header = @protocol.SubgroupHeader::{
     track_alias: 1,
     group_id: 0,
-    subgroup_id_mode: @protocol.Zero,
+    subgroup_id_mode: Zero,
     publisher_priority: None,
     end_of_group: true,
     first_object: true,
     has_properties: false,
   }
-  let frame : @protocol.SubgroupFrame = {
+  let frame = @protocol.SubgroupFrame::{
     object_id: 0,
-    status: @protocol.Normal,
+    status: Normal,
     properties: b"",
     payload: b"hello",
   }
@@ -51,19 +51,19 @@ test "one reliable subgroup frame round-trips including empty payload" {
   assert_eq(@protocol.encode_subgroup_stream(header, [frame]), Ok(wire))
   let (decoded_header, header_length) = match
     @protocol.decode_subgroup_header(wire) {
-    @protocol.Complete(value, consumed) => (value, consumed)
+    Complete(value, consumed) => (value, consumed)
     _ => fail("expected a complete subgroup header")
   }
   assert_eq(
     @protocol.SubgroupDecoder::new(decoded_header).decode_next(
       wire[header_length:].to_owned(),
     ),
-    @protocol.Complete(frame, wire.length() - header_length),
+    Complete(frame, wire.length() - header_length),
   )
 
-  let empty_frame : @protocol.SubgroupFrame = {
+  let empty_frame = @protocol.SubgroupFrame::{
     object_id: 0,
-    status: @protocol.Normal,
+    status: Normal,
     properties: b"",
     payload: b"",
   }
@@ -71,31 +71,31 @@ test "one reliable subgroup frame round-trips including empty payload" {
   assert_eq(empty, b"\x78\x01\x00\x00\x00\x00")
   let (empty_header, empty_header_length) = match
     @protocol.decode_subgroup_header(empty) {
-    @protocol.Complete(value, consumed) => (value, consumed)
+    Complete(value, consumed) => (value, consumed)
     _ => fail("expected a complete subgroup header")
   }
   assert_eq(
     @protocol.SubgroupDecoder::new(empty_header).decode_next(
       empty[empty_header_length:].to_owned(),
     ),
-    @protocol.Complete(empty_frame, empty.length() - empty_header_length),
+    Complete(empty_frame, empty.length() - empty_header_length),
   )
 }
 
 ///|
 test "one subgroup frame parser handles every split" {
-  let header : @protocol.SubgroupHeader = {
+  let header = @protocol.SubgroupHeader::{
     track_alias: 7,
     group_id: 9,
-    subgroup_id_mode: @protocol.Zero,
+    subgroup_id_mode: Zero,
     publisher_priority: None,
     end_of_group: true,
     first_object: true,
     has_properties: false,
   }
-  let frame : @protocol.SubgroupFrame = {
+  let frame = @protocol.SubgroupFrame::{
     object_id: 3,
-    status: @protocol.Normal,
+    status: Normal,
     properties: b"",
     payload: b"payload",
   }
@@ -103,36 +103,36 @@ test "one subgroup frame parser handles every split" {
   for split = 0; split < wire.length(); split = split + 1 {
     let partial = wire[:split].to_owned()
     match @protocol.decode_subgroup_header(partial) {
-      @protocol.Incomplete => ()
-      @protocol.Complete(partial_header, header_length) =>
+      Incomplete => ()
+      Complete(partial_header, header_length) =>
         assert_eq(
           @protocol.SubgroupDecoder::new(partial_header).decode_next(
             partial[header_length:].to_owned(),
           ),
-          @protocol.Incomplete,
+          Incomplete,
         )
-      @protocol.Invalid(_) => fail("invalid subgroup header")
+      Invalid(_) => fail("invalid subgroup header")
     }
   }
   let (decoded_header, header_length) = match
     @protocol.decode_subgroup_header(wire) {
-    @protocol.Complete(value, consumed) => (value, consumed)
+    Complete(value, consumed) => (value, consumed)
     _ => fail("expected a complete subgroup header")
   }
   assert_eq(
     @protocol.SubgroupDecoder::new(decoded_header).decode_next(
       wire[header_length:].to_owned(),
     ),
-    @protocol.Complete(frame, wire.length() - header_length),
+    Complete(frame, wire.length() - header_length),
   )
 }
 
 ///|
 test "subgroup header encodes all optional fields and id modes" {
-  let header : @protocol.SubgroupHeader = {
+  let header = @protocol.SubgroupHeader::{
     track_alias: 1,
     group_id: 2,
-    subgroup_id_mode: @protocol.Explicit(9),
+    subgroup_id_mode: Explicit(9),
     publisher_priority: Some(0x2a),
     end_of_group: true,
     first_object: false,
@@ -142,13 +142,13 @@ test "subgroup header encodes all optional fields and id modes" {
   assert_eq(@protocol.encode_subgroup_header(header), wire)
   assert_eq(
     @protocol.decode_subgroup_header(wire),
-    @protocol.Complete(header, wire.length()),
+    Complete(header, wire.length()),
   )
 
-  let inherited : @protocol.SubgroupHeader = {
+  let inherited = @protocol.SubgroupHeader::{
     track_alias: 1,
     group_id: 2,
-    subgroup_id_mode: @protocol.FirstObject,
+    subgroup_id_mode: FirstObject,
     publisher_priority: None,
     end_of_group: false,
     first_object: true,
@@ -158,24 +158,24 @@ test "subgroup header encodes all optional fields and id modes" {
   assert_eq(@protocol.encode_subgroup_header(inherited), inherited_wire)
   assert_eq(
     @protocol.decode_subgroup_header(inherited_wire),
-    @protocol.Complete(inherited, inherited_wire.length()),
+    Complete(inherited, inherited_wire.length()),
   )
 }
 
 ///|
 test "subgroup frame encoder accepts the previous object ID" {
-  let header : @protocol.SubgroupHeader = {
+  let header = @protocol.SubgroupHeader::{
     track_alias: 1,
     group_id: 2,
-    subgroup_id_mode: @protocol.Zero,
+    subgroup_id_mode: Zero,
     publisher_priority: None,
     end_of_group: false,
     first_object: true,
     has_properties: true,
   }
-  let frame : @protocol.SubgroupFrame = {
+  let frame = @protocol.SubgroupFrame::{
     object_id: 7,
-    status: @protocol.Normal,
+    status: Normal,
     properties: b"\xaa",
     payload: b"abc",
   }
@@ -185,7 +185,7 @@ test "subgroup frame encoder accepts the previous object ID" {
   )
   assert_eq(
     @protocol.encode_subgroup_stream(header, [
-      { object_id: 2, status: @protocol.Normal, properties: b"", payload: b"", },
+      { object_id: 2, status: Normal, properties: b"", payload: b"", },
       frame,
     ]),
     Ok(
@@ -195,46 +195,31 @@ test "subgroup frame encoder accepts the previous object ID" {
   )
   assert_eq(
     @protocol.encode_subgroup_frame(header, Some(7), frame),
-    Err(@protocol.InvalidSubgroup),
+    Err(InvalidSubgroup),
   )
 }
 
 ///|
 test "subgroup stream round-trips multiple objects, deltas, properties, and statuses" {
-  let header : @protocol.SubgroupHeader = {
+  let header = @protocol.SubgroupHeader::{
     track_alias: 7,
     group_id: 9,
-    subgroup_id_mode: @protocol.Zero,
+    subgroup_id_mode: Zero,
     publisher_priority: None,
     end_of_group: false,
     first_object: true,
     has_properties: true,
   }
   let frames : Array[@protocol.SubgroupFrame] = [
-    {
-      object_id: 2,
-      status: @protocol.Normal,
-      properties: b"\x01\xaa",
-      payload: b"one",
-    },
-    { object_id: 3, status: @protocol.Normal, properties: b"", payload: b"", },
-    {
-      object_id: 7,
-      status: @protocol.EndOfGroup,
-      properties: b"",
-      payload: b"",
-    },
-    {
-      object_id: 8,
-      status: @protocol.EndOfTrack,
-      properties: b"",
-      payload: b"",
-    },
+    { object_id: 2, status: Normal, properties: b"\x01\xaa", payload: b"one", },
+    { object_id: 3, status: Normal, properties: b"", payload: b"", },
+    { object_id: 7, status: EndOfGroup, properties: b"", payload: b"", },
+    { object_id: 8, status: EndOfTrack, properties: b"", payload: b"", },
   ]
   let wire = @protocol.encode_subgroup_stream(header, frames).unwrap()
   let (decoded_header, header_length) = match
     @protocol.decode_subgroup_header(wire) {
-    @protocol.Complete(value, consumed) => (value, consumed)
+    Complete(value, consumed) => (value, consumed)
     _ => fail("expected a complete subgroup header")
   }
   assert_eq(decoded_header, header)
@@ -243,7 +228,7 @@ test "subgroup stream round-trips multiple objects, deltas, properties, and stat
   let mut offset = header_length
   for frame in frames {
     match decoder.decode_next(wire[offset:].to_owned()) {
-      @protocol.Complete(decoded, consumed) => {
+      Complete(decoded, consumed) => {
         assert_eq(decoded, frame)
         offset += consumed
       }
@@ -255,50 +240,49 @@ test "subgroup stream round-trips multiple objects, deltas, properties, and stat
 
 ///|
 test "first-object subgroup id resolves from the first object id" {
-  let header : @protocol.SubgroupHeader = {
+  let header = @protocol.SubgroupHeader::{
     track_alias: 1,
     group_id: 3,
-    subgroup_id_mode: @protocol.FirstObject,
+    subgroup_id_mode: FirstObject,
     publisher_priority: None,
     end_of_group: false,
     first_object: false,
     has_properties: false,
   }
-  let frame : @protocol.SubgroupFrame = {
+  let frame = @protocol.SubgroupFrame::{
     object_id: 12,
-    status: @protocol.Normal,
+    status: Normal,
     properties: b"",
     payload: b"payload",
   }
   let wire = @protocol.encode_subgroup_stream(header, [frame]).unwrap()
   let (decoded_header, header_length) = match
     @protocol.decode_subgroup_header(wire) {
-    @protocol.Complete(value, consumed) => (value, consumed)
+    Complete(value, consumed) => (value, consumed)
     _ => fail("expected a complete subgroup header")
   }
   let decoder = @protocol.SubgroupDecoder::new(decoded_header)
   assert_eq(decoder.subgroup_id(), None)
   assert_true(
-    decoder.decode_next(wire[header_length:].to_owned())
-    is @protocol.Complete(_, _),
+    decoder.decode_next(wire[header_length:].to_owned()) is Complete(_, _),
   )
   assert_eq(decoder.subgroup_id(), Some(12))
 }
 
 ///|
 test "subgroup stream decoder handles every byte split" {
-  let header : @protocol.SubgroupHeader = {
+  let header = @protocol.SubgroupHeader::{
     track_alias: 7,
     group_id: 9,
-    subgroup_id_mode: @protocol.Explicit(4),
+    subgroup_id_mode: Explicit(4),
     publisher_priority: Some(0x80),
     end_of_group: true,
     first_object: true,
     has_properties: true,
   }
-  let frame : @protocol.SubgroupFrame = {
+  let frame = @protocol.SubgroupFrame::{
     object_id: 2,
-    status: @protocol.Normal,
+    status: Normal,
     properties: b"\x01\xaa",
     payload: b"payload",
   }
@@ -306,27 +290,27 @@ test "subgroup stream decoder handles every byte split" {
   for split = 0; split < wire.length(); split = split + 1 {
     let partial = wire[:split].to_owned()
     match @protocol.decode_subgroup_header(partial) {
-      @protocol.Incomplete => ()
-      @protocol.Complete(partial_header, header_length) =>
+      Incomplete => ()
+      Complete(partial_header, header_length) =>
         assert_eq(
           @protocol.SubgroupDecoder::new(partial_header).decode_next(
             partial[header_length:].to_owned(),
           ),
-          @protocol.Incomplete,
+          Incomplete,
         )
-      @protocol.Invalid(_) => fail("invalid subgroup header")
+      Invalid(_) => fail("invalid subgroup header")
     }
   }
   let (decoded_header, header_length) = match
     @protocol.decode_subgroup_header(wire) {
-    @protocol.Complete(value, consumed) => (value, consumed)
+    Complete(value, consumed) => (value, consumed)
     _ => fail("expected a complete subgroup header")
   }
   assert_eq(
     @protocol.SubgroupDecoder::new(decoded_header).decode_next(
       wire[header_length:].to_owned(),
     ),
-    @protocol.Complete(frame, wire.length() - header_length),
+    Complete(frame, wire.length() - header_length),
   )
 }
 
@@ -336,24 +320,24 @@ test "draft 18 rejects undefined subgroup object statuses" {
     @protocol.SubgroupDecoder::new({
       track_alias: 1,
       group_id: 0,
-      subgroup_id_mode: @protocol.Zero,
+      subgroup_id_mode: Zero,
       publisher_priority: None,
       end_of_group: false,
       first_object: true,
       has_properties: false,
     }).decode_next(b"\x00\x00\x01")
-    is @protocol.Invalid(_),
+    is Invalid(_),
   )
   assert_true(
     @protocol.SubgroupDecoder::new({
       track_alias: 1,
       group_id: 0,
-      subgroup_id_mode: @protocol.Zero,
+      subgroup_id_mode: Zero,
       publisher_priority: None,
       end_of_group: false,
       first_object: true,
       has_properties: false,
     }).decode_next(b"\x00\x00\x02")
-    is @protocol.Invalid(_),
+    is Invalid(_),
   )
 }

@@ -54,8 +54,8 @@ fn interop_finished_streams(
   let mut finished = 0
   for notice in notices {
     match notice {
-      @session.ObjectStreamSendFinished(_) => finished += 1
-      @session.SessionEnded(end) =>
+      ObjectStreamSendFinished(_) => finished += 1
+      SessionEnded(end) =>
         fail("relay ended the publisher session: \{end.to_repr()}")
       _ => ()
     }
@@ -84,14 +84,13 @@ fn DataSubgroupObservation::observe_notices(
 ) -> Unit raise {
   for notice in notices {
     match notice {
-      @session.SubscribeEstablished(id, _) if id.to_uint64() == subscription =>
+      SubscribeEstablished(id, _) if id.to_uint64() == subscription =>
         self.established = true
-      @session.SubscribeRejected(_, error) =>
+      SubscribeRejected(_, error) =>
         fail("SUBSCRIBE rejected: \{error.to_repr()}")
-      @session.ObjectReceived(_, _, header, frames) =>
-        self.observe(header, frames)
-      @session.PublishDone(_, done) => self.done = Some(done)
-      @session.SessionEnded(end) =>
+      ObjectReceived(_, _, header, frames) => self.observe(header, frames)
+      PublishDone(_, done) => self.done = Some(done)
+      SessionEnded(end) =>
         fail("relay ended the subscriber session: \{end.to_repr()}")
       _ => ()
     }
@@ -105,8 +104,8 @@ fn DataSubgroupObservation::observe(
   frames : Array[@protocol.SubgroupFrame],
 ) -> Unit raise {
   match header.subgroup_id_mode {
-    @protocol.Zero => ()
-    @protocol.Explicit(0UL) => ()
+    Zero => ()
+    Explicit(0UL) => ()
     _ => fail("object stream used a subgroup other than 0")
   }
   let priority = match header.publisher_priority {
@@ -159,7 +158,7 @@ fn interop_accept_data_subscription(
   )
   for notice in notices {
     match notice {
-      @session.SessionEnded(end) =>
+      SessionEnded(end) =>
         fail("relay ended the publisher session: \{end.to_repr()}")
       _ => ()
     }
@@ -221,7 +220,7 @@ fn interop_publish_data_subgroup(
   )
   for notice in notices {
     match notice {
-      @session.PublishDone(_, done) => {
+      PublishDone(_, done) => {
         guard done.code == 2UL else {
           fail("PUBLISH_DONE used code \{done.code}; expected TRACK_ENDED (2)")
         }
@@ -229,7 +228,7 @@ fn interop_publish_data_subgroup(
           fail("PUBLISH_DONE reported \{done.stream_count} streams; expected 3")
         }
       }
-      @session.SessionEnded(end) =>
+      SessionEnded(end) =>
         fail("relay ended the publisher session: \{end.to_repr()}")
       _ => ()
     }
@@ -240,14 +239,14 @@ fn interop_publish_data_subgroup(
 fn interop_data_subgroup_basic(context : InteropContext) -> Unit raise {
   let deadline = @env.now() + 10000UL
   let run_id = interop_run_id()
-  let routing_prefix : @protocol.TrackNamespace = {
+  let routing_prefix = @protocol.TrackNamespace::{
     fields: [b"moq-test", b"data-subgroup-basic", @utf8.encode(run_id)],
   }
   let namespace_fields = routing_prefix.fields.copy()
   for field in interop_data_subgroup_tuple {
     namespace_fields.push(@utf8.encode(field))
   }
-  let track : @protocol.TrackName = { namespace_fields, name: b"track", }
+  let track = @protocol.TrackName::{ namespace_fields, name: b"track", }
 
   let publisher = context.connect("publisher")
   defer publisher.client.close()
@@ -269,7 +268,7 @@ fn interop_data_subgroup_basic(context : InteropContext) -> Unit raise {
   defer subscriber.client.close()
   let (subscription, actions) = match
     subscriber.session.subscribe_track(track, parameters=[
-      { kind: 0x22UL, value: @protocol.Byte(1), },
+      { kind: 0x22UL, value: Byte(1), },
     ]) {
     Ok(value) => value
     Err(error) => fail("could not subscribe: \{error.to_repr()}")
@@ -290,7 +289,7 @@ fn interop_data_subgroup_basic(context : InteropContext) -> Unit raise {
     if subscription_stream is None {
       for notice in lifecycle_poll(publisher, 10) {
         match notice {
-          @session.SubscriptionRequested(_, stream, subscribed_track) => {
+          SubscriptionRequested(_, stream, subscribed_track) => {
             guard subscribed_track == track else {
               fail(
                 "upstream SUBSCRIBE used \{subscribed_track.to_display_string()}; expected the 19-field namespace",
@@ -299,7 +298,7 @@ fn interop_data_subgroup_basic(context : InteropContext) -> Unit raise {
             interop_accept_data_subscription(publisher, stream)
             subscription_stream = Some(stream)
           }
-          @session.SessionEnded(end) =>
+          SessionEnded(end) =>
             fail("relay ended the publisher session: \{end.to_repr()}")
           _ => ()
         }

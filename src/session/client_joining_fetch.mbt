@@ -168,7 +168,7 @@ fn ClientSession::send_joining_fetch(
   let fetch_type = if relative {
     @protocol.RelativeJoiningFetch(subscription_request_id, joining_start)
   } else {
-    @protocol.AbsoluteJoiningFetch(subscription_request_id, joining_start)
+    AbsoluteJoiningFetch(subscription_request_id, joining_start)
   }
   match
     @protocol.encode_fetch({
@@ -363,8 +363,8 @@ fn ClientSession::resolve_joining_fetch(
   if start_group > joining_location.group {
     return fail(request_error_invalid_range)
   }
-  let start : @protocol.FetchLocation = { group: start_group, object: 0UL, }
-  let end : @protocol.FetchLocation = {
+  let start = @protocol.FetchLocation::{ group: start_group, object: 0UL, }
+  let end = @protocol.FetchLocation::{
     group: joining_location.group,
     object: if joining_location.object == 0xffffffffffffffffUL {
       0UL

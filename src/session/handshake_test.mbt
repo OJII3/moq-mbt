@@ -1,6 +1,6 @@
 ///|
 test "SETUP exchange handles every split and preserves later control bytes" {
-  let setup : @protocol.Setup = {
+  let setup = @protocol.Setup::{
     options: [{ kind: 7, value: Data(b"test-relay"), }],
   }
   let frame = @protocol.encode_setup(setup).unwrap()
@@ -39,7 +39,7 @@ test "server cannot send client-only URI options" {
   for
     (kind, error) in [
       (1UL, @session.HandshakeError::InvalidServerPath),
-      (5UL, @session.HandshakeError::InvalidServerAuthority),
+      (5UL, InvalidServerAuthority),
     ] {
     let handshake = @session.ClientHandshake::new(Draft18, { options: [], }).unwrap()
     let frame = @protocol.encode_setup({
@@ -63,7 +63,7 @@ test "malformed SETUP and premature control close are reported" {
 
 ///|
 test "local SETUP is snapshotted before caller mutation" {
-  let setup : @protocol.Setup = { options: [], }
+  let setup = @protocol.Setup::{ options: [], }
   let handshake = @session.ClientHandshake::new(Draft18, setup).unwrap()
   setup.options.push({ kind: 7, value: Data(b"changed"), })
   assert_eq(handshake.outbound_setup(), b"\xaf\x00\x00\x00")
@@ -71,7 +71,7 @@ test "local SETUP is snapshotted before caller mutation" {
 
 ///|
 test "maximum SETUP frame preserves bytes beyond the receive buffer limit" {
-  let setup : @protocol.Setup = {
+  let setup = @protocol.Setup::{
     options: [{ kind: 9, value: Data(Bytes::make(65531, 0)), }],
   }
   let frame = @protocol.encode_setup(setup).unwrap()

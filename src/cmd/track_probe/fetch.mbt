@@ -1,4 +1,5 @@
 ///|
+/// Run the FETCH probe for a track range against `host`.
 pub fn run_fetch(
   host : String,
   port : Int32,
@@ -12,13 +13,13 @@ pub fn run_fetch(
   guard start_group < end_group else {
     fail("START_GROUP must be less than END_GROUP")
   }
-  let track : @protocol.TrackName = {
+  let track = @protocol.TrackName::{
     namespace_fields: [@utf8.encode(namespace_field)],
     name: @utf8.encode(track_name),
   }
   let (client, session) = setup_client(host, port, path, insecure)
   defer client.close()
-  let peer : LifecyclePeer = {
+  let peer = LifecyclePeer::{
     client,
     session,
     driver: SessionActionDriver::new(),
@@ -45,11 +46,11 @@ pub fn run_fetch(
     let notices = lifecycle_poll(peer, 100)
     for notice in notices {
       match notice {
-        @session.FetchAccepted(id, _) if id == request_id => {
+        FetchAccepted(id, _) if id == request_id => {
           accepted = true
           println("FETCH_OK received")
         }
-        @session.FetchResponseAccepted(id, _, response) if id == request_id => {
+        FetchResponseAccepted(id, _, response) if id == request_id => {
           guard response.end_location.group == end_group &&
             response.end_location.object == 2UL else {
             fail(
@@ -63,9 +64,9 @@ pub fn run_fetch(
             "Verified FETCH_OK end location (group \{response.end_location.group}, object \{response.end_location.object}, end-of-track \{response.end_of_track})",
           )
         }
-        @session.FetchRejected(id, _, error) if id == request_id =>
+        FetchRejected(id, _, error) if id == request_id =>
           fail("FETCH rejected (code \{error.code})")
-        @session.FetchObjectReceived(id, object) if id == request_id => {
+        FetchObjectReceived(id, object) if id == request_id => {
           guard accepted else { fail("FETCH Object arrived before FETCH_OK") }
           guard object.group_id == expected_group &&
             object.object_id == expected_object else {
@@ -93,10 +94,10 @@ pub fn run_fetch(
             expected_group = expected_group + 1UL
           }
         }
-        @session.FetchRangeEnded(id, _) if id == request_id =>
+        FetchRangeEnded(id, _) if id == request_id =>
           fail("FETCH relay returned a range-end marker")
-        @session.FetchFinished(id) if id == request_id => finished = true
-        @session.SessionEnded(end) => fail("session ended: \{end.to_repr()}")
+        FetchFinished(id) if id == request_id => finished = true
+        SessionEnded(end) => fail("session ended: \{end.to_repr()}")
         _ => ()
       }
     }

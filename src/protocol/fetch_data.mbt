@@ -7,14 +7,16 @@ pub(all) struct FetchHeader {
 }
 
 ///|
+/// Encode the FETCH_HEADER that starts a FETCH data stream.
 pub fn encode_fetch_header(header : FetchHeader) -> Bytes {
-  let bytes : Array[Byte] = Array::Array(capacity=24)
+  let bytes : Array[Byte] = Array(capacity=24)
   append_vi64s(bytes, 0x05UL)
   append_vi64s(bytes, header.request_id)
   Bytes::from_array(bytes)
 }
 
 ///|
+/// Decode a FETCH_HEADER and report the number of consumed bytes.
 pub fn decode_fetch_header(input : Bytes) -> DecodeResult[FetchHeader] {
   guard read_vi64(input, 0, input.length()) is Some((kind, after_kind)) else {
     return Incomplete
@@ -29,6 +31,7 @@ pub fn decode_fetch_header(input : Bytes) -> DecodeResult[FetchHeader] {
 }
 
 ///|
+/// The direction in which Group IDs advance in a FETCH data stream.
 #derive(Debug, Eq)
 pub(all) enum FetchGroupOrder {
   Ascending
@@ -50,6 +53,7 @@ pub(all) struct FetchObject {
 }
 
 ///|
+/// The reason a FETCH range ended without another Object.
 #derive(Debug, Eq)
 pub(all) enum FetchRangeKind {
   EndOfNonExistentRange
@@ -57,6 +61,7 @@ pub(all) enum FetchRangeKind {
 }
 
 ///|
+/// An explicit end marker for a FETCH range.
 #derive(Debug, Eq)
 pub(all) struct FetchRangeEnd {
   group_id : UInt64
@@ -65,6 +70,7 @@ pub(all) struct FetchRangeEnd {
 }
 
 ///|
+/// One frame in a FETCH data stream: an Object or a range end marker.
 #derive(Debug, Eq)
 pub(all) enum FetchDataFrame {
   FetchDataObject(FetchObject)
@@ -84,6 +90,7 @@ pub struct FetchDataDecoder {
 }
 
 ///|
+/// Create a decoder for the frames that follow a FETCH_HEADER.
 pub fn FetchDataDecoder::new(group_order : FetchGroupOrder) -> FetchDataDecoder {
   {
     group_order,
@@ -95,6 +102,8 @@ pub fn FetchDataDecoder::new(group_order : FetchGroupOrder) -> FetchDataDecoder 
 }
 
 ///|
+/// Decode the next complete frame. Incomplete input does not advance the
+/// decoder, so callers can append bytes and retry the same frame.
 pub fn FetchDataDecoder::decode_next(
   self : FetchDataDecoder,
   input : Bytes,
@@ -301,7 +310,7 @@ pub fn FetchDataDecoder::finish(
   self : FetchDataDecoder,
   trailing : Bytes,
 ) -> Result[Unit, CodecError] {
-  let check : FetchDataDecoder = {
+  let check = FetchDataDecoder::{
     group_order: self.group_order,
     previous_group_id: self.previous_group_id,
     previous_object_id: self.previous_object_id,
@@ -330,6 +339,7 @@ pub struct FetchDataEncoder {
 }
 
 ///|
+/// Create an encoder for the frames that follow a FETCH_HEADER.
 pub fn FetchDataEncoder::new(group_order : FetchGroupOrder) -> FetchDataEncoder {
   {
     group_order,
@@ -341,6 +351,7 @@ pub fn FetchDataEncoder::new(group_order : FetchGroupOrder) -> FetchDataEncoder 
 }
 
 ///|
+/// Encode one frame and advance the encoder's delta state.
 pub fn FetchDataEncoder::encode(
   self : FetchDataEncoder,
   frame : FetchDataFrame,
@@ -350,7 +361,7 @@ pub fn FetchDataEncoder::encode(
       64 + object.properties.length() + object.payload.length()
     FetchDataRangeEnd(_) => 64
   }
-  let bytes : Array[Byte] = Array::Array(capacity~)
+  let bytes : Array[Byte] = Array(capacity~)
   let mut flags = 0UL
   let group_id = match frame {
     FetchDataObject(object) => object.group_id
@@ -395,7 +406,7 @@ pub fn FetchDataEncoder::encode(
     FetchDataRangeEnd(range) => {
       flags = if range.kind == EndOfNonExistentRange { 0x8cUL } else { 0x10cUL }
       // Range end fields are always explicit, even if the group is unchanged.
-      let fields : Array[Byte] = Array::Array(capacity=32)
+      let fields : Array[Byte] = Array(capacity=32)
       append_vi64s(fields, group_delta)
       append_vi64s(fields, object_id)
       append_vi64s(bytes, flags)
@@ -451,7 +462,7 @@ pub fn FetchDataEncoder::encode(
         flags = flags | 0x20UL
       }
       // Flags precede all optional fields; stage the remaining encoding first.
-      let fields : Array[Byte] = Array::Array(
+      let fields : Array[Byte] = Array(
         capacity=48 + object.properties.length() + object.payload.length(),
       )
       if group_changed || self.previous_group_id is None {

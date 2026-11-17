@@ -489,8 +489,7 @@ async fn webtransport_session_driver_routes_setup() -> Unit {
     Ok(connection) => connection
     Err(message) => fail(message)
   }
-  let session = match
-    @session.ClientSession::new(@session.Draft18, { options: [], }) {
+  let session = match @session.ClientSession::new(Draft18, { options: [], }) {
     Ok(session) => session
     Err(_) => fail("session creation failed")
   }
@@ -502,8 +501,7 @@ async fn webtransport_session_driver_routes_setup() -> Unit {
   }
   ffi_fake_push_peer_unidirectional(@js_adapter.bytes_to_uint8array(peer_setup))
   match driver.next_notice().wait() {
-    Some(@session.HandshakeComplete(setup)) =>
-      assert_eq(setup.options.length(), 0)
+    Some(HandshakeComplete(setup)) => assert_eq(setup.options.length(), 0)
     Some(_) => fail("session driver emitted an unexpected notice")
     None => fail("session driver stopped before SETUP completed")
   }
@@ -521,8 +519,7 @@ async fn webtransport_session_driver_reports_close() -> Unit {
     Ok(connection) => connection
     Err(message) => fail(message)
   }
-  let session = match
-    @session.ClientSession::new(@session.Draft18, { options: [], }) {
+  let session = match @session.ClientSession::new(Draft18, { options: [], }) {
     Ok(session) => session
     Err(_) => fail("session creation failed")
   }
@@ -535,13 +532,13 @@ async fn webtransport_session_driver_reports_close() -> Unit {
   let mut peer_ended = false
   while !peer_ended {
     match driver.next_notice().wait() {
-      Some(@session.SessionEnded(@session.Peer(37UL))) => peer_ended = true
-      Some(@session.StreamSendFinished(_, _)) => ()
+      Some(SessionEnded(Peer(37UL))) => peer_ended = true
+      Some(StreamSendFinished(_, _)) => ()
       Some(_) => fail("peer close did not produce the expected session end")
       None => fail("session ended without a SessionEnded notice")
     }
   }
-  assert_true(session.start() is Err(@session.SessionClosed))
+  assert_true(session.start() is Err(SessionClosed))
   match driver.next_notice().wait() {
     None => ()
     Some(_) => fail("session driver emitted more than one terminal notice")
@@ -556,7 +553,7 @@ async fn webtransport_session_driver_reports_close() -> Unit {
     Err(message) => fail(message)
   }
   let failed_session = match
-    @session.ClientSession::new(@session.Draft18, { options: [], }) {
+    @session.ClientSession::new(Draft18, { options: [], }) {
     Ok(session) => session
     Err(_) => fail("session creation failed")
   }
@@ -570,15 +567,14 @@ async fn webtransport_session_driver_reports_close() -> Unit {
   let mut failure_ended = false
   while !failure_ended {
     match failed_driver.next_notice().wait() {
-      Some(@session.SessionEnded(@session.Transport(-1L))) =>
-        failure_ended = true
-      Some(@session.StreamSendFinished(_, _)) => ()
+      Some(SessionEnded(Transport(-1L))) => failure_ended = true
+      Some(StreamSendFinished(_, _)) => ()
       Some(_) =>
         fail("transport failure did not produce the expected session end")
       None => fail("transport failure ended without a SessionEnded notice")
     }
   }
-  assert_true(failed_session.start() is Err(@session.SessionClosed))
+  assert_true(failed_session.start() is Err(SessionClosed))
   match failed_driver.next_notice().wait() {
     None => ()
     Some(_) => fail("session driver emitted more than one terminal notice")
@@ -596,19 +592,18 @@ async fn webtransport_session_driver_finishes_after_callback_failure() -> Unit {
     Ok(connection) => connection
     Err(message) => fail(message)
   }
-  let session = match
-    @session.ClientSession::new(@session.Draft18, { options: [], }) {
+  let session = match @session.ClientSession::new(Draft18, { options: [], }) {
     Ok(session) => session
     Err(_) => fail("session creation failed")
   }
   let driver = @js_adapter.WebTransportSessionDriver::new(connection, session)
   assert_true(driver.start() is Ok(_))
   match driver.next_notice().wait() {
-    Some(@session.SessionEnded(@session.Transport(-1L))) => ()
+    Some(SessionEnded(Transport(-1L))) => ()
     Some(_) => fail("stream open failure did not end the session")
     None => fail("stream open failure ended without a SessionEnded notice")
   }
-  assert_true(session.start() is Err(@session.SessionClosed))
+  assert_true(session.start() is Err(SessionClosed))
   assert_true(driver.next_notice().wait() is None)
 }
 
@@ -622,8 +617,7 @@ async fn webtransport_session_driver_isolates_stream_errors_without_code() -> Un
     Ok(connection) => connection
     Err(message) => fail(message)
   }
-  let session = match
-    @session.ClientSession::new(@session.Draft18, { options: [], }) {
+  let session = match @session.ClientSession::new(Draft18, { options: [], }) {
     Ok(session) => session
     Err(_) => fail("session creation failed")
   }
@@ -637,25 +631,25 @@ async fn webtransport_session_driver_isolates_stream_errors_without_code() -> Un
     @js_adapter.bytes_to_uint8array(peer_setup),
   )
   match driver.next_notice().wait() {
-    Some(@session.HandshakeComplete(_)) => ()
+    Some(HandshakeComplete(_)) => ()
     Some(_) => fail("unexpected notice before handshake")
     None => fail("session driver stopped before SETUP completed")
   }
   match driver.next_opened_stream().wait() {
-    Some((@session.Control, _)) => ()
+    Some((Control, _)) => ()
     Some(_) => fail("expected control stream before request streams")
     None => fail("session driver stopped before control stream opened")
   }
 
   // 1. StreamReset without streamErrorCode on a known request stream must not kill the session.
-  let track1 : @protocol.TrackName = {
+  let track1 = @protocol.TrackName::{
     namespace_fields: [b"demo"],
     name: b"video",
   }
   let (sub1_id, sub1_actions) = session.subscribe_track(track1).unwrap()
-  assert_true(driver.dispatch(sub1_actions) is @driver.Accepted)
+  assert_true(driver.dispatch(sub1_actions) is Accepted)
   match driver.next_opened_stream().wait() {
-    Some((@session.Request(id), _)) => assert_eq(id, sub1_id)
+    Some((Request(id), _)) => assert_eq(id, sub1_id)
     Some(_) => fail("opened unexpected stream purpose for track1")
     None => fail("session driver stopped before track1 stream opened")
   }
@@ -663,27 +657,27 @@ async fn webtransport_session_driver_isolates_stream_errors_without_code() -> Un
   let mut saw_sub1_ended = false
   while !saw_sub1_ended {
     match driver.next_notice().wait() {
-      Some(@session.SubscriptionEnded(id, _, ended_track)) => {
+      Some(SubscriptionEnded(id, _, ended_track)) => {
         assert_eq(id, sub1_id)
         assert_eq(ended_track, track1)
         saw_sub1_ended = true
       }
-      Some(@session.StreamSendFinished(_, _)) => ()
+      Some(StreamSendFinished(_, _)) => ()
       Some(_) => fail("stream reset without code produced unexpected notice")
       None => fail("stream reset without code terminated the session")
     }
   }
-  assert_eq(session.state(), @session.Active)
+  assert_eq(session.state(), Active)
 
   // 2. SendStopped without streamErrorCode on a known request stream must not kill the session.
-  let track2 : @protocol.TrackName = {
+  let track2 = @protocol.TrackName::{
     namespace_fields: [b"demo"],
     name: b"audio",
   }
   let (sub2_id, sub2_actions) = session.subscribe_track(track2).unwrap()
-  assert_true(driver.dispatch(sub2_actions) is @driver.Accepted)
+  assert_true(driver.dispatch(sub2_actions) is Accepted)
   match driver.next_opened_stream().wait() {
-    Some((@session.Request(id), _)) => assert_eq(id, sub2_id)
+    Some((Request(id), _)) => assert_eq(id, sub2_id)
     Some(_) => fail("opened unexpected stream purpose for track2")
     None => fail("session driver stopped before track2 stream opened")
   }
@@ -691,46 +685,46 @@ async fn webtransport_session_driver_isolates_stream_errors_without_code() -> Un
   let mut saw_sub2_ended = false
   while !saw_sub2_ended {
     match driver.next_notice().wait() {
-      Some(@session.SubscriptionEnded(id, _, ended_track)) => {
+      Some(SubscriptionEnded(id, _, ended_track)) => {
         assert_eq(id, sub2_id)
         assert_eq(ended_track, track2)
         saw_sub2_ended = true
       }
-      Some(@session.StreamSendFinished(_, _)) => ()
+      Some(StreamSendFinished(_, _)) => ()
       Some(_) => fail("send stopped without code produced unexpected notice")
       None => fail("send stopped without code terminated the session")
     }
   }
-  assert_eq(session.state(), @session.Active)
+  assert_eq(session.state(), Active)
 
   // 3. Stream write failure without streamErrorCode and non-session source maps to WriteCanceled.
   ffi_fake_reject_next_bidi_write()
-  let track3 : @protocol.TrackName = {
+  let track3 = @protocol.TrackName::{
     namespace_fields: [b"demo"],
     name: b"data",
   }
   let (sub3_id, sub3_actions) = session.subscribe_track(track3).unwrap()
-  assert_true(driver.dispatch(sub3_actions) is @driver.Accepted)
+  assert_true(driver.dispatch(sub3_actions) is Accepted)
   match driver.next_opened_stream().wait() {
-    Some((@session.Request(id), _)) => assert_eq(id, sub3_id)
+    Some((Request(id), _)) => assert_eq(id, sub3_id)
     Some(_) => fail("opened unexpected stream purpose for track3")
     None => fail("session driver stopped before track3 stream opened")
   }
   let mut saw_sub3_ended = false
   while !saw_sub3_ended {
     match driver.next_notice().wait() {
-      Some(@session.SubscriptionEnded(id, _, ended_track)) => {
+      Some(SubscriptionEnded(id, _, ended_track)) => {
         assert_eq(id, sub3_id)
         assert_eq(ended_track, track3)
         saw_sub3_ended = true
       }
-      Some(@session.StreamSendFinished(_, _)) => ()
+      Some(StreamSendFinished(_, _)) => ()
       Some(_) => fail("stream write failure produced unexpected notice")
       None => fail("stream write failure terminated the session")
     }
   }
   @js.sleep(5)
-  assert_eq(session.state(), @session.Active)
+  assert_eq(session.state(), Active)
 
   ignore(connection.close(0L, "done"))
   ignore(connection.closed().wait())

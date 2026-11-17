@@ -10,42 +10,41 @@ fn exercise_wire_input(input : Bytes) -> Bool {
   let mut valid = true
   let vi64 = @protocol.decode_vi64(input)
   match vi64 {
-    @protocol.Complete(value, consumed) => {
+    Complete(value, consumed) => {
       valid = valid && consumed > 0 && consumed <= input.length()
       let canonical = @protocol.encode_vi64(value)
       valid = valid &&
-        @protocol.decode_vi64(canonical) ==
-        @protocol.Complete(value, canonical.length())
+        @protocol.decode_vi64(canonical) == Complete(value, canonical.length())
     }
-    @protocol.Incomplete | @protocol.Invalid(_) => ()
+    Incomplete | Invalid(_) => ()
   }
 
   let setup = @protocol.decode_setup(input)
   match setup {
-    @protocol.Complete(_, consumed) =>
+    Complete(_, consumed) =>
       valid = valid && consumed > 0 && consumed <= input.length()
-    @protocol.Incomplete | @protocol.Invalid(_) => ()
+    Incomplete | Invalid(_) => ()
   }
 
   let control = @protocol.decode_control(input)
   match control {
-    @protocol.Complete(_, consumed) =>
+    Complete(_, consumed) =>
       valid = valid && consumed > 0 && consumed <= input.length()
-    @protocol.Incomplete | @protocol.Invalid(_) => ()
+    Incomplete | Invalid(_) => ()
   }
 
   let subgroup = @protocol.decode_subgroup_header(input)
   match subgroup {
-    @protocol.Complete(_, consumed) =>
+    Complete(_, consumed) =>
       valid = valid && consumed > 0 && consumed <= input.length()
-    @protocol.Incomplete | @protocol.Invalid(_) => ()
+    Incomplete | Invalid(_) => ()
   }
 
   let fetch_header = @protocol.decode_fetch_header(input)
   match fetch_header {
-    @protocol.Complete(_, consumed) =>
+    Complete(_, consumed) =>
       valid = valid && consumed > 0 && consumed <= input.length()
-    @protocol.Incomplete | @protocol.Invalid(_) => ()
+    Incomplete | Invalid(_) => ()
   }
 
   ignore(@protocol.decode_datagram(input))

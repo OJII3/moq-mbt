@@ -35,6 +35,7 @@ pub(all) enum DecodeResult[T] {
 }
 
 ///|
+/// Encode a non-negative integer with the Draft 18 variable-length prefix form.
 pub fn encode_vi64(value : UInt64) -> Bytes {
   let mut width = 1
   while width < 9 && value >> (7 * width) != 0 {
@@ -144,6 +145,8 @@ pub fn find_track_property_varint(
 }
 
 ///|
+/// Decode one variable-length integer from the start of `input`. Returns
+/// `Incomplete` when the prefix or its payload is truncated.
 pub fn decode_vi64(input : Bytes) -> DecodeResult[UInt64] {
   match read_vi64(input, 0, input.length()) {
     Some((value, end)) => Complete(value, end)

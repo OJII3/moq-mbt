@@ -1,10 +1,12 @@
 ///|
+/// An error for invalid WebTransport close arguments.
 pub(all) suberror WebTransportError {
   InvalidCloseCode(Int64)
   CloseReasonTooLong(Int32)
 }
 
 ///|
+/// A rejected WebTransport operation as reported by the browser.
 pub(all) struct WebTransportFailure {
   name : String
   message : String
@@ -13,12 +15,14 @@ pub(all) struct WebTransportFailure {
 }
 
 ///|
+/// The close code and reason exchanged when a WebTransport session closes.
 pub(all) struct WebTransportCloseInfo {
   close_code : Int64
   reason : String
 }
 
 ///|
+/// How a WebTransport session closed.
 pub(all) enum WebTransportClose {
   LocalClose
   PeerClose(WebTransportCloseInfo)
@@ -47,13 +51,13 @@ pub fn WebTransportConnection::connect(
   moqt_uri : String,
   certificate_hashes~ : Array[@arraybuffer.Uint8Array] = [],
 ) -> Result[WebTransportConnection, String] {
-  let connection_box : Ref[WebTransportConnection?] = { val: None, }
+  let connection_box : Ref[WebTransportConnection?] = Ref(None)
   let _result = @js.try_sync(fn() {
     let url = ffi_webtransport_url(moqt_uri)
     let raw = ffi_webtransport_new(
       url,
       moqt_draft18_protocol,
-      FixedArray::from_array(certificate_hashes[:]),
+      FixedArray::from_array(certificate_hashes),
     )
     let ready_raw : @js.Any = raw["ready"]
     let closed_raw : @js.Any = raw["closed"]
@@ -66,7 +70,7 @@ pub fn WebTransportConnection::connect(
           @js.Promise::resolve(Err(webtransport_failure(settled["error"])))
         } else if locally_closed_box.val {
           @js.Promise::resolve(
-            Err(WebTransportFailure::{
+            Err({
               name: "AbortError",
               message: "connection closed while waiting for ready",
               source: Some("session"),
@@ -125,7 +129,7 @@ pub fn WebTransportConnection::connect(
       ready,
       closed,
       locally_closed: locally_closed_box,
-      stream_manager: WebTransportStreamManager::{
+      stream_manager: {
         raw,
         locally_closed: locally_closed_box,
         streams: {},
@@ -147,7 +151,7 @@ pub fn WebTransportConnection::connect(
     connection.datagram_manager.start_reading()
     @js.undefined()
   }) catch {
-    @js.JsError(message) => return Err(message)
+    JsError(message) => return Err(message)
   }
   match connection_box.val {
     Some(connection) => Ok(connection)
@@ -276,6 +280,7 @@ pub fn WebTransportConnection::wait_ready(
 }
 
 ///|
+/// Resolve when the WebTransport handshake completes.
 pub fn WebTransportConnection::ready(
   self : WebTransportConnection,
 ) -> @js.Promise[Result[String, WebTransportFailure]] {
@@ -283,6 +288,7 @@ pub fn WebTransportConnection::ready(
 }
 
 ///|
+/// Resolve once with the local or peer close, or reject with a failure.
 pub fn WebTransportConnection::closed(
   self : WebTransportConnection,
 ) -> @js.Promise[WebTransportClose] {
@@ -290,6 +296,7 @@ pub fn WebTransportConnection::closed(
 }
 
 ///|
+/// Return the WebTransport subprotocol selected by the server.
 pub fn WebTransportConnection::protocol(
   self : WebTransportConnection,
 ) -> String {
@@ -306,7 +313,7 @@ fn webtransport_failure(error : @js.Any) -> WebTransportFailure {
   } else {
     Some(ffi_webtransport_stream_error_code(code))
   }
-  WebTransportFailure::{
+  {
     name: error["name"].cast(),
     message: error["message"].cast(),
     source,
@@ -338,6 +345,7 @@ pub fn WebTransportConnection::close(
 }
 
 ///|
+/// Whether the local endpoint initiated the close.
 pub fn WebTransportConnection::was_closed_locally(
   self : WebTransportConnection,
 ) -> Bool {

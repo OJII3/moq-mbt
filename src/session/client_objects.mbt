@@ -121,23 +121,21 @@ fn resolve_subscription_filter(
   for parameter in parameters {
     if parameter.kind == 0x21 {
       match parameter.value {
-        @protocol.Filter(@protocol.AbsoluteStart(group_id, object_id)) =>
+        Filter(AbsoluteStart(group_id, object_id)) =>
           return Some({
             start_group: group_id,
             start_object: object_id,
             end_group: None,
             impossible: false,
           })
-        @protocol.Filter(
-          @protocol.AbsoluteRange(group_id, object_id, end_group),
-        ) =>
+        Filter(AbsoluteRange(group_id, object_id, end_group)) =>
           return Some({
             start_group: group_id,
             start_object: object_id,
             end_group: Some(end_group),
             impossible: end_group < group_id,
           })
-        @protocol.Filter(@protocol.LargestObject) => {
+        Filter(LargestObject) => {
           let (start_group, start_object, impossible) = match largest {
             None => (0UL, 0UL, false)
             Some((group_id, object_id)) if object_id < 0xffffffffffffffffUL =>
@@ -153,7 +151,7 @@ fn resolve_subscription_filter(
             impossible,
           })
         }
-        @protocol.Filter(@protocol.NextGroupStart) => {
+        Filter(NextGroupStart) => {
           let (start_group, impossible) = match largest {
             None => (0UL, false)
             Some((group_id, _)) if group_id < 0xffffffffffffffffUL =>
@@ -186,7 +184,7 @@ fn subscription_largest_location(
   parameters : Array[@protocol.MessageParameter],
 ) -> (UInt64, UInt64)? {
   match parameters.iter().find_first(fn(parameter) { parameter.kind == 0x09 }) {
-    Some({ value: @protocol.Location(group_id, object_id), .. }) =>
+    Some({ value: Location(group_id, object_id), .. }) =>
       Some((group_id, object_id))
     _ => None
   }
@@ -197,8 +195,8 @@ fn subscription_has_relative_filter(
   parameters : Array[@protocol.MessageParameter],
 ) -> Bool {
   match subscription_filter_parameter(parameters) {
-    Some({ value: @protocol.Filter(@protocol.LargestObject), .. }) => true
-    Some({ value: @protocol.Filter(@protocol.NextGroupStart), .. }) => true
+    Some({ value: Filter(LargestObject), .. }) => true
+    Some({ value: Filter(NextGroupStart), .. }) => true
     _ => false
   }
 }
@@ -242,9 +240,9 @@ fn ClientSession::receive_subgroup(
   match state.header {
     None =>
       match @protocol.decode_subgroup_header(state.buffer) {
-        @protocol.Incomplete => return Ok([])
-        @protocol.Invalid(_) => return Err(UnexpectedMessage)
-        @protocol.Complete(header, consumed) => {
+        Incomplete => return Ok([])
+        Invalid(_) => return Err(UnexpectedMessage)
+        Complete(header, consumed) => {
           guard self.aliases.get(header.track_alias) is Some(request_id) else {
             return Err(UnknownRequest)
           }
@@ -278,9 +276,9 @@ fn ClientSession::receive_subgroup(
   let mut remaining = state.buffer
   while !remaining.is_empty() {
     match decoder.decode_next(remaining) {
-      @protocol.Incomplete => break
-      @protocol.Invalid(_) => return Err(Track(InvalidControlMessage))
-      @protocol.Complete(frame, consumed) => {
+      Incomplete => break
+      Invalid(_) => return Err(Track(InvalidControlMessage))
+      Complete(frame, consumed) => {
         frames.push(frame)
         remaining = remaining[consumed:].to_owned()
       }
@@ -310,13 +308,13 @@ fn ClientSession::receive_object_datagram(
   bytes : Bytes,
 ) -> Result[Array[SessionAction], ClientSessionError] {
   let datagram = match @protocol.decode_datagram(bytes) {
-    @protocol.Complete(@protocol.Object(value), consumed) =>
+    Complete(Object(value), consumed) =>
       if consumed == bytes.length() {
         value
       } else {
         return Err(UnexpectedMessage)
       }
-    @protocol.Complete(@protocol.Padding, consumed) =>
+    Complete(Padding, consumed) =>
       if consumed == bytes.length() {
         return Ok([])
       } else {
@@ -768,7 +766,7 @@ pub fn ClientSession::publish_done(
     self.has_pending_object_streams(subscription_stream) {
     return Err(Track(ObjectStreamsStillOpen))
   }
-  let message : @protocol.PublishDoneMessage = {
+  let message = @protocol.PublishDoneMessage::{
     code,
     stream_count: subscription.opened_stream_count,
     reason,

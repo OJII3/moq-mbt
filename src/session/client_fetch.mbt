@@ -104,7 +104,7 @@ pub fn ClientSession::fetch_track(
   match
     @protocol.encode_fetch({
       request_id: self.next_request_id,
-      fetch_type: @protocol.StandaloneFetch(track, start, end),
+      fetch_type: StandaloneFetch(track, start, end),
       parameters,
     }) {
     Ok(_) => ()
@@ -121,7 +121,7 @@ pub fn ClientSession::fetch_track(
     parameters,
   )
   self.fetches.get(request_id).unwrap().outgoing_fetch_type = Some(
-    @protocol.StandaloneFetch(track, start, end),
+    StandaloneFetch(track, start, end),
   )
   Ok(
     (
@@ -234,7 +234,7 @@ pub fn ClientSession::send_fetch_object(
     Some(_) => return Err(UnknownStream)
     None => return Err(UnknownStream)
   }
-  let bytes = match encoder.encode(@protocol.FetchDataObject(object)) {
+  let bytes = match encoder.encode(FetchDataObject(object)) {
     Ok(value) => value
     Err(error) => return Err(Encoding(error))
   }
@@ -255,7 +255,7 @@ pub fn ClientSession::send_fetch_range_end(
       value
     _ => return Err(UnknownRequest)
   }
-  let location : @protocol.FetchLocation = {
+  let location = @protocol.FetchLocation::{
     group: range_end.group_id,
     object: range_end.object_id,
   }
@@ -268,7 +268,7 @@ pub fn ClientSession::send_fetch_range_end(
     return Err(UnknownStream)
   }
   let encoder = outgoing.encoder
-  let bytes = match encoder.encode(@protocol.FetchDataRangeEnd(range_end)) {
+  let bytes = match encoder.encode(FetchDataRangeEnd(range_end)) {
     Ok(value) => value
     Err(error) => return Err(Encoding(error))
   }
@@ -363,7 +363,7 @@ pub fn ClientSession::update_fetch(
   let encoded = match
     @protocol.encode_request_update_for(
       { request_id: update_id, parameters, },
-      @protocol.FetchRequestStream,
+      FetchRequestStream,
     ) {
     Ok(value) => value
     Err(error) => return Err(Encoding(error))
@@ -522,12 +522,12 @@ fn ClientSession::receive_fetch_data(
   while !data.buffer.is_empty() {
     let decoder = data.decoder.unwrap()
     match decoder.decode_next(data.buffer) {
-      @protocol.Incomplete => return Ok(actions)
-      @protocol.Invalid(_) => return Err(Track(InvalidControlMessage))
-      @protocol.Complete(frame, consumed) => {
+      Incomplete => return Ok(actions)
+      Invalid(_) => return Err(Track(InvalidControlMessage))
+      Complete(frame, consumed) => {
         data.buffer = data.buffer[consumed:].to_owned()
         match frame {
-          @protocol.FetchDataObject(object) => {
+          FetchDataObject(object) => {
             if !fetch_object_in_range(fetch, object) {
               return Err(InvalidFetchRange)
             }
@@ -537,8 +537,8 @@ fn ClientSession::receive_fetch_data(
               ),
             )
           }
-          @protocol.FetchDataRangeEnd(range_end) => {
-            let location : @protocol.FetchLocation = {
+          FetchDataRangeEnd(range_end) => {
+            let location = @protocol.FetchLocation::{
               group: range_end.group_id,
               object: range_end.object_id,
             }
@@ -561,7 +561,7 @@ fn fetch_object_in_range(
   fetch : ClientFetch,
   object : @protocol.FetchObject,
 ) -> Bool {
-  let location : @protocol.FetchLocation = {
+  let location = @protocol.FetchLocation::{
     group: object.group_id,
     object: object.object_id,
   }
@@ -631,16 +631,16 @@ fn ClientSession::receive_fetch_response(
   fetch.response_buffer = fetch.response_buffer + bytes
   let decoded = @protocol.decode_control_with_context(
     fetch.response_buffer,
-    @protocol.FetchRequestStream,
+    FetchRequestStream,
   )
   match decoded {
-    @protocol.Incomplete => Ok([])
-    @protocol.Invalid(_) => Err(ClientSessionError::UnexpectedMessage)
-    @protocol.Complete(message, consumed) => {
+    Incomplete => Ok([])
+    Invalid(_) => Err(UnexpectedMessage)
+    Complete(message, consumed) => {
       let trailing = fetch.response_buffer[consumed:].to_owned()
       fetch.response_buffer = b""
       let actions : Array[SessionAction] = match message {
-        @protocol.FetchOk(response) if fetch.state == FetchPending => {
+        FetchOk(response) if fetch.state == FetchPending => {
           let end_location = response.end_location
           if end_location.group < fetch.start.group ||
             (
@@ -671,14 +671,14 @@ fn ClientSession::receive_fetch_response(
           }
           values + self.complete_inbound_fetch_if_ready(fetch)
         }
-        @protocol.RequestError(error) if fetch.state == FetchPending =>
+        RequestError(error) if fetch.state == FetchPending =>
           self.terminate_fetch(
             fetch,
             [],
             Some(EmitNotice(FetchFailed(RequestId(request_id), error))),
             StopFetchData(error.code),
           )
-        @protocol.RequestUpdate(update) if !fetch.locally_initiated &&
+        RequestUpdate(update) if !fetch.locally_initiated &&
           fetch.state == FetchAccepted &&
           !fetch.lifetime.peer_send_closed => {
           if (update.request_id & 1UL) != 1UL {
@@ -690,12 +690,12 @@ fn ClientSession::receive_fetch_response(
           self.peer_request_ids[update.request_id] = stream
           self.note_peer_request_id(update.request_id)
           if fetch.pending_update_id is Some(_) {
-            return Err(ClientSessionError::UnexpectedMessage)
+            return Err(UnexpectedMessage)
           }
           fetch.pending_update_id = Some(update.request_id)
           fetch.pending_update_parameters = update.parameters
           if self.control_goaway_sent {
-            let error : @protocol.RequestErrorMessage = {
+            let error = @protocol.RequestErrorMessage::{
               code: request_error_going_away,
               retry_interval: 0UL,
               reason: b"",
@@ -720,10 +720,10 @@ fn ClientSession::receive_fetch_response(
             ),
           ]
         }
-        @protocol.RequestOk(response) if fetch.locally_initiated &&
+        RequestOk(response) if fetch.locally_initiated &&
           fetch.pending_update_id is Some(update_id) => {
           if (update_id & 1UL) != 0UL {
-            return Err(ClientSessionError::UnexpectedMessage)
+            return Err(UnexpectedMessage)
           }
           fetch.pending_update_id = None
           fetch.parameters = merge_subscription_parameters(
@@ -741,7 +741,7 @@ fn ClientSession::receive_fetch_response(
             ),
           ]
         }
-        @protocol.RequestError(error) if fetch.locally_initiated &&
+        RequestError(error) if fetch.locally_initiated &&
           fetch.pending_update_id is Some(_) => {
           let update_id = fetch.pending_update_id.unwrap()
           fetch.pending_update_id = None
@@ -756,9 +756,8 @@ fn ClientSession::receive_fetch_response(
             ),
           ]
         }
-        @protocol.GoAwayRequest(goaway) =>
-          self.receive_request_goaway(stream, goaway)
-        _ => return Err(ClientSessionError::UnexpectedMessage)
+        GoAwayRequest(goaway) => self.receive_request_goaway(stream, goaway)
+        _ => return Err(UnexpectedMessage)
       }
       if trailing.is_empty() {
         Ok(actions)
@@ -773,6 +772,7 @@ fn ClientSession::receive_fetch_response(
 }
 
 ///|
+/// Accept a pending FETCH_UPDATE and send REQUEST_OK on the request stream.
 pub fn ClientSession::accept_fetch_update(
   self : ClientSession,
   request_id : RequestId,
@@ -799,7 +799,7 @@ pub fn ClientSession::accept_fetch_update(
   let encoded = match
     @protocol.encode_request_ok_for(
       { parameters: [], properties: b"", },
-      @protocol.FetchUpdate,
+      FetchUpdate,
     ) {
     Ok(value) => value
     Err(error) => return Err(Encoding(error))
@@ -808,6 +808,7 @@ pub fn ClientSession::accept_fetch_update(
 }
 
 ///|
+/// Reject a pending FETCH_UPDATE, send REQUEST_ERROR, and end the FETCH.
 pub fn ClientSession::reject_fetch_update(
   self : ClientSession,
   request_id : RequestId,
@@ -852,12 +853,12 @@ fn ClientSession::fetch_group_order(
   for parameter in parameters {
     if parameter.kind == 0x22 {
       match parameter.value {
-        @protocol.Byte(2) => return @protocol.Descending
-        _ => return @protocol.Ascending
+        Byte(2) => return Descending
+        _ => return Ascending
       }
     }
   }
-  @protocol.Ascending
+  Ascending
 }
 
 ///|
@@ -867,7 +868,7 @@ fn valid_fetch_group_order(
   for parameter in parameters {
     if parameter.kind == 0x22 {
       match parameter.value {
-        @protocol.Byte(1) | @protocol.Byte(2) => ()
+        Byte(1) | Byte(2) => ()
         _ => return false
       }
     }

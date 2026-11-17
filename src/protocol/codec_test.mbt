@@ -12,15 +12,9 @@ test "vi64 specification examples" {
     (b"\xff\xff\xff\xff\xff\xff\xff\xff\xff", 0xffffffffffffffffUL),
   ]
   for (bytes, value) in examples {
-    assert_eq(
-      @protocol.decode_vi64(bytes),
-      @protocol.Complete(value, bytes.length()),
-    )
+    assert_eq(@protocol.decode_vi64(bytes), Complete(value, bytes.length()))
     for length = 0; length < bytes.length(); length = length + 1 {
-      assert_eq(
-        @protocol.decode_vi64(bytes[:length].to_owned()),
-        @protocol.Incomplete,
-      )
+      assert_eq(@protocol.decode_vi64(bytes[:length].to_owned()), Incomplete)
     }
   }
 }
@@ -50,13 +44,10 @@ test "vi64 width boundaries and full UInt64 range" {
   ]
   for (value, bytes) in encodings {
     assert_eq(@protocol.encode_vi64(value), bytes)
-    assert_eq(
-      @protocol.decode_vi64(bytes),
-      @protocol.Complete(value, bytes.length()),
-    )
+    assert_eq(@protocol.decode_vi64(bytes), Complete(value, bytes.length()))
   }
   assert_eq(
     @protocol.decode_vi64(b"\xff\x00\x00\x00\x00\x00\x00\x00\x25"),
-    @protocol.Complete(37UL, 9),
+    Complete(37UL, 9),
   )
 }
