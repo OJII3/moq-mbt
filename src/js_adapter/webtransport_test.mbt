@@ -284,7 +284,7 @@ async test "WebTransport connection and session lifecycle" {
     Ok(connection) => connection
     Err(message) => fail(message)
   }
-  for _ in 0..<16 {
+  for _ in 0..<64 {
     assert_true(capped_connection.open_bidirectional().wait() is Ok(_))
     match capped_connection.next_stream_event().wait() {
       LocalStreamOpened(_, Bidirectional) => ()
@@ -308,7 +308,7 @@ async test "WebTransport connection and session lifecycle" {
   let pending_opens : Array[
     @js.Promise[Result[Int64, @js_adapter.WebTransportFailure]],
   ] = []
-  for _ in 0..<16 {
+  for _ in 0..<64 {
     pending_opens.push(pending_connection.open_bidirectional())
   }
   match pending_connection.open_unidirectional().wait() {
@@ -478,6 +478,7 @@ async test "WebTransport connection and session lifecycle" {
   webtransport_session_driver_routes_setup()
   webtransport_session_driver_reports_close()
   webtransport_session_driver_finishes_after_callback_failure()
+  webtransport_session_driver_isolates_stream_errors_without_code()
 }
 
 ///|
@@ -612,6 +613,130 @@ async fn webtransport_session_driver_finishes_after_callback_failure() -> Unit {
 }
 
 ///|
+async fn webtransport_session_driver_isolates_stream_errors_without_code() -> Unit {
+  ffi_install_fake_webtransport("moqt-18", false, false)
+  let connection = match
+    @js_adapter.WebTransportConnection::connect(
+      "moqt://example.test/stream-isolation",
+    ) {
+    Ok(connection) => connection
+    Err(message) => fail(message)
+  }
+  let session = match
+    @session.ClientSession::new(@session.Draft18, { options: [], }) {
+    Ok(session) => session
+    Err(_) => fail("session creation failed")
+  }
+  let driver = @js_adapter.WebTransportSessionDriver::new(connection, session)
+  assert_true(driver.start() is Ok(_))
+  let peer_setup = match @protocol.encode_setup({ options: [], }) {
+    Ok(bytes) => bytes
+    Err(_) => fail("SETUP encoding failed")
+  }
+  ffi_fake_push_peer_unidirectional_open(
+    @js_adapter.bytes_to_uint8array(peer_setup),
+  )
+  match driver.next_notice().wait() {
+    Some(@session.HandshakeComplete(_)) => ()
+    Some(_) => fail("unexpected notice before handshake")
+    None => fail("session driver stopped before SETUP completed")
+  }
+  match driver.next_opened_stream().wait() {
+    Some((@session.Control, _)) => ()
+    Some(_) => fail("expected control stream before request streams")
+    None => fail("session driver stopped before control stream opened")
+  }
+
+  // 1. StreamReset without streamErrorCode on a known request stream must not kill the session.
+  let track1 : @protocol.TrackName = {
+    namespace_fields: [b"demo"],
+    name: b"video",
+  }
+  let (sub1_id, sub1_actions) = session.subscribe_track(track1).unwrap()
+  assert_true(driver.dispatch(sub1_actions) is @driver.Accepted)
+  match driver.next_opened_stream().wait() {
+    Some((@session.Request(id), _)) => assert_eq(id, sub1_id)
+    Some(_) => fail("opened unexpected stream purpose for track1")
+    None => fail("session driver stopped before track1 stream opened")
+  }
+  ffi_fake_error_created_readable()
+  let mut saw_sub1_ended = false
+  while !saw_sub1_ended {
+    match driver.next_notice().wait() {
+      Some(@session.SubscriptionEnded(id, _, ended_track)) => {
+        assert_eq(id, sub1_id)
+        assert_eq(ended_track, track1)
+        saw_sub1_ended = true
+      }
+      Some(@session.StreamSendFinished(_, _)) => ()
+      Some(_) => fail("stream reset without code produced unexpected notice")
+      None => fail("stream reset without code terminated the session")
+    }
+  }
+  assert_eq(session.state(), @session.Active)
+
+  // 2. SendStopped without streamErrorCode on a known request stream must not kill the session.
+  let track2 : @protocol.TrackName = {
+    namespace_fields: [b"demo"],
+    name: b"audio",
+  }
+  let (sub2_id, sub2_actions) = session.subscribe_track(track2).unwrap()
+  assert_true(driver.dispatch(sub2_actions) is @driver.Accepted)
+  match driver.next_opened_stream().wait() {
+    Some((@session.Request(id), _)) => assert_eq(id, sub2_id)
+    Some(_) => fail("opened unexpected stream purpose for track2")
+    None => fail("session driver stopped before track2 stream opened")
+  }
+  ffi_fake_error_created_writable()
+  let mut saw_sub2_ended = false
+  while !saw_sub2_ended {
+    match driver.next_notice().wait() {
+      Some(@session.SubscriptionEnded(id, _, ended_track)) => {
+        assert_eq(id, sub2_id)
+        assert_eq(ended_track, track2)
+        saw_sub2_ended = true
+      }
+      Some(@session.StreamSendFinished(_, _)) => ()
+      Some(_) => fail("send stopped without code produced unexpected notice")
+      None => fail("send stopped without code terminated the session")
+    }
+  }
+  assert_eq(session.state(), @session.Active)
+
+  // 3. Stream write failure without streamErrorCode and non-session source maps to WriteCanceled.
+  ffi_fake_reject_next_bidi_write()
+  let track3 : @protocol.TrackName = {
+    namespace_fields: [b"demo"],
+    name: b"data",
+  }
+  let (sub3_id, sub3_actions) = session.subscribe_track(track3).unwrap()
+  assert_true(driver.dispatch(sub3_actions) is @driver.Accepted)
+  match driver.next_opened_stream().wait() {
+    Some((@session.Request(id), _)) => assert_eq(id, sub3_id)
+    Some(_) => fail("opened unexpected stream purpose for track3")
+    None => fail("session driver stopped before track3 stream opened")
+  }
+  let mut saw_sub3_ended = false
+  while !saw_sub3_ended {
+    match driver.next_notice().wait() {
+      Some(@session.SubscriptionEnded(id, _, ended_track)) => {
+        assert_eq(id, sub3_id)
+        assert_eq(ended_track, track3)
+        saw_sub3_ended = true
+      }
+      Some(@session.StreamSendFinished(_, _)) => ()
+      Some(_) => fail("stream write failure produced unexpected notice")
+      None => fail("stream write failure terminated the session")
+    }
+  }
+  @js.sleep(5)
+  assert_eq(session.state(), @session.Active)
+
+  ignore(connection.close(0L, "done"))
+  ignore(connection.closed().wait())
+}
+
+///|
 extern "js" fn ffi_install_fake_webtransport(
   protocol : String,
   pending_ready : Bool,
@@ -622,6 +747,7 @@ extern "js" fn ffi_install_fake_webtransport(
   #|   globalThis.__moqWtDelayOpen = false;
   #|   globalThis.__moqWtDelayWrites = false;
   #|   globalThis.__moqWtRejectStreamOpens = false;
+  #|   globalThis.__moqWtRejectNextBidiWrite = false;
   #|   globalThis.__moqWtDatagramsEnabled = true;
   #|   globalThis.__moqWtRejectDatagramWrites = false;
   #|   globalThis.__moqWtDelayDatagramWrites = false;
@@ -668,18 +794,28 @@ extern "js" fn ffi_install_fake_webtransport(
   #|         : Promise.resolve(new WritableStream({ write: chunk => { this.uniWrites = chunk; } }));
   #|       this.createBidirectionalStream = () => new Promise(resolve => {
   #|         let readableController;
+  #|         let writableController;
   #|         const readable = new ReadableStream({
   #|           start: c => { readableController = c; },
   #|           cancel: reason => { this.lastCancel = reason; },
   #|         });
   #|         const writes = [];
-  #|         const writable = new WritableStream({ write: chunk => new Promise(resolve => {
-  #|           writes.push(chunk);
-  #|           if (globalThis.__moqWtDelayWrites) this.pendingWriteResolvers.push(resolve);
-  #|           else resolve();
-  #|         }), abort: reason => { this.lastAbort = reason; } });
+  #|         const rejectWrite = globalThis.__moqWtRejectNextBidiWrite;
+  #|         globalThis.__moqWtRejectNextBidiWrite = false;
+  #|         const writable = new WritableStream({
+  #|           start: c => { writableController = c; },
+  #|           write: chunk => {
+  #|             if (rejectWrite) return Promise.reject(new Error("stream write failed"));
+  #|             return new Promise(resolve => {
+  #|               writes.push(chunk);
+  #|               if (globalThis.__moqWtDelayWrites) this.pendingWriteResolvers.push(resolve);
+  #|               else resolve();
+  #|             });
+  #|           },
+  #|           abort: reason => { this.lastAbort = reason; }
+  #|         });
   #|         const stream = { readable, writable };
-  #|         this.created = { readableController, writes };
+  #|         this.created = { readableController, writableController, writes };
   #|         if (globalThis.__moqWtDelayOpen) globalThis.__moqWtPendingOpenResolvers.push(() => resolve(stream));
   #|         else resolve(stream);
   #|       });
@@ -836,6 +972,29 @@ extern "js" fn ffi_fake_resolve_pending_stream_opens() -> Unit =
   #|   globalThis.__moqWtPendingOpenResolvers.forEach(resolve => resolve());
   #|   globalThis.__moqWtPendingOpenResolvers = [];
   #| }
+
+///|
+extern "js" fn ffi_fake_push_peer_unidirectional_open(
+  data : @arraybuffer.Uint8Array,
+) -> Unit =
+  #| (data) => {
+  #|   const readable = new ReadableStream({
+  #|     start(c) { globalThis.__moqWtLast.peerControlController = c; c.enqueue(data); }
+  #|   });
+  #|   globalThis.__moqWtLast.incomingUni.enqueue(readable);
+  #| }
+
+///|
+extern "js" fn ffi_fake_error_created_readable() -> Unit =
+  #| () => globalThis.__moqWtLast.created.readableController.error(new Error("reset without code"))
+
+///|
+extern "js" fn ffi_fake_error_created_writable() -> Unit =
+  #| () => globalThis.__moqWtLast.created.writableController.error(new Error("send stopped without code"))
+
+///|
+extern "js" fn ffi_fake_reject_next_bidi_write() -> Unit =
+  #| () => { globalThis.__moqWtRejectNextBidiWrite = true; }
 
 ///|
 extern "js" fn ffi_remove_fake_webtransport() -> Unit =

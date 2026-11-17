@@ -76,6 +76,13 @@ fn ClientSession::terminate_fetch(
       }
     None => ()
   }
+  if !fetch.lifetime.cancelled {
+    match fetch.stream {
+      Some(stream) if !fetch.lifetime.local_send_closed =>
+        actions.append(self.request_local_fin_actions(stream))
+      _ => ()
+    }
+  }
   match notification {
     Some(action) if should_notify => actions.push(action)
     Some(_) | None => ()
@@ -326,6 +333,7 @@ fn ClientSession::resolve_joining_fetch(
   let fail = fn(code) {
     let error = joining_fetch_error(code)
     let bytes = @protocol.encode_request_error(error).unwrap()
+    ignore(fetch.lifetime.transition(LocalFin, true))
     self.terminate_fetch(
       fetch,
       [SendFin(stream, bytes)],
@@ -431,6 +439,7 @@ fn ClientSession::fail_pending_joining_fetches(
         let stream = fetch.stream.unwrap()
         let error = joining_fetch_error(code)
         let bytes = @protocol.encode_request_error(error).unwrap()
+        ignore(fetch.lifetime.transition(LocalFin, true))
         for
           action in self.terminate_fetch(
             fetch,
@@ -492,6 +501,7 @@ fn ClientSession::expire_pending_joining_fetches(
     let error = joining_fetch_error(request_error_timeout)
     let bytes = @protocol.encode_request_error(error).unwrap()
     self.remove_pending_joining_fetch(request_id)
+    ignore(fetch.lifetime.transition(LocalFin, true))
     for
       action in self.terminate_fetch(
         fetch,

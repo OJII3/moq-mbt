@@ -47,8 +47,8 @@ fn has_namespace_rejection(actions : Array[@session.SessionAction]) -> Bool {
         @session.NamespaceSubscriptionRejected(
           @session.RequestId(3UL),
           @session.StreamId(42),
-          _
-        )
+          _,
+        ),
       ) => return true
       _ => ()
     }

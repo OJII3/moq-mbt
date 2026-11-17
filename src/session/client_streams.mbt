@@ -448,13 +448,20 @@ fn ClientSession::send_complete(
           match self.namespace_send_complete(stream, completion) {
             Some(actions) => Ok(actions)
             None =>
-              match self.request_streams.get(stream) {
-                Some(request_id) if self.requests.get(request_id).unwrap().lifetime.cancelled =>
+              match self.fetch_streams.get(stream) {
+                Some(request_id) if self.fetches.get(request_id).unwrap().lifetime.cancelled =>
                   Ok([])
                 _ =>
-                  Ok([
-                    EmitNotice(StreamSendFinished(StreamId(stream), completion)),
-                  ])
+                  match self.request_streams.get(stream) {
+                    Some(request_id) if self.requests.get(request_id).unwrap().lifetime.cancelled =>
+                      Ok([])
+                    _ =>
+                      Ok([
+                        EmitNotice(
+                          StreamSendFinished(StreamId(stream), completion),
+                        ),
+                      ])
+                  }
               }
           }
       }

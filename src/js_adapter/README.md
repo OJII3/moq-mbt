@@ -48,7 +48,7 @@ does not expose QUIC acknowledgement for this operation. Call
 `cancel_stream_read(reference, error_code)` to stop the receive side or
 `abort_stream_write(reference, error_code)` to reset the send side.
 
-The adapter bounds active streams and pending stream opens (16 each), queued
+The adapter bounds active streams and pending stream opens (64 each), queued
 writes (256 and 1 MiB), and queued stream events (256 and 1 MiB of data).
 Exceeding an event queue limit stops the affected stream and emits
 `StreamQueueOverflow`. Event data is copied from the exact Uint8Array view
