@@ -2,10 +2,33 @@
 package "OJII3/moq-mbt/lifecycle"
 
 // Values
+pub fn allocate_request_id(UInt64) -> RequestIdAllocation
+
+pub fn allocate_track_alias(UInt64, FixedArray[UInt64]) -> TrackAliasAllocation
+
+pub fn peek_request_id(UInt64) -> UInt64
 
 // Errors
 
 // Types and methods
+pub(all) enum ObjectWriteError {
+  PayloadLengthMismatch
+}
+
+pub struct ObjectWriteState {
+  declared : UInt64
+  written : UInt64
+}
+pub fn ObjectWriteState::can_finish(Self) -> Bool
+pub fn ObjectWriteState::new(UInt64) -> Self
+pub fn ObjectWriteState::remaining(Self) -> UInt64
+pub fn ObjectWriteState::write(Self, UInt64) -> Result[Self, ObjectWriteError]
+
+pub struct RequestIdAllocation {
+  request_id : UInt64
+  next : UInt64
+}
+
 pub struct RequestLifetime {
   local_send_closed : Bool
   peer_send_closed : Bool
@@ -37,6 +60,11 @@ pub(all) enum RequestLifetimeEvent {
 pub struct RequestLifetimeUpdate {
   state : RequestLifetime
   actions : RequestLifetimeActions
+}
+
+pub struct TrackAliasAllocation {
+  track_alias : UInt64
+  next : UInt64
 }
 
 // Type aliases

@@ -172,7 +172,7 @@ fn ClientSession::send_joining_fetch(
   }
   match
     @protocol.encode_fetch({
-      request_id: self.next_request_id,
+      request_id: @lifecycle.peek_request_id(self.next_request_id),
       fetch_type,
       parameters,
     }) {

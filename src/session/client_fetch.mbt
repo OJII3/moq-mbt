@@ -103,7 +103,7 @@ pub fn ClientSession::fetch_track(
   }
   match
     @protocol.encode_fetch({
-      request_id: self.next_request_id,
+      request_id: @lifecycle.peek_request_id(self.next_request_id),
       fetch_type: StandaloneFetch(track, start, end),
       parameters,
     }) {
@@ -361,7 +361,7 @@ pub fn ClientSession::update_fetch(
   if fetch.pending_update_id is Some(_) {
     return Err(RequestUpdatePending)
   }
-  let update_id = self.next_request_id
+  let update_id = @lifecycle.peek_request_id(self.next_request_id)
   let encoded = match
     @protocol.encode_request_update_for(
       { request_id: update_id, parameters, },

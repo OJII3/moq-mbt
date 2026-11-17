@@ -276,16 +276,19 @@ fn ClientSession::find_namespace_publisher(
 }
 
 ///|
-fn ClientSession::track_alias_in_use(
-  self : ClientSession,
-  track_alias : UInt64,
-) -> Bool {
+fn ClientSession::track_aliases_in_use(self : ClientSession) -> FixedArray[UInt64] {
+  let used : Array[UInt64] = []
   for (_, request) in self.requests {
-    if request.track_alias == Some(track_alias) {
-      return true
+    match request.track_alias {
+      Some(track_alias) => used.push(track_alias)
+      None => ()
     }
   }
-  false
+  let result = FixedArray::make(used.length(), 0UL)
+  for i = 0; i < used.length(); i = i + 1 {
+    result[i] = used[i]
+  }
+  result
 }
 
 ///|
@@ -297,11 +300,12 @@ fn ClientSession::register_namespace_publisher_track(
   track : @protocol.TrackName,
 ) -> UInt64 {
   let request_id = self.allocate_request_id()
-  let mut track_alias = self.next_track_alias
-  while self.track_alias_in_use(track_alias) {
-    track_alias = track_alias + 1UL
-  }
-  self.next_track_alias = track_alias + 1UL
+  let allocation = @lifecycle.allocate_track_alias(
+    self.next_track_alias,
+    self.track_aliases_in_use(),
+  )
+  let track_alias = allocation.track_alias
+  self.next_track_alias = allocation.next
   self.requests[request_id] = {
     kind: Publishing,
     properties: b"",

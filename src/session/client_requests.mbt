@@ -178,9 +178,9 @@ priv enum SubscriptionState {
 
 ///|
 fn ClientSession::allocate_request_id(self : ClientSession) -> UInt64 {
-  let request_id = self.next_request_id
-  self.next_request_id = self.next_request_id + 2UL
-  request_id
+  let allocation = @lifecycle.allocate_request_id(self.next_request_id)
+  self.next_request_id = allocation.next
+  allocation.request_id
 }
 
 ///|
