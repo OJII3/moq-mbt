@@ -72,8 +72,8 @@ fn collect_frames(
           _,
           { namespace_fields: [b"demo"], name: b"video", },
           _,
-          received
-        )
+          received,
+        ),
       ) =>
         for frame in received {
           frames.push(frame)

@@ -247,7 +247,7 @@ fn handle_publisher_notices(
         update_id,
         stream,
         _,
-        parameters
+        parameters,
       ) => {
         eprintln(
           "PUBLISH update requested (request \{request_id}, update \{update_id}, stream \{stream})",

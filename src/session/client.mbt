@@ -114,7 +114,7 @@ pub(all) enum SessionNotice {
     @protocol.TrackName,
     @protocol.FetchLocation,
     @protocol.FetchLocation,
-    Array[@protocol.MessageParameter]
+    Array[@protocol.MessageParameter],
   )
   FetchAccepted(RequestId, StreamId)
   FetchResponseAccepted(RequestId, StreamId, @protocol.FetchOkMessage)
@@ -130,7 +130,7 @@ pub(all) enum SessionNotice {
     RequestId,
     RequestId,
     StreamId,
-    Array[@protocol.MessageParameter]
+    Array[@protocol.MessageParameter],
   )
   FetchUpdateAccepted(RequestId, RequestId, @protocol.RequestOkMessage)
   FetchUpdateRejected(RequestId, RequestId, @protocol.RequestErrorMessage)
@@ -138,19 +138,19 @@ pub(all) enum SessionNotice {
     RequestId,
     StreamId,
     @protocol.TrackNamespace,
-    Array[@protocol.MessageParameter]
+    Array[@protocol.MessageParameter],
   )
   NamespacePublicationAccepted(RequestId, StreamId)
   NamespacePublicationRejected(
     RequestId,
     StreamId,
-    @protocol.RequestErrorMessage
+    @protocol.RequestErrorMessage,
   )
   NamespaceUpdateRequested(
     RequestId,
     RequestId,
     StreamId,
-    Array[@protocol.MessageParameter]
+    Array[@protocol.MessageParameter],
   )
   NamespaceUpdateAccepted(RequestId, RequestId, @protocol.RequestOkMessage)
   NamespaceUpdateRejected(RequestId, RequestId, @protocol.RequestErrorMessage)
@@ -161,7 +161,7 @@ pub(all) enum SessionNotice {
   NamespaceSubscriptionRejected(
     RequestId,
     StreamId,
-    @protocol.RequestErrorMessage
+    @protocol.RequestErrorMessage,
   )
   NamespaceDiscovered(RequestId, @protocol.TrackNamespace)
   NamespaceNoLongerAvailable(RequestId, @protocol.TrackNamespace)
@@ -170,17 +170,17 @@ pub(all) enum SessionNotice {
     RequestId,
     RequestId,
     StreamId,
-    @protocol.TrackNamespace
+    @protocol.TrackNamespace,
   )
   NamespaceSubscriptionUpdateAccepted(
     RequestId,
     RequestId,
-    @protocol.RequestOkMessage
+    @protocol.RequestOkMessage,
   )
   NamespaceSubscriptionUpdateRejected(
     RequestId,
     RequestId,
-    @protocol.RequestErrorMessage
+    @protocol.RequestErrorMessage,
   )
   SubscriptionAccepted(RequestId, StreamId, TrackAlias)
   SubscriptionRejected(RequestId, StreamId)
@@ -189,31 +189,31 @@ pub(all) enum SessionNotice {
     RequestId,
     StreamId,
     Array[@protocol.MessageParameter],
-    Array[@protocol.MessageParameter]
+    Array[@protocol.MessageParameter],
   )
   SubscriptionUpdateApplied(
     RequestId,
     RequestId,
     StreamId,
-    Array[@protocol.MessageParameter]
+    Array[@protocol.MessageParameter],
   )
   SubscriptionUpdateAccepted(RequestId, RequestId, @protocol.RequestOkMessage)
   SubscriptionUpdateRejected(
     RequestId,
     RequestId,
-    @protocol.RequestErrorMessage
+    @protocol.RequestErrorMessage,
   )
   SubscriptionEnded(RequestId, StreamId, @protocol.TrackName)
   ObjectReceived(
     RequestId,
     @protocol.TrackName,
     @protocol.SubgroupHeader,
-    Array[@protocol.SubgroupFrame]
+    Array[@protocol.SubgroupFrame],
   )
   ObjectDatagramReceived(
     RequestId,
     @protocol.TrackName,
-    @protocol.ObjectDatagram
+    @protocol.ObjectDatagram,
   )
   ObjectStreamReset(RequestId, StreamId)
   ObjectStreamSendFinished(StreamId)

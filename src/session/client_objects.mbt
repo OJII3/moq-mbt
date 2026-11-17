@@ -129,7 +129,7 @@ fn resolve_subscription_filter(
             impossible: false,
           })
         @protocol.Filter(
-          @protocol.AbsoluteRange(group_id, object_id, end_group)
+          @protocol.AbsoluteRange(group_id, object_id, end_group),
         ) =>
           return Some({
             start_group: group_id,
