@@ -1,0 +1,15 @@
+predicate track_alias_allocation_post(
+  start : UInt64,
+  result : TrackAliasAllocation,
+) {
+  start <= result.track_alias() &&
+  result.next() == result.track_alias() + 1UL
+}
+
+predicate track_alias_empty_post(
+  start : UInt64,
+  result : TrackAliasAllocation,
+) {
+  result.track_alias() == start &&
+  result.next() == start + 1UL
+}

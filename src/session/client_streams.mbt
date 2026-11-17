@@ -262,7 +262,7 @@ fn ClientSession::stream_finished(
         (fetch.state == FetchPending || !fetch.response_buffer.is_empty()) {
         return Err(UnexpectedMessage)
       }
-      ignore(fetch.lifetime.transition(PeerFin, true))
+      fetch.lifetime = fetch.lifetime.advance(PeerFin, true)
       fetch.response_buffer = b""
       self.inbound_buffers.remove(stream)
       return Ok([])

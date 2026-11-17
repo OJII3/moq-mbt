@@ -1,7 +1,7 @@
 ///|
 priv struct PartialObject {
   object_id : UInt64
-  mut remaining : UInt64
+  mut write : @lifecycle.ObjectWriteState
   mut first_byte_ms : UInt64?
 }
 
@@ -67,7 +67,7 @@ pub fn ObjectGroupWriter::begin_object(
   outgoing.previous_object_id = Some(object_id)
   outgoing.partial_object = Some({
     object_id,
-    remaining: payload_length,
+    write: @lifecycle.ObjectWriteState::new(payload_length),
     first_byte_ms: None,
   })
   outgoing.pending_send_count = outgoing.pending_send_count + 1UL
@@ -105,7 +105,8 @@ pub fn ObjectWriter::write(
     Some(value) if value.object_id == self.object_id => value
     _ => return Err(UnexpectedMessage)
   }
-  if chunk.length().to_uint64() > partial.remaining {
+  let chunk_length = chunk.length().to_uint64()
+  if chunk_length > partial.write.remaining() {
     return Err(ObjectPayloadLengthMismatch)
   }
   if chunk.is_empty() {
@@ -118,7 +119,10 @@ pub fn ObjectWriter::write(
   if partial.first_byte_ms is None {
     partial.first_byte_ms = Some(self.session.now_ms)
   }
-  partial.remaining = partial.remaining - chunk.length().to_uint64()
+  match partial.write.write(chunk_length) {
+    Ok(next) => partial.write = next
+    Err(_) => return Err(ObjectPayloadLengthMismatch)
+  }
   outgoing.pending_send_count = outgoing.pending_send_count + 1UL
   Ok(
     self.session.finish_actions([
@@ -148,7 +152,7 @@ pub fn ObjectWriter::finish(
     Some(value) if value.object_id == self.object_id => value
     _ => return Err(UnexpectedMessage)
   }
-  if partial.remaining != 0UL {
+  if !partial.write.can_finish() {
     return Err(ObjectPayloadLengthMismatch)
   }
   outgoing.partial_object = None

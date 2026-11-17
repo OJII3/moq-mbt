@@ -176,7 +176,7 @@ fn ClientSession::receive_peer_request(
                 publisher_request_id,
                 state: Pending,
                 parameters: request.parameters,
-                lifetime: RequestLifetime::new(),
+                lifetime: @lifecycle.RequestLifetime::new(),
               }
               actions.push(
                 EmitNotice(
@@ -276,16 +276,21 @@ fn ClientSession::find_namespace_publisher(
 }
 
 ///|
-fn ClientSession::track_alias_in_use(
+fn ClientSession::track_aliases_in_use(
   self : ClientSession,
-  track_alias : UInt64,
-) -> Bool {
+) -> FixedArray[UInt64] {
+  let used : Array[UInt64] = []
   for (_, request) in self.requests {
-    if request.track_alias == Some(track_alias) {
-      return true
+    match request.track_alias {
+      Some(track_alias) => used.push(track_alias)
+      None => ()
     }
   }
-  false
+  let result = FixedArray::make(used.length(), 0UL)
+  for i = 0; i < used.length(); i = i + 1 {
+    result[i] = used[i]
+  }
+  result
 }
 
 ///|
@@ -297,11 +302,12 @@ fn ClientSession::register_namespace_publisher_track(
   track : @protocol.TrackName,
 ) -> UInt64 {
   let request_id = self.allocate_request_id()
-  let mut track_alias = self.next_track_alias
-  while self.track_alias_in_use(track_alias) {
-    track_alias = track_alias + 1UL
-  }
-  self.next_track_alias = track_alias + 1UL
+  let allocation = @lifecycle.allocate_track_alias(
+    self.next_track_alias,
+    self.track_aliases_in_use(),
+  )
+  let track_alias = allocation.track_alias
+  self.next_track_alias = allocation.next
   self.requests[request_id] = {
     kind: Publishing,
     properties: b"",
@@ -311,7 +317,7 @@ fn ClientSession::register_namespace_publisher_track(
     response_buffer: b"",
     state: RequestAccepted,
     dynamic_groups: false,
-    lifetime: RequestLifetime::new(),
+    lifetime: @lifecycle.RequestLifetime::new(),
     object_drain: {
       observed_streams: 0UL,
       active_streams: 0UL,
@@ -443,7 +449,7 @@ pub fn ClientSession::reject_subscription(
 fn ClientSession::end_inbound_subscription(
   self : ClientSession,
   stream : Int64,
-  event : RequestLifetimeEvent,
+  event : @lifecycle.RequestLifetimeEvent,
 ) -> Array[SessionAction] {
   self.request_goaway_deadlines.remove(stream)
   guard self.inbound_subscriptions.get(stream) is Some(inbound) else {
@@ -454,7 +460,9 @@ fn ClientSession::end_inbound_subscription(
     !inbound.lifetime.cancelled {
     return []
   }
-  let effects = inbound.lifetime.transition(event, true)
+  let update = inbound.lifetime.transition(event, true)
+  inbound.lifetime = update.state
+  let effects = update.actions
   if !effects.abort_send && !effects.stop_receiving && !effects.notify_end {
     return []
   }

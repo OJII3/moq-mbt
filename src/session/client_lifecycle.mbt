@@ -242,10 +242,12 @@ fn ClientSession::reject_local_request_for_goaway(
     return []
   }
   request.mark_terminal()
-  let effects = request.lifetime.transition(
+  let update = request.lifetime.transition(
     Cancel(request_reset_going_away),
     request.stream is Some(_),
   )
+  request.lifetime = update.state
+  let effects = update.actions
   request.response_buffer = b""
   request.pending_local_update = None
   let error = @protocol.RequestErrorMessage::{
@@ -275,7 +277,7 @@ fn ClientSession::reject_local_request_for_goaway(
           EmitNotice(SubscribeRejected(RequestId(request_id), error)),
         )
     }
-    request.lifetime.end_notified = true
+    request.lifetime = request.lifetime.with_end_notified()
   }
   actions
 }
@@ -316,10 +318,12 @@ fn ClientSession::receive_control_goaway(
     if fetch.locally_initiated &&
       request_id >= message.request_id &&
       fetch.state == FetchPending {
-      let effects = fetch.lifetime.transition(
+      let update = fetch.lifetime.transition(
         Cancel(request_reset_going_away),
         fetch.stream is Some(_),
       )
+      fetch.lifetime = update.state
+      let effects = update.actions
       match fetch.stream {
         Some(stream) => {
           if effects.abort_send {

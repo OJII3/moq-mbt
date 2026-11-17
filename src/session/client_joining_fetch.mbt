@@ -31,7 +31,7 @@ fn new_client_fetch(
     stream,
     response_buffer: b"",
     state: FetchPending,
-    lifetime: RequestLifetime::new(),
+    lifetime: @lifecycle.RequestLifetime::new(),
     parameters,
     end_location: None,
     end_of_track: false,
@@ -172,7 +172,7 @@ fn ClientSession::send_joining_fetch(
   }
   match
     @protocol.encode_fetch({
-      request_id: self.next_request_id,
+      request_id: @lifecycle.peek_request_id(self.next_request_id),
       fetch_type,
       parameters,
     }) {
@@ -333,7 +333,7 @@ fn ClientSession::resolve_joining_fetch(
   let fail = fn(code) {
     let error = joining_fetch_error(code)
     let bytes = @protocol.encode_request_error(error).unwrap()
-    ignore(fetch.lifetime.transition(LocalFin, true))
+    fetch.lifetime = fetch.lifetime.advance(LocalFin, true)
     self.terminate_fetch(
       fetch,
       [SendFin(stream, bytes)],
@@ -439,7 +439,7 @@ fn ClientSession::fail_pending_joining_fetches(
         let stream = fetch.stream.unwrap()
         let error = joining_fetch_error(code)
         let bytes = @protocol.encode_request_error(error).unwrap()
-        ignore(fetch.lifetime.transition(LocalFin, true))
+        fetch.lifetime = fetch.lifetime.advance(LocalFin, true)
         for
           action in self.terminate_fetch(
             fetch,
@@ -501,7 +501,7 @@ fn ClientSession::expire_pending_joining_fetches(
     let error = joining_fetch_error(request_error_timeout)
     let bytes = @protocol.encode_request_error(error).unwrap()
     self.remove_pending_joining_fetch(request_id)
-    ignore(fetch.lifetime.transition(LocalFin, true))
+    fetch.lifetime = fetch.lifetime.advance(LocalFin, true)
     for
       action in self.terminate_fetch(
         fetch,

@@ -54,6 +54,7 @@
           packages = [
             pkgs.libmsquic
             pkgs.moonbit-bin.nightly
+            pkgs.z3
             moqtailRelay
             pkgs.nodejs
             pkgs.playwright-driver

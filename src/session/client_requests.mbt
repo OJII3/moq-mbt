@@ -22,7 +22,7 @@ priv struct ClientRequest {
   mut response_buffer : Bytes
   mut state : ClientRequestState
   mut dynamic_groups : Bool
-  lifetime : RequestLifetime
+  mut lifetime : @lifecycle.RequestLifetime
   object_drain : ObjectDrain
   mut parameters : Array[@protocol.MessageParameter]
   properties : Bytes
@@ -165,7 +165,7 @@ priv struct InboundSubscription {
   publisher_request_id : UInt64
   mut state : SubscriptionState
   parameters : Array[@protocol.MessageParameter]
-  lifetime : RequestLifetime
+  mut lifetime : @lifecycle.RequestLifetime
 }
 
 ///|
@@ -178,9 +178,9 @@ priv enum SubscriptionState {
 
 ///|
 fn ClientSession::allocate_request_id(self : ClientSession) -> UInt64 {
-  let request_id = self.next_request_id
-  self.next_request_id = self.next_request_id + 2UL
-  request_id
+  let allocation = @lifecycle.allocate_request_id(self.next_request_id)
+  self.next_request_id = allocation.next
+  allocation.request_id
 }
 
 ///|
@@ -575,29 +575,19 @@ fn ClientSession::note_request_local_fin(
   stream : Int64,
 ) -> Unit {
   match self.inbound_subscriptions.get(stream) {
-    Some(inbound) => ignore(inbound.lifetime.transition(LocalFin, true))
-    None if self.namespace_request_streams.get(stream) is Some(request_id) =>
-      ignore(
-        self.namespace_requests.get(request_id).unwrap().lifetime.transition(
-          LocalFin,
-          true,
-        ),
-      )
-    None if self.fetch_streams.get(stream) is Some(request_id) =>
-      ignore(
-        self.fetches.get(request_id).unwrap().lifetime.transition(
-          LocalFin,
-          true,
-        ),
-      )
+    Some(inbound) => inbound.lifetime = inbound.lifetime.advance(LocalFin, true)
+    None if self.namespace_request_streams.get(stream) is Some(request_id) => {
+      let request = self.namespace_requests.get(request_id).unwrap()
+      request.lifetime = request.lifetime.advance(LocalFin, true)
+    }
+    None if self.fetch_streams.get(stream) is Some(request_id) => {
+      let fetch = self.fetches.get(request_id).unwrap()
+      fetch.lifetime = fetch.lifetime.advance(LocalFin, true)
+    }
     None =>
       if self.request_streams.get(stream) is Some(request_id) {
-        ignore(
-          self.requests.get(request_id).unwrap().lifetime.transition(
-            LocalFin,
-            true,
-          ),
-        )
+        let request = self.requests.get(request_id).unwrap()
+        request.lifetime = request.lifetime.advance(LocalFin, true)
       }
   }
 }
@@ -639,7 +629,7 @@ pub fn ClientSession::publish_track(
     response_buffer: b"",
     state: RequestPending,
     dynamic_groups: false,
-    lifetime: RequestLifetime::new(),
+    lifetime: @lifecycle.RequestLifetime::new(),
     object_drain: {
       observed_streams: 0UL,
       active_streams: 0UL,
@@ -700,7 +690,7 @@ fn ClientSession::start_subscription_request(
     response_buffer: b"",
     state: RequestPending,
     dynamic_groups: false,
-    lifetime: RequestLifetime::new(),
+    lifetime: @lifecycle.RequestLifetime::new(),
     object_drain: {
       observed_streams: 0UL,
       active_streams: 0UL,
@@ -790,7 +780,7 @@ pub fn ClientSession::cancel_request(
           Ok(self.finish_actions(self.end_request_stream(stream, Cancel(1UL))))
         None => {
           request.mark_terminal()
-          ignore(request.lifetime.transition(Cancel(1UL), false))
+          request.lifetime = request.lifetime.advance(Cancel(1UL), false)
           request.response_buffer = b""
           request.pending_local_update = None
           Ok(self.finish_actions([]))
@@ -808,7 +798,7 @@ pub fn ClientSession::cancel_request(
           )
         None => {
           request.state = NamespaceTerminal
-          ignore(request.lifetime.transition(Cancel(1UL), false))
+          request.lifetime = request.lifetime.advance(Cancel(1UL), false)
           Ok(self.finish_actions([]))
         }
       }
@@ -835,13 +825,15 @@ pub fn ClientSession::cancel_request(
 fn ClientSession::end_request_stream(
   self : ClientSession,
   stream : Int64,
-  event : RequestLifetimeEvent,
+  event : @lifecycle.RequestLifetimeEvent,
 ) -> Array[SessionAction] {
   self.request_goaway_deadlines.remove(stream)
   match self.fetch_streams.get(stream) {
     Some(request_id) => {
       let fetch = self.fetches.get(request_id).unwrap()
-      let effects = fetch.lifetime.transition(event, true)
+      let update = fetch.lifetime.transition(event, true)
+      fetch.lifetime = update.state
+      let effects = update.actions
       if !effects.abort_send && !effects.stop_receiving && !effects.notify_end {
         return []
       }
@@ -886,7 +878,9 @@ fn ClientSession::end_request_stream(
     !request.lifetime.cancelled {
     return []
   }
-  let effects = request.lifetime.transition(event, true)
+  let update = request.lifetime.transition(event, true)
+  request.lifetime = update.state
+  let effects = update.actions
   if !effects.abort_send && !effects.stop_receiving && !effects.notify_end {
     return []
   }

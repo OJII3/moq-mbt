@@ -7,7 +7,7 @@ priv struct NamespaceSubscription {
   mut rejected : Bool
   mut active_namespaces : Array[@protocol.TrackNamespace]
   mut pending_update : PendingNamespaceSubscriptionUpdate?
-  lifetime : RequestLifetime
+  mut lifetime : @lifecycle.RequestLifetime
 }
 
 ///|
@@ -17,7 +17,7 @@ priv struct InboundNamespaceSubscription {
   mut active_namespaces : Array[@protocol.TrackNamespace]
   mut pending_updates : Array[PendingNamespaceSubscriptionUpdate]
   mut state : SubscriptionState
-  lifetime : RequestLifetime
+  mut lifetime : @lifecycle.RequestLifetime
 }
 
 ///|
@@ -178,7 +178,7 @@ fn ClientSession::receive_peer_namespace_subscription(
     active_namespaces: [],
     pending_updates: [],
     state: Pending,
-    lifetime: RequestLifetime::new(),
+    lifetime: @lifecycle.RequestLifetime::new(),
   }
   Ok([
     EmitNotice(
@@ -213,7 +213,7 @@ pub fn ClientSession::subscribe_namespace(
     rejected: false,
     active_namespaces: [],
     pending_update: None,
-    lifetime: RequestLifetime::new(),
+    lifetime: @lifecycle.RequestLifetime::new(),
   }
   Ok(
     (
@@ -475,10 +475,7 @@ pub fn ClientSession::reject_namespace_subscription_update(
   let rejected = inbound.pending_updates.map(fn(pending) { pending.request_id })
   inbound.pending_updates = []
   inbound.state = Ended
-  inbound.lifetime.local_send_closed = true
-  inbound.lifetime.peer_send_closed = true
-  inbound.lifetime.cancelled = true
-  inbound.lifetime.end_notified = true
+  inbound.lifetime = inbound.lifetime.terminated()
   let actions : Array[SessionAction] = [SendFin(stream, response)]
   actions.push(StopReceiving(stream, 1UL))
   for ns in inbound.active_namespaces {
@@ -727,7 +724,7 @@ fn ClientSession::receive_namespace_subscription_response(
         }
         (false, RequestError(error)) => {
           request.rejected = true
-          request.lifetime.local_send_closed = true
+          request.lifetime = request.lifetime.with_local_send_closed()
           [
             EmitNotice(
               NamespaceSubscriptionRejected(
@@ -822,16 +819,18 @@ fn ClientSession::receive_namespace_subscription_response(
 fn ClientSession::end_namespace_subscription(
   self : ClientSession,
   stream : Int64,
-  event : RequestLifetimeEvent,
+  event : @lifecycle.RequestLifetimeEvent,
 ) -> Array[SessionAction] {
   guard self.namespace_subscription_streams.get(stream) is Some(request_id) else {
     return []
   }
   let request = self.namespace_subscriptions.get(request_id).unwrap()
-  let effects = request.lifetime.transition(event, true)
+  let update = request.lifetime.transition(event, true)
+  request.lifetime = update.state
+  let effects = update.actions
   let fin_end = match event {
     PeerFin if !request.lifetime.end_notified => {
-      request.lifetime.end_notified = true
+      request.lifetime = request.lifetime.with_end_notified()
       true
     }
     _ => false
@@ -853,7 +852,7 @@ fn ClientSession::end_namespace_subscription(
     actions.push(StopReceiving(stream, code))
   }
   if fin_end && !request.lifetime.local_send_closed {
-    request.lifetime.local_send_closed = true
+    request.lifetime = request.lifetime.with_local_send_closed()
     actions.push(SendFin(stream, b""))
   }
   if effects.notify_end || fin_end {
@@ -883,10 +882,7 @@ fn ClientSession::cancel_namespace_subscription(
   if request.lifetime.cancelled {
     return Ok([])
   }
-  request.lifetime.cancelled = true
-  request.lifetime.local_send_closed = true
-  request.lifetime.peer_send_closed = true
-  request.lifetime.end_notified = true
+  request.lifetime = request.lifetime.terminated()
   request.response_buffer = b""
   request.pending_update = None
   let actions : Array[SessionAction] = []
@@ -915,15 +911,17 @@ fn ClientSession::cancel_namespace_subscription(
 fn ClientSession::end_inbound_namespace_subscription(
   self : ClientSession,
   stream : Int64,
-  event : RequestLifetimeEvent,
+  event : @lifecycle.RequestLifetimeEvent,
 ) -> Array[SessionAction] {
   guard self.inbound_namespace_subscriptions.get(stream) is Some(inbound) else {
     return []
   }
-  let effects = inbound.lifetime.transition(event, true)
+  let update = inbound.lifetime.transition(event, true)
+  inbound.lifetime = update.state
+  let effects = update.actions
   let fin_end = match event {
     PeerFin if !inbound.lifetime.end_notified => {
-      inbound.lifetime.end_notified = true
+      inbound.lifetime = inbound.lifetime.with_end_notified()
       true
     }
     _ => false
@@ -945,7 +943,7 @@ fn ClientSession::end_inbound_namespace_subscription(
     actions.push(StopReceiving(stream, code))
   }
   if fin_end && !inbound.lifetime.local_send_closed {
-    inbound.lifetime.local_send_closed = true
+    inbound.lifetime = inbound.lifetime.with_local_send_closed()
     actions.push(SendFin(stream, b""))
   }
   if effects.notify_end || fin_end {
@@ -981,7 +979,7 @@ fn ClientSession::finish_namespace_subscription_stream(
     Some(request_id) => {
       let request = self.namespace_subscriptions.get(request_id).unwrap()
       if request.rejected {
-        ignore(request.lifetime.transition(PeerFin, true))
+        request.lifetime = request.lifetime.advance(PeerFin, true)
         return Some(Ok([]))
       }
       if !request.established {

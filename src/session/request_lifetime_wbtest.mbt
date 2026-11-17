@@ -1,6 +1,6 @@
 ///|
 fn assert_request_lifetime_actions(
-  actual : RequestLifetimeActions,
+  actual : @lifecycle.RequestLifetimeActions,
   expected : (Bool, Bool, Bool),
 ) -> Unit raise {
   assert_eq(actual.abort_send, expected.0)
@@ -15,7 +15,9 @@ test "request lifetime applies crossed terminal events once" {
   let reset = (true, false, true)
   let stop = (false, true, true)
   let notify_only = (false, false, true)
-  let cases : Array[(Array[RequestLifetimeEvent], Array[(Bool, Bool, Bool)])] = [
+  let cases : Array[
+    (Array[@lifecycle.RequestLifetimeEvent], Array[(Bool, Bool, Bool)]),
+  ] = [
     (
       [Cancel(1UL), PeerReset(1UL), PeerStop(1UL), PeerFin],
       [cancel, none, none, none],
@@ -36,29 +38,25 @@ test "request lifetime applies crossed terminal events once" {
     ([LocalFin, PeerFin, Cancel(6UL)], [none, none, notify_only]),
   ]
   for (events, expected) in cases {
-    let lifetime = RequestLifetime::new()
+    let mut lifetime = @lifecycle.RequestLifetime::new()
     for index in 0..<events.length() {
-      assert_request_lifetime_actions(
-        lifetime.transition(events[index], true),
-        expected[index],
-      )
+      let update = lifetime.transition(events[index], true)
+      lifetime = update.state
+      assert_request_lifetime_actions(update.actions, expected[index])
     }
   }
 }
 
 ///|
 test "request lifetime defers transport actions until a canceled stream opens" {
-  let lifetime = RequestLifetime::new()
-  assert_request_lifetime_actions(
-    lifetime.transition(Cancel(1UL), false),
-    (false, false, false),
-  )
-  assert_request_lifetime_actions(
-    lifetime.transition(Cancel(1UL), true),
-    (true, true, true),
-  )
-  assert_request_lifetime_actions(
-    lifetime.transition(Cancel(1UL), true),
-    (false, false, false),
-  )
+  let mut lifetime = @lifecycle.RequestLifetime::new()
+  let first = lifetime.transition(Cancel(1UL), false)
+  lifetime = first.state
+  assert_request_lifetime_actions(first.actions, (false, false, false))
+  let second = lifetime.transition(Cancel(1UL), true)
+  lifetime = second.state
+  assert_request_lifetime_actions(second.actions, (true, true, true))
+  let third = lifetime.transition(Cancel(1UL), true)
+  lifetime = third.state
+  assert_request_lifetime_actions(third.actions, (false, false, false))
 }

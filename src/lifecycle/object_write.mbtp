@@ -1,0 +1,50 @@
+predicate object_write_inv(s : ObjectWriteState) {
+  0UL <= s.written() &&
+  s.written() <= s.declared()
+}
+
+predicate object_write_new_post(declared : UInt64, s : ObjectWriteState) {
+  object_write_inv(s) &&
+  s.declared() == declared &&
+  s.written() == 0UL
+}
+
+predicate write_accepts(before : ObjectWriteState, chunk_length : UInt64) {
+  chunk_length <= before.declared() - before.written()
+}
+
+predicate write_accepted_post(
+  before : ObjectWriteState,
+  chunk_length : UInt64,
+  after : ObjectWriteState,
+) {
+  object_write_inv(after) &&
+  after.declared() == before.declared() &&
+  after.written() == before.written() + chunk_length
+}
+
+predicate write_rejected_post(
+  before : ObjectWriteState,
+  after : ObjectWriteState,
+) {
+  after.declared() == before.declared() &&
+  after.written() == before.written()
+}
+
+predicate object_write_attempt_post(
+  before : ObjectWriteState,
+  chunk_length : UInt64,
+  attempt : ObjectWriteAttempt,
+) {
+  (attempt.accepted() == write_accepts(before, chunk_length)) &&
+  (attempt.accepted() →
+    write_accepted_post(before, chunk_length, attempt.state())) &&
+  (!attempt.accepted() →
+    write_rejected_post(before, attempt.state()))
+}
+
+lemma empty_write_keeps_state(before : ObjectWriteState) where {
+  proof_require: object_write_inv(before),
+  proof_ensure: write_accepted_post(before, 0UL, before),
+} {
+}

@@ -1,0 +1,21 @@
+predicate even(value : UInt64) {
+  value % 2UL == 0UL
+}
+
+predicate request_id_cursor(next : UInt64) {
+  0UL <= next &&
+  next <= 0xfffffffffffffffdUL &&
+  even(next)
+}
+
+predicate request_id_allocation_post(
+  next : UInt64,
+  allocation : RequestIdAllocation,
+) {
+  allocation.request_id() == next &&
+  allocation.next() == next + 2UL &&
+  allocation.next() == allocation.request_id() + 2UL &&
+  allocation.request_id() < allocation.next() &&
+  (even(next) → even(allocation.request_id())) &&
+  even(allocation.next())
+}
