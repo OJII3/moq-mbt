@@ -1,0 +1,27 @@
+predicate encoded_width_loop_inv(
+  value : UInt64,
+  width : Int,
+  result : Int,
+) {
+  1 <= width &&
+  width <= 9 &&
+  1 <= result &&
+  result <= 9 &&
+  (2 <= result → pow128(result - 1) <= value) &&
+  (result < width → value < pow128(result))
+}
+
+predicate encoded_width_post(value : UInt64, width : Int) {
+  1 <= width &&
+  width <= 9 &&
+  (width <= 8 → value < pow128(width)) &&
+  (2 <= width → pow128(width - 1) <= value) &&
+  (width == 9 → pow128(8) <= value)
+}
+
+predicate decoded_width_post(first : Int, width : Int) {
+  1 <= width &&
+  width <= 9 &&
+  (first < 128 → width == 1) &&
+  (first == 255 → width == 9)
+}

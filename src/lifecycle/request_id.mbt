@@ -26,7 +26,9 @@ fn RequestIdAllocation::next(self : RequestIdAllocation) -> UInt64 {
 ///
 /// The cursor precondition keeps both the reserved ID and the returned cursor
 /// even, and keeps the returned cursor representable as a UInt64.
-pub fn allocate_request_id(next : UInt64) -> RequestIdAllocation where {
+pub fn allocate_request_id(
+  next : UInt64,
+) -> RequestIdAllocation where {
   proof_require: request_id_cursor(next),
   proof_ensure: result => request_id_allocation_post(next, result),
 } {
@@ -35,7 +37,9 @@ pub fn allocate_request_id(next : UInt64) -> RequestIdAllocation where {
 
 ///|
 /// Read the request ID that the next allocation returns without advancing.
-pub fn peek_request_id(next : UInt64) -> UInt64 where {
+pub fn peek_request_id(
+  next : UInt64,
+) -> UInt64 where {
   proof_ensure: result => result == next,
 } {
   next

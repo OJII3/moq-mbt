@@ -37,10 +37,7 @@ pub(all) enum DecodeResult[T] {
 ///|
 /// Encode a non-negative integer with the Draft 18 variable-length prefix form.
 pub fn encode_vi64(value : UInt64) -> Bytes {
-  let mut width = 1
-  while width < 9 && value >> (7 * width) != 0 {
-    width += 1
-  }
+  let width = @vi64.encoded_width(value)
   let bytes : Array[Byte] = Array::make(width, 0)
   for i = width - 1; i > 0; i = i - 1 {
     bytes[i] = (value >> (8 * (width - 1 - i))).to_byte()
@@ -67,11 +64,7 @@ fn read_vi64(input : Bytes, offset : Int32, end : Int32) -> (UInt64, Int32)? {
     return None
   }
   let first = input[offset].to_int()
-  let mut leading = 0
-  while leading < 8 && (first & (0x80 >> leading)) != 0 {
-    leading += 1
-  }
-  let width = leading + 1
+  let width = @vi64.decoded_width(first)
   if end - offset < width {
     return None
   }

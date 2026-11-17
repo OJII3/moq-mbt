@@ -1,3 +1,4 @@
 import {
+  "OJII3/moq-mbt/vi64",
   "moonbitlang/core/encoding/utf8",
 }

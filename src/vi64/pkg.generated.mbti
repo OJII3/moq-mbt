@@ -1,0 +1,15 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "OJII3/moq-mbt/vi64"
+
+// Values
+pub fn decoded_width(Int32) -> Int32
+
+pub fn encoded_width(UInt64) -> Int32
+
+// Errors
+
+// Types and methods
+
+// Type aliases
+
+// Traits

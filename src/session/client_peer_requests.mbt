@@ -276,7 +276,9 @@ fn ClientSession::find_namespace_publisher(
 }
 
 ///|
-fn ClientSession::track_aliases_in_use(self : ClientSession) -> FixedArray[UInt64] {
+fn ClientSession::track_aliases_in_use(
+  self : ClientSession,
+) -> FixedArray[UInt64] {
   let used : Array[UInt64] = []
   for (_, request) in self.requests {
     match request.track_alias {

@@ -10,9 +10,7 @@ pub struct TrackAliasAllocation {
 
 ///|
 #proof_pure
-fn TrackAliasAllocation::track_alias(
-  self : TrackAliasAllocation,
-) -> UInt64 {
+fn TrackAliasAllocation::track_alias(self : TrackAliasAllocation) -> UInt64 {
   self.track_alias
 }
 
@@ -35,11 +33,13 @@ pub fn allocate_track_alias(
   used : FixedArray[UInt64],
 ) -> TrackAliasAllocation where {
   proof_require: 0UL < start,
-  proof_ensure: result => track_alias_allocation_post(start, result) &&
-    (used.length() == 0 → track_alias_empty_post(start, result)),
+  proof_ensure: result => {
+    track_alias_allocation_post(start, result) &&
+    (used.length() == 0 → track_alias_empty_post(start, result))
+  },
 } {
   if used.length() == 0 {
-    { track_alias: start, next: start + 1UL }
+    { track_alias: start, next: start + 1UL, }
   } else {
     let mut chosen = start
     for step = 0; step < used.length() + 1; step = step + 1 {
@@ -58,6 +58,6 @@ pub fn allocate_track_alias(
     } where {
       proof_invariant: start <= chosen,
     }
-    { track_alias: chosen, next: chosen + 1UL }
+    { track_alias: chosen, next: chosen + 1UL, }
   }
 }
