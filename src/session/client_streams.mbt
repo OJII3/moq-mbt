@@ -14,12 +14,12 @@ fn ClientSession::receive_stream_data(
       }
       let combined = previous + bytes
       match @protocol.decode_vi64(combined) {
-        @protocol.Incomplete => {
+        Incomplete => {
           self.inbound_unclassified_buffers[stream] = combined
           Ok([])
         }
-        @protocol.Invalid(_) => Err(UnexpectedMessage)
-        @protocol.Complete(stream_type, _) => {
+        Invalid(_) => Err(UnexpectedMessage)
+        Complete(stream_type, _) => {
           self.inbound_unclassified_buffers.remove(stream)
           match stream_type {
             0x2f00UL => {
@@ -28,12 +28,12 @@ fn ClientSession::receive_stream_data(
             }
             0x05UL =>
               match @protocol.decode_fetch_header(combined) {
-                @protocol.Incomplete => {
+                Incomplete => {
                   self.inbound_unclassified_buffers[stream] = combined
                   Ok([])
                 }
-                @protocol.Invalid(_) => Err(UnexpectedMessage)
-                @protocol.Complete(header, consumed) => {
+                Invalid(_) => Err(UnexpectedMessage)
+                Complete(header, consumed) => {
                   self.inbound_stream_kinds[stream] = FetchData
                   let rest = combined[consumed:].to_owned()
                   match
@@ -122,7 +122,7 @@ fn ClientSession::stream_opened(
           let encoded = @protocol.encode_fetch({
             request_id,
             fetch_type: fetch.outgoing_fetch_type.unwrap_or(
-              @protocol.StandaloneFetch(fetch.track, fetch.start, fetch.end),
+              StandaloneFetch(fetch.track, fetch.start, fetch.end),
             ),
             parameters: fetch.parameters,
           })
@@ -215,7 +215,7 @@ fn ClientSession::stream_opened(
       subscription.opened_stream_count = subscription.opened_stream_count + 1UL
       subscription.open_stream_count = subscription.open_stream_count + 1UL
       self.pending_object_streams.remove(token)
-      let outgoing : OutgoingObjectStream = {
+      let outgoing = OutgoingObjectStream::{
         subscription_stream: pending.subscription_stream,
         header: pending.header,
         token,

@@ -22,17 +22,16 @@ fn ClientSession::receive_peer_request(
   let mut remaining = buffer + bytes
   let actions : Array[SessionAction] = []
   while !remaining.is_empty() {
-    match
-      @protocol.decode_control_with_context(remaining, @protocol.RequestStream) {
-      @protocol.Incomplete => {
+    match @protocol.decode_control_with_context(remaining, RequestStream) {
+      Incomplete => {
         self.inbound_buffers[stream] = remaining
         return Ok(actions)
       }
-      @protocol.Invalid(_) => return Err(UnexpectedMessage)
-      @protocol.Complete(message, consumed) => {
+      Invalid(_) => return Err(UnexpectedMessage)
+      Complete(message, consumed) => {
         remaining = remaining[consumed:].to_owned()
         match (self.inbound_subscriptions.get(stream), message) {
-          (None, @protocol.Fetch(request)) => {
+          (None, Fetch(request)) => {
             if (request.request_id & 1UL) != 1UL {
               return Err(InvalidRequestId)
             }
@@ -60,9 +59,9 @@ fn ClientSession::receive_peer_request(
               continue
             }
             match request.fetch_type {
-              @protocol.StandaloneFetch(track, start, end) =>
+              StandaloneFetch(track, start, end) =>
                 if self.control_goaway_sent {
-                  let error : @protocol.RequestErrorMessage = {
+                  let error = @protocol.RequestErrorMessage::{
                     code: request_error_going_away,
                     retry_interval: 0UL,
                     reason: b"",
@@ -107,7 +106,7 @@ fn ClientSession::receive_peer_request(
                     ),
                   )
                 }
-              @protocol.RelativeJoiningFetch(joining_id, joining_start) =>
+              RelativeJoiningFetch(joining_id, joining_start) =>
                 match
                   self.receive_joining_fetch(
                     stream,
@@ -120,7 +119,7 @@ fn ClientSession::receive_peer_request(
                   Ok(values) => actions.append(values)
                   Err(error) => return Err(error)
                 }
-              @protocol.AbsoluteJoiningFetch(joining_id, joining_start) =>
+              AbsoluteJoiningFetch(joining_id, joining_start) =>
                 match
                   self.receive_joining_fetch(
                     stream,
@@ -135,12 +134,12 @@ fn ClientSession::receive_peer_request(
                 }
             }
           }
-          (None, @protocol.SubscribeNamespace(request)) =>
+          (None, SubscribeNamespace(request)) =>
             match self.receive_peer_namespace_subscription(stream, request) {
               Ok(values) => actions.append(values)
               Err(error) => return Err(error)
             }
-          (None, @protocol.Subscribe(request)) => {
+          (None, Subscribe(request)) => {
             if (request.request_id & 1UL) != 1UL {
               return Err(InvalidRequestId)
             }
@@ -190,34 +189,34 @@ fn ClientSession::receive_peer_request(
               )
             }
           }
-          (None, @protocol.PublishNamespace(request)) =>
+          (None, PublishNamespace(request)) =>
             match self.receive_peer_namespace_publication(stream, request) {
               Ok(values) => actions.append(values)
               Err(error) => return Err(error)
             }
-          (Some(inbound), @protocol.GoAwayRequest(goaway)) => {
+          (Some(inbound), GoAwayRequest(goaway)) => {
             actions.append(self.receive_request_goaway(stream, goaway))
             if self.state == Closed {
               return Ok(actions)
             }
             ignore(inbound)
           }
-          (None, @protocol.GoAwayRequest(goaway)) if self.namespace_request_streams.get(
+          (None, GoAwayRequest(goaway)) if self.namespace_request_streams.get(
               stream,
             )
             is Some(_) =>
             actions.append(self.receive_request_goaway(stream, goaway))
-          (None, @protocol.GoAwayRequest(goaway)) if self.inbound_namespace_subscriptions.get(
+          (None, GoAwayRequest(goaway)) if self.inbound_namespace_subscriptions.get(
               stream,
             )
             is Some(_) =>
             actions.append(self.receive_request_goaway(stream, goaway))
-          (Some(_), @protocol.RequestUpdate(update)) =>
+          (Some(_), RequestUpdate(update)) =>
             match self.receive_peer_subscription_update(stream, update) {
               Ok(values) => actions.append(values)
               Err(error) => return Err(error)
             }
-          (None, @protocol.RequestUpdate(update)) if self.namespace_request_streams.get(
+          (None, RequestUpdate(update)) if self.namespace_request_streams.get(
               stream,
             )
             is Some(_) =>
@@ -225,7 +224,7 @@ fn ClientSession::receive_peer_request(
               Ok(values) => actions.append(values)
               Err(error) => return Err(error)
             }
-          (None, @protocol.RequestUpdate(update)) if self.inbound_namespace_subscriptions.get(
+          (None, RequestUpdate(update)) if self.inbound_namespace_subscriptions.get(
               stream,
             )
             is Some(_) =>
@@ -351,7 +350,7 @@ pub fn ClientSession::accept_subscription(
       parameters: match
         self.largest_published_locations.get(inbound.publisher_request_id) {
         Some((group_id, object_id)) =>
-          [{ kind: 0x09UL, value: @protocol.Location(group_id, object_id), }]
+          [{ kind: 0x09UL, value: Location(group_id, object_id), }]
         None => []
       },
       properties: request.properties,

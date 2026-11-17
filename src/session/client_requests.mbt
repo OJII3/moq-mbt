@@ -277,21 +277,20 @@ fn ClientSession::receive_response(
   }
   request.response_buffer = request.response_buffer + bytes
   let context = match (request.kind, request.is_accepted()) {
-    (Publishing, false) =>
-      @protocol.RequestStreamFor(@protocol.RequestOkContext::Publish)
+    (Publishing, false) => @protocol.RequestStreamFor(Publish)
     (Subscribing, true) if request.pending_local_update is Some(_) =>
-      @protocol.RequestStreamFor(@protocol.RequestOkContext::RequestUpdate)
-    _ => @protocol.RequestStream
+      RequestStreamFor(RequestUpdate)
+    _ => RequestStream
   }
   match
     @protocol.decode_control_with_context(request.response_buffer, context) {
-    @protocol.Incomplete => Ok([])
-    @protocol.Invalid(_) => Err(UnexpectedMessage)
-    @protocol.Complete(message, consumed) => {
+    Incomplete => Ok([])
+    Invalid(_) => Err(UnexpectedMessage)
+    Complete(message, consumed) => {
       let trailing = request.response_buffer[consumed:].to_owned()
       request.response_buffer = b""
       let actions = match (request.kind, message) {
-        (Publishing, @protocol.RequestOk(response)) if !request.is_accepted() => {
+        (Publishing, RequestOk(response)) if !request.is_accepted() => {
           request.mark_accepted()
           request.parameters = response.parameters
           self.published_subscriptions[stream] = {
@@ -326,7 +325,7 @@ fn ClientSession::receive_response(
           ] +
           self.drain_joining_fetches(request_id, stream)
         }
-        (Subscribing, @protocol.SubscribeOk(response)) if !request.is_accepted() => {
+        (Subscribing, SubscribeOk(response)) if !request.is_accepted() => {
           guard track_supports_dynamic_groups(response.properties)
             is Some(dynamic_groups) else {
             return Ok(
@@ -366,7 +365,7 @@ fn ClientSession::receive_response(
             ),
           ]
         }
-        (Publishing, @protocol.RequestError(error)) if !request.is_accepted() => {
+        (Publishing, RequestError(error)) if !request.is_accepted() => {
           request.mark_terminal()
           self.request_local_fin_actions(stream) +
           [EmitNotice(PublishRejected(RequestId(request_id), error))] +
@@ -374,17 +373,17 @@ fn ClientSession::receive_response(
             request_id, request_error_invalid_joining_request_id,
           )
         }
-        (Subscribing, @protocol.RequestError(error)) if !request.is_accepted() => {
+        (Subscribing, RequestError(error)) if !request.is_accepted() => {
           request.mark_terminal()
           self.request_local_fin_actions(stream) +
           [EmitNotice(SubscribeRejected(RequestId(request_id), error))]
         }
-        (Publishing, @protocol.RequestUpdate(update)) if request.is_accepted() =>
+        (Publishing, RequestUpdate(update)) if request.is_accepted() =>
           match self.receive_peer_subscription_update(stream, update) {
             Ok(values) => values
             Err(error) => return Err(error)
           }
-        (Subscribing, @protocol.RequestOk(response)) if request.pending_local_update
+        (Subscribing, RequestOk(response)) if request.pending_local_update
           is Some(pending) => {
           let was_forwarding = subscription_forward(request.parameters)
           let forwarding = subscription_forward(pending.effective_parameters)
@@ -414,7 +413,7 @@ fn ClientSession::receive_response(
             ),
           ]
         }
-        (Subscribing, @protocol.RequestError(error)) if request.pending_local_update
+        (Subscribing, RequestError(error)) if request.pending_local_update
           is Some(pending) => {
           request.pending_local_update = None
           request.update_failed = true
@@ -428,12 +427,12 @@ fn ClientSession::receive_response(
             ),
           ]
         }
-        (Subscribing, @protocol.PublishDone(message)) if request.is_accepted() =>
+        (Subscribing, PublishDone(message)) if request.is_accepted() =>
           match self.receive_publish_done(request_id, message) {
             Ok(values) => values
             Err(error) => return Err(error)
           }
-        (_, @protocol.GoAwayRequest(goaway)) =>
+        (_, GoAwayRequest(goaway)) =>
           self.receive_request_goaway(stream, goaway)
         _ => return Err(UnexpectedMessage)
       }
@@ -464,18 +463,18 @@ fn ClientSession::remember_cancelled_subscribe_alias(
   match
     @protocol.decode_control_with_context(
       request.response_buffer,
-      @protocol.RequestStream,
+      RequestStream,
     ) {
-    @protocol.Incomplete => ()
-    @protocol.Invalid(_) => request.response_buffer = b""
-    @protocol.Complete(@protocol.SubscribeOk(response), _) => {
+    Incomplete => ()
+    Invalid(_) => request.response_buffer = b""
+    Complete(SubscribeOk(response), _) => {
       if self.aliases.get(response.track_alias) is None {
         self.aliases[response.track_alias] = request_id
         request.track_alias = Some(response.track_alias)
       }
       request.response_buffer = b""
     }
-    @protocol.Complete(_, _) => request.response_buffer = b""
+    Complete(_, _) => request.response_buffer = b""
   }
 }
 

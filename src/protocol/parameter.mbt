@@ -50,6 +50,7 @@ pub(all) struct TrackNamespace {
 }
 
 ///|
+/// A SUBSCRIBE parameter value. The encoding depends on the parameter kind.
 #derive(Debug, Eq)
 pub(all) enum ParameterValue {
   VarInt(UInt64)
@@ -61,6 +62,7 @@ pub(all) enum ParameterValue {
 }
 
 ///|
+/// Where a subscription starts delivering Objects.
 #derive(Debug, Eq)
 pub(all) enum SubscriptionFilter {
   NextGroupStart
@@ -70,6 +72,7 @@ pub(all) enum SubscriptionFilter {
 }
 
 ///|
+/// One key-value parameter attached to a control message.
 #derive(Debug, Eq)
 pub(all) struct MessageParameter {
   kind : UInt64
@@ -117,7 +120,7 @@ fn encode_track_name(track : TrackName) -> Result[Bytes, CodecError] {
       fn(acc, field) { acc + 9 + field.length() },
       init=track.name.length(),
     )
-  let encoded : Array[Byte] = Array::Array(capacity~)
+  let encoded : Array[Byte] = Array(capacity~)
   append_vi64s(encoded, track.namespace_fields.length().to_uint64())
   let mut total = track.name.length()
   for field in track.namespace_fields {
@@ -223,7 +226,7 @@ fn encode_track_namespace(
       fn(acc, field) { acc + 9 + field.length() },
       init=0,
     )
-  let encoded : Array[Byte] = Array::Array(capacity~)
+  let encoded : Array[Byte] = Array(capacity~)
   append_vi64s(encoded, track_namespace.fields.length().to_uint64())
   let mut total = 0
   for field in track_namespace.fields {
@@ -265,7 +268,7 @@ pub fn join_track_namespace(
 fn encode_subscription_filter(
   filter : SubscriptionFilter,
 ) -> Result[Bytes, CodecError] {
-  let encoded : Array[Byte] = Array::Array(capacity=40)
+  let encoded : Array[Byte] = Array(capacity=40)
   match filter {
     NextGroupStart => append_vi64s(encoded, 1UL)
     LargestObject => append_vi64s(encoded, 2UL)

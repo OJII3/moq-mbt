@@ -117,9 +117,9 @@ pub fn encode_request_update_for(
   context : ControlStreamContext,
 ) -> Result[Bytes, CodecError] {
   let scope : ParameterScope = if context == FetchRequestStream {
-    ParameterScope::FetchUpdate
+    FetchUpdate
   } else {
-    ParameterScope::RequestUpdate
+    RequestUpdate
   }
   match validate_parameters_scope(message.parameters, scope) {
     Ok(_) => ()
@@ -246,6 +246,7 @@ fn encode_goaway_payload(
 }
 
 ///|
+/// Encode a PUBLISH_NAMESPACE request.
 pub fn encode_publish_namespace(
   message : NamespaceRequestMessage,
 ) -> Result[Bytes, CodecError] {
@@ -253,6 +254,7 @@ pub fn encode_publish_namespace(
 }
 
 ///|
+/// Encode a SUBSCRIBE_NAMESPACE request.
 pub fn encode_subscribe_namespace(
   message : NamespaceRequestMessage,
 ) -> Result[Bytes, CodecError] {
@@ -280,6 +282,7 @@ fn encode_namespace_request(
 }
 
 ///|
+/// Encode a NAMESPACE notification for the message's namespace suffix.
 pub fn encode_namespace(
   message : NamespaceSuffixMessage,
 ) -> Result[Bytes, CodecError] {
@@ -287,6 +290,7 @@ pub fn encode_namespace(
 }
 
 ///|
+/// Encode a NAMESPACE_DONE notification for the message's namespace suffix.
 pub fn encode_namespace_done(
   message : NamespaceSuffixMessage,
 ) -> Result[Bytes, CodecError] {

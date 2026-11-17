@@ -1,4 +1,5 @@
 ///|
+/// A SETUP option value: a varint for even kinds and bytes for odd kinds.
 #derive(Debug, Eq)
 pub(all) enum OptionValue {
   Integer(UInt64)
@@ -14,6 +15,7 @@ pub(all) struct SetupOption {
 }
 
 ///|
+/// The options carried by a SETUP frame, in wire order.
 #derive(Debug, Eq)
 pub(all) struct Setup {
   options : Array[SetupOption]
@@ -49,7 +51,7 @@ pub fn encode_setup(setup : Setup) -> Result[Bytes, CodecError] {
       Data(value) => capacity += value.length()
     }
   }
-  let payload : Array[Byte] = Array::Array(capacity~)
+  let payload : Array[Byte] = Array(capacity~)
   let mut previous = 0UL
   let mut first = true
   for option in setup.options {

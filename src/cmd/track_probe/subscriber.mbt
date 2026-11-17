@@ -20,23 +20,22 @@ fn handle_subscriber_notices(
   let mut finished = false
   for notice in notices {
     match notice {
-      @session.SubscribeEstablished(_, track_alias) => {
+      SubscribeEstablished(_, track_alias) => {
         state.track_alias = Some(track_alias.to_uint64())
         eprintln("SUBSCRIBE_OK received")
         println("Subscription accepted (track alias \{track_alias})")
       }
-      @session.SubscribeRejected(_, error) =>
-        fail("SUBSCRIBE rejected (\{error.code})")
-      @session.ControlGoAwayReceived(uri, timeout_ms, request_id) =>
+      SubscribeRejected(_, error) => fail("SUBSCRIBE rejected (\{error.code})")
+      ControlGoAwayReceived(uri, timeout_ms, request_id) =>
         eprintln(
           "session GOAWAY received (URI \{uri.length()} bytes, timeout \{timeout_ms} ms, request ID \{request_id})",
         )
-      @session.RequestGoAwayReceived(request_id, stream, uri, timeout_ms) =>
+      RequestGoAwayReceived(request_id, stream, uri, timeout_ms) =>
         eprintln(
           "request GOAWAY received (request \{request_id}, stream \{stream}, URI \{uri.length()} bytes, timeout \{timeout_ms} ms)",
         )
-      @session.SessionEnded(end) => fail("session ended: \{end.to_repr()}")
-      @session.ObjectReceived(_, _, header, frames) => {
+      SessionEnded(end) => fail("session ended: \{end.to_repr()}")
+      ObjectReceived(_, _, header, frames) => {
         guard header.group_id < state.group_count else {
           fail("received unexpected group \{header.group_id}")
         }
@@ -67,7 +66,7 @@ fn handle_subscriber_notices(
           )
         }
       }
-      @session.ObjectDatagramReceived(request_id, _, datagram) => {
+      ObjectDatagramReceived(request_id, _, datagram) => {
         guard state.expect_datagram else {
           fail("received unexpected Object Datagram")
         }
@@ -79,7 +78,7 @@ fn handle_subscriber_notices(
           fail("Object Datagram Alias did not match SUBSCRIBE_OK")
         }
         match (datagram.status, datagram.end_of_group, datagram.payload) {
-          (@protocol.Normal, false, b"track-probe-object-datagram") => {
+          (Normal, false, b"track-probe-object-datagram") => {
             guard datagram.group_id == state.group_count &&
               datagram.object_id == 0UL else {
               fail("normal Object Datagram fields did not match")
@@ -87,21 +86,21 @@ fn handle_subscriber_notices(
             state.received_sample_datagram = true
             println("Received Object Datagram (normal payload)")
           }
-          (@protocol.Normal, true, b"track-probe-last-in-group") => {
+          (Normal, true, b"track-probe-last-in-group") => {
             guard datagram.group_id == state.group_count &&
               datagram.object_id == 1UL else {
               fail("end-of-group Object Datagram fields did not match")
             }
             println("Received Object Datagram (last object in Group)")
           }
-          (@protocol.EndOfGroup, false, b"") => {
+          (EndOfGroup, false, b"") => {
             guard datagram.group_id == state.group_count + 1UL &&
               datagram.object_id == 0UL else {
               fail("EndOfGroup Object Datagram fields did not match")
             }
             println("Received Object Datagram (EndOfGroup status)")
           }
-          (@protocol.EndOfTrack, false, b"") => {
+          (EndOfTrack, false, b"") => {
             guard datagram.group_id == state.group_count + 2UL &&
               datagram.object_id == 0UL else {
               fail("EndOfTrack Object Datagram fields did not match")
@@ -114,7 +113,7 @@ fn handle_subscriber_notices(
           finished = true
         }
       }
-      @session.GroupFinished(_, group_id) => {
+      GroupFinished(_, group_id) => {
         guard group_id < state.group_count else {
           fail("finished unexpected group \{group_id}")
         }
@@ -130,9 +129,8 @@ fn handle_subscriber_notices(
         state.finished_groups[group_id] = true
         println("Group finished (group \{group_id})")
       }
-      @session.ObjectStreamReset(_, stream) =>
-        fail("object stream \{stream} was reset")
-      @session.PublishDone(_, done) => {
+      ObjectStreamReset(_, stream) => fail("object stream \{stream} was reset")
+      PublishDone(_, done) => {
         guard done.stream_count == state.group_count else {
           fail(
             "PUBLISH_DONE reported \{done.stream_count} streams; expected \{state.group_count}",
@@ -171,7 +169,7 @@ fn run_subscriber(
   datagrams : Bool,
   insecure : Bool,
 ) -> Unit raise {
-  let track : @protocol.TrackName = {
+  let track = @protocol.TrackName::{
     namespace_fields: [@utf8.encode(namespace_field)],
     name: @utf8.encode(track_name),
   }
@@ -179,16 +177,14 @@ fn run_subscriber(
   defer client.close()
   let driver = SessionActionDriver::new()
   let (request_id, actions) = session
-    .subscribe_track(track, parameters=[
-      { kind: 4UL, value: @protocol.VarInt(10000UL), },
-    ])
+    .subscribe_track(track, parameters=[{ kind: 4UL, value: VarInt(10000UL), }])
     .unwrap()
   let request_id = request_id.to_uint64()
   let (notices, opened) = drive_session_actions(
     client, session, actions, driver,
   )
   eprintln("SUBSCRIBE request sent")
-  let state : SubscriberProbeState = {
+  let state = SubscriberProbeState::{
     request_id,
     group_count: group_count.to_uint64(),
     objects_per_group: objects_per_group.to_uint64(),
@@ -204,8 +200,8 @@ fn run_subscriber(
   let mut request_stream : Int64? = None
   for (purpose, stream) in opened {
     match purpose {
-      @session.Request(opened_request_id) if opened_request_id.to_uint64() ==
-        request_id => request_stream = Some(stream)
+      Request(opened_request_id) if opened_request_id.to_uint64() == request_id =>
+        request_stream = Some(stream)
       _ => ()
     }
   }
@@ -220,10 +216,7 @@ fn run_subscriber(
           session,
           receive_session_event(
             session,
-            @session.InboundStreamStarted(
-              stream,
-              client_stream_direction(direction),
-            ),
+            InboundStreamStarted(stream, client_stream_direction(direction)),
           ),
           driver,
         )
@@ -235,7 +228,7 @@ fn run_subscriber(
         let (notices, _) = drive_session_result(
           client,
           session,
-          receive_session_event(session, @session.StreamData(stream, bytes)),
+          receive_session_event(session, StreamData(stream, bytes)),
           driver,
         )
         if handle_subscriber_notices(notices, state) {
@@ -246,7 +239,7 @@ fn run_subscriber(
         let (notices, _) = drive_session_result(
           client,
           session,
-          receive_session_event(session, @session.DatagramReceived(bytes)),
+          receive_session_event(session, DatagramReceived(bytes)),
           driver,
         )
         if handle_subscriber_notices(notices, state) {
@@ -257,7 +250,7 @@ fn run_subscriber(
         let (notices, _) = drive_session_result(
           client,
           session,
-          receive_session_event(session, @session.InboundStreamFinished(stream)),
+          receive_session_event(session, InboundStreamFinished(stream)),
           driver,
         )
         if handle_subscriber_notices(notices, state) {
@@ -271,7 +264,7 @@ fn run_subscriber(
           session,
           receive_session_event(
             session,
-            @session.StreamReset(stream, code.reinterpret_as_uint64()),
+            StreamReset(stream, code.reinterpret_as_uint64()),
           ),
           driver,
         )
@@ -302,7 +295,7 @@ fn run_subscriber(
           session,
           receive_session_event(
             session,
-            @session.SendStopped(stream, code.reinterpret_as_uint64()),
+            SendStopped(stream, code.reinterpret_as_uint64()),
           ),
           driver,
         )
@@ -316,7 +309,7 @@ fn run_subscriber(
           session,
           receive_session_event(
             session,
-            @session.DatagramSendCapabilityChanged(
+            DatagramSendCapabilityChanged(
               enabled=capability.enabled,
               max_length=capability.max_length,
             ),
@@ -341,7 +334,7 @@ fn run_subscriber(
           session,
           receive_session_event(
             session,
-            @session.PeerClosed(code.reinterpret_as_uint64()),
+            PeerClosed(code.reinterpret_as_uint64()),
           ),
           driver,
         )
@@ -353,10 +346,7 @@ fn run_subscriber(
         let (notices, _) = drive_session_result(
           client,
           session,
-          receive_session_event(
-            session,
-            @session.TransportFailed(status.to_int64()),
-          ),
+          receive_session_event(session, TransportFailed(status.to_int64())),
           driver,
         )
         if handle_subscriber_notices(notices, state) {

@@ -61,7 +61,7 @@ fn main {
           return
         }
       }
-      let track : @protocol.TrackName = {
+      let track = @protocol.TrackName::{
         namespace_fields: [@utf8.encode(ffi_namespace())],
         name: @utf8.encode(ffi_track()),
       }
@@ -91,11 +91,11 @@ async fn run_subscriber(
         ffi_set_status("failed: WebTransport session ended")
         return
       }
-      Some(@session.HandshakeComplete(_)) if !subscribed => {
+      Some(HandshakeComplete(_)) if !subscribed => {
         ffi_set_status("ready")
         ffi_wait_to_start().wait()
         match client.next_opened_stream().wait() {
-          Some((@session.Control, _)) => ()
+          Some((Control, _)) => ()
           Some(_) => {
             ffi_set_status("failed: expected the control stream first")
             return
@@ -112,7 +112,7 @@ async fn run_subscriber(
               return
             }
             match client.next_opened_stream().wait() {
-              Some((@session.Request(opened_id), _)) if opened_id == id => ()
+              Some((Request(opened_id), _)) if opened_id == id => ()
               Some(_) => {
                 ffi_set_status("failed: expected the SUBSCRIBE request stream")
                 return
@@ -130,11 +130,11 @@ async fn run_subscriber(
           }
         }
       }
-      Some(@session.SubscribeEstablished(id, _alias)) if id == request_id => {
+      Some(SubscribeEstablished(id, _alias)) if id == request_id => {
         subscribed = true
         ffi_set_status("subscribed")
       }
-      Some(@session.ObjectReceived(id, _, header, frames)) if id == request_id =>
+      Some(ObjectReceived(id, _, header, frames)) if id == request_id =>
         for frame in frames {
           let expected = @utf8.encode(
             "group-\{header.group_id}-object-\{frame.object_id}",
@@ -146,11 +146,11 @@ async fn run_subscriber(
           received_objects += 1
           ffi_set_status("objects-\{received_objects}")
         }
-      Some(@session.GroupFinished(id, _group_id)) if id == request_id => {
+      Some(GroupFinished(id, _group_id)) if id == request_id => {
         finished_groups += 1
         ffi_set_status("groups-\{finished_groups}")
       }
-      Some(@session.PublishDone(id, done)) if id == request_id => {
+      Some(PublishDone(id, done)) if id == request_id => {
         if done.stream_count != 2UL ||
           received_objects != 4 ||
           finished_groups != 2 {
@@ -163,11 +163,11 @@ async fn run_subscriber(
         ffi_set_status("passed")
         close_connection(client)
       }
-      Some(@session.SubscribeRejected(id, error)) if id == request_id => {
+      Some(SubscribeRejected(id, error)) if id == request_id => {
         ffi_set_status("failed: SUBSCRIBE rejected \{error.code}")
         return
       }
-      Some(@session.SessionEnded(end)) => {
+      Some(SessionEnded(end)) => {
         ffi_set_status("failed: session ended \{end.to_repr()}")
         return
       }
@@ -182,10 +182,10 @@ async fn publish_group(
   subscription_stream : @session.StreamId,
   group_id : UInt64,
 ) -> Bool {
-  let header : @protocol.SubgroupHeader = {
+  let header = @protocol.SubgroupHeader::{
     track_alias: 1UL,
     group_id,
-    subgroup_id_mode: @protocol.Zero,
+    subgroup_id_mode: Zero,
     publisher_priority: None,
     end_of_group: true,
     first_object: true,
@@ -204,7 +204,7 @@ async fn publish_group(
     return false
   }
   let object_stream = match client.next_opened_stream().wait() {
-    Some((@session.Object(_), stream)) => stream
+    Some((Object(_), stream)) => stream
     Some(_) => {
       ffi_set_status("failed: unexpected stream opened for Object")
       return false
@@ -216,9 +216,9 @@ async fn publish_group(
   }
   ffi_set_status("sending-group-\{group_id}")
   for object_id in 0UL..<2UL {
-    let frame : @protocol.SubgroupFrame = {
+    let frame = @protocol.SubgroupFrame::{
       object_id,
-      status: @protocol.Normal,
+      status: Normal,
       properties: b"\x02\x2a",
       payload: @utf8.encode("group-\{group_id}-object-\{object_id}"),
     }
@@ -240,9 +240,9 @@ async fn publish_group(
   let mut finished = false
   while !finished {
     match client.next_notice().wait() {
-      Some(@session.ObjectStreamSendFinished(stream)) if stream == object_stream =>
+      Some(ObjectStreamSendFinished(stream)) if stream == object_stream =>
         finished = true
-      Some(@session.SessionEnded(end)) => {
+      Some(SessionEnded(end)) => {
         ffi_set_status("failed: session ended \{end.to_repr()}")
         return false
       }
@@ -259,16 +259,15 @@ async fn publish_group(
 ///|
 async fn close_connection(client : @js_adapter.BrowserClient) -> Unit {
   match client.close(0L, "interop complete") {
-    Err(@js_adapter.InvalidCloseCode(code)) =>
+    Err(InvalidCloseCode(code)) =>
       ffi_set_status("failed: invalid close code \{code}")
-    Err(@js_adapter.CloseReasonTooLong(length)) =>
+    Err(CloseReasonTooLong(length)) =>
       ffi_set_status("failed: close reason too long \{length}")
     Ok(_) =>
       match client.closed().wait() {
-        @js_adapter.LocalClose => ()
-        @js_adapter.PeerClose(_) =>
-          ffi_set_status("failed: connection closed by the peer")
-        @js_adapter.Failed(error) =>
+        LocalClose => ()
+        PeerClose(_) => ffi_set_status("failed: connection closed by the peer")
+        Failed(error) =>
           ffi_set_status("failed: connection close failed: \{error.message}")
       }
   }
@@ -280,16 +279,16 @@ fn dispatch_actions(
   actions : Array[@session.SessionAction],
 ) -> Bool {
   match client.dispatch(actions) {
-    @driver.Accepted => true
-    @driver.QueueFull => {
+    Accepted => true
+    QueueFull => {
       ffi_set_status("failed: action queue full")
       false
     }
-    @driver.TooLarge => {
+    TooLarge => {
       ffi_set_status("failed: action batch too large")
       false
     }
-    @driver.DriverFailed => {
+    DriverFailed => {
       ffi_set_status("failed: session driver failed")
       false
     }
@@ -310,10 +309,10 @@ async fn run_publisher(
         ffi_set_status("failed: WebTransport session ended")
         return
       }
-      Some(@session.HandshakeComplete(_)) if publish_stream is None => {
+      Some(HandshakeComplete(_)) if publish_stream is None => {
         ffi_set_status("handshake")
         match client.next_opened_stream().wait() {
-          Some((@session.Control, _)) => ()
+          Some((Control, _)) => ()
           Some(_) => {
             ffi_set_status("failed: expected the control stream first")
             return
@@ -330,7 +329,7 @@ async fn run_publisher(
               return
             }
             match client.next_opened_stream().wait() {
-              Some((@session.Request(request_id), stream)) if request_id == id =>
+              Some((Request(request_id), stream)) if request_id == id =>
                 publish_stream = Some(stream)
               Some(_) => {
                 ffi_set_status("failed: expected the PUBLISH request stream")
@@ -348,7 +347,7 @@ async fn run_publisher(
           }
         }
       }
-      Some(@session.PublishAccepted(id, _, _)) if id == publish_id => {
+      Some(PublishAccepted(id, _, _)) if id == publish_id => {
         ffi_set_status("published")
         ffi_wait_to_start().wait()
         let stream = publish_stream.unwrap()
@@ -366,9 +365,9 @@ async fn run_publisher(
         let mut done_sent = false
         while !done_sent {
           match client.next_notice().wait() {
-            Some(@session.StreamSendFinished(sent_stream, @session.Sent)) if sent_stream ==
-              stream => done_sent = true
-            Some(@session.SessionEnded(end)) => {
+            Some(StreamSendFinished(sent_stream, Sent)) if sent_stream == stream =>
+              done_sent = true
+            Some(SessionEnded(end)) => {
               ffi_set_status("failed: session ended \{end.to_repr()}")
               return
             }
@@ -385,11 +384,11 @@ async fn run_publisher(
         ffi_set_status("passed")
         close_connection(client)
       }
-      Some(@session.PublishRejected(id, error)) if id == publish_id => {
+      Some(PublishRejected(id, error)) if id == publish_id => {
         ffi_set_status("failed: PUBLISH rejected \{error.code}")
         return
       }
-      Some(@session.SessionEnded(end)) => {
+      Some(SessionEnded(end)) => {
         ffi_set_status("failed: session ended \{end.to_repr()}")
         return
       }

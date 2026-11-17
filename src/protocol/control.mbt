@@ -1,4 +1,5 @@
 ///|
+/// A SUBSCRIBE request identifying the track to subscribe to.
 #derive(Debug, Eq)
 pub(all) struct SubscribeMessage {
   request_id : UInt64
@@ -7,6 +8,7 @@ pub(all) struct SubscribeMessage {
 }
 
 ///|
+/// A PUBLISH request that announces a track and the alias used by its data streams.
 #derive(Debug, Eq)
 pub(all) struct PublishMessage {
   request_id : UInt64
@@ -17,6 +19,7 @@ pub(all) struct PublishMessage {
 }
 
 ///|
+/// A SUBSCRIBE_OK response carrying the Track Alias assigned by the publisher.
 #derive(Debug, Eq)
 pub(all) struct SubscribeOkMessage {
   track_alias : UInt64
@@ -25,6 +28,7 @@ pub(all) struct SubscribeOkMessage {
 }
 
 ///|
+/// A REQUEST_OK response carrying request-scoped parameters and properties.
 #derive(Debug, Eq)
 pub(all) struct RequestOkMessage {
   parameters : Array[MessageParameter]
@@ -32,6 +36,7 @@ pub(all) struct RequestOkMessage {
 }
 
 ///|
+/// A REQUEST_UPDATE that supplies a new Request ID and replacement parameters.
 #derive(Debug, Eq)
 pub(all) struct RequestUpdateMessage {
   request_id : UInt64
@@ -39,6 +44,7 @@ pub(all) struct RequestUpdateMessage {
 }
 
 ///|
+/// A Group and Object position in a FETCH range.
 #derive(Debug, Eq)
 pub(all) struct FetchLocation {
   group : UInt64
@@ -56,6 +62,7 @@ pub(all) enum FetchType {
 }
 
 ///|
+/// A FETCH request for Objects in a track.
 #derive(Debug, Eq)
 pub(all) struct FetchMessage {
   request_id : UInt64
@@ -64,6 +71,7 @@ pub(all) struct FetchMessage {
 }
 
 ///|
+/// A FETCH_OK response with the end location and track properties.
 #derive(Debug, Eq)
 pub(all) struct FetchOkMessage {
   end_of_track : Byte
@@ -73,6 +81,7 @@ pub(all) struct FetchOkMessage {
 }
 
 ///|
+/// A GOAWAY sent on the control stream, including the URI and timeout.
 #derive(Debug, Eq)
 pub(all) struct GoAwayControlMessage {
   uri : Bytes
@@ -81,6 +90,7 @@ pub(all) struct GoAwayControlMessage {
 }
 
 ///|
+/// A GOAWAY sent on a request stream, where the Request ID is implied.
 #derive(Debug, Eq)
 pub(all) struct GoAwayRequestMessage {
   uri : Bytes
@@ -88,6 +98,7 @@ pub(all) struct GoAwayRequestMessage {
 }
 
 ///|
+/// The request type answered by a REQUEST_OK, used to select its parameter scope.
 #derive(Debug, Eq)
 pub(all) enum RequestOkContext {
   Publish
@@ -129,6 +140,7 @@ priv enum ParameterScope {
 }
 
 ///|
+/// A REQUEST_ERROR response with a code, retry interval, reason, and redirect.
 #derive(Debug, Eq)
 pub(all) struct RequestErrorMessage {
   code : UInt64
@@ -138,6 +150,7 @@ pub(all) struct RequestErrorMessage {
 }
 
 ///|
+/// A PUBLISH_DONE notification that ends a subscription and reports its stream count.
 #derive(Debug, Eq)
 pub(all) struct PublishDoneMessage {
   code : UInt64
@@ -146,6 +159,7 @@ pub(all) struct PublishDoneMessage {
 }
 
 ///|
+/// A PUBLISH_NAMESPACE or SUBSCRIBE_NAMESPACE request.
 #derive(Debug, Eq)
 pub(all) struct NamespaceRequestMessage {
   request_id : UInt64
@@ -154,12 +168,14 @@ pub(all) struct NamespaceRequestMessage {
 }
 
 ///|
+/// A NAMESPACE or NAMESPACE_DONE notification for a namespace suffix.
 #derive(Debug, Eq)
 pub(all) struct NamespaceSuffixMessage {
   track_namespace : TrackNamespace
 }
 
 ///|
+/// A control message decoded from a control stream or request stream.
 #derive(Debug, Eq)
 pub(all) enum ControlMessage {
   Subscribe(SubscribeMessage)
@@ -232,7 +248,7 @@ fn parameter_allowed(kind : UInt64, context : ParameterScope) -> Bool {
           kind == 0x22 ||
           kind == 0x32
         RequestUpdate => kind == 0x08 || kind == 0x09
-        RequestOkContext::FetchUpdate => false
+        FetchUpdate => false
         TrackStatus => kind == 0x09
         Namespace => false
       }

@@ -18,6 +18,7 @@ pub(all) enum HandshakeError {
 }
 
 ///|
+/// Return the MoQT connection-close code for the handshake error.
 pub fn HandshakeError::close_code(self : HandshakeError) -> UInt64 {
   match self {
     InvalidServerPath => 0x8
@@ -67,6 +68,7 @@ pub fn ClientHandshake::new(
 }
 
 ///|
+/// Return the negotiated protocol version.
 pub fn ClientHandshake::version(self : ClientHandshake) -> Version {
   self.version
 }

@@ -78,7 +78,7 @@ fn ClientSession::receive_peer_subscription_update(
   self.peer_request_ids[message.request_id] = stream
   self.note_peer_request_id(message.request_id)
   if self.control_goaway_sent {
-    let error : @protocol.RequestErrorMessage = {
+    let error = @protocol.RequestErrorMessage::{
       code: request_error_going_away,
       retry_interval: 0UL,
       reason: b"",
@@ -177,7 +177,7 @@ pub fn ClientSession::update_subscription(
   }
   for parameter in parameters {
     if parameter.kind == 0x32 && !request.dynamic_groups {
-      return Err(Encoding(@protocol.InvalidParameterValue(0x32)))
+      return Err(Encoding(InvalidParameterValue(0x32)))
     }
   }
   guard request.stream is Some(stream) else {
@@ -245,7 +245,7 @@ pub fn ClientSession::accept_subscription_update(
       Some((group_id, object_id)) =>
         response_parameters = merge_subscription_parameters(
           response_parameters,
-          [{ kind: 0x09UL, value: @protocol.Location(group_id, object_id), }],
+          [{ kind: 0x09UL, value: Location(group_id, object_id), }],
         )
       None => ()
     }
@@ -257,20 +257,17 @@ pub fn ClientSession::accept_subscription_update(
       Some((group_id, object_id)) =>
         response_parameters = merge_subscription_parameters(
           response_parameters,
-          [{ kind: 0x09UL, value: @protocol.Location(group_id, object_id), }],
+          [{ kind: 0x09UL, value: Location(group_id, object_id), }],
         )
       None => ()
     }
   }
-  let response : @protocol.RequestOkMessage = {
+  let response = @protocol.RequestOkMessage::{
     parameters: response_parameters,
     properties: response.properties,
   }
   let response_bytes = match
-    @protocol.encode_request_ok_for(
-      response,
-      @protocol.RequestOkContext::RequestUpdate,
-    ) {
+    @protocol.encode_request_ok_for(response, RequestUpdate) {
     Ok(value) => value
     Err(error) => return Err(Encoding(error))
   }
@@ -348,7 +345,7 @@ pub fn ClientSession::reject_subscription_update(
         request.mark_terminal()
       }
   }
-  let failure : @protocol.PublishDoneMessage = {
+  let failure = @protocol.PublishDoneMessage::{
     code: 8UL,
     stream_count: subscription.opened_stream_count,
     reason: b"",

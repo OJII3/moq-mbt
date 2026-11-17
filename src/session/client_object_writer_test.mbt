@@ -3,8 +3,7 @@ fn incremental_send_bytes(actions : Array[@session.SessionAction]) -> Bytes {
   let mut bytes = b""
   for action in actions {
     match action {
-      @session.SendChunk(_, data) | @session.SendObjectChunk(_, data, _) =>
-        bytes = bytes + data
+      SendChunk(_, data) | SendObjectChunk(_, data, _) => bytes = bytes + data
       _ => ()
     }
   }
@@ -16,7 +15,7 @@ fn incremental_decode_frames(
   bytes : Bytes,
 ) -> Array[@protocol.SubgroupFrame] raise {
   let (header, used) = match @protocol.decode_subgroup_header(bytes) {
-    @protocol.Complete(header, used) => (header, used)
+    Complete(header, used) => (header, used)
     _ => fail("expected subgroup header")
   }
   let decoder = @protocol.SubgroupDecoder::new(header)
@@ -24,7 +23,7 @@ fn incremental_decode_frames(
   let mut remaining = bytes[used:].to_owned()
   while !remaining.is_empty() {
     match decoder.decode_next(remaining) {
-      @protocol.Complete(frame, used) => {
+      Complete(frame, used) => {
         frames.push(frame)
         remaining = remaining[used:].to_owned()
       }
@@ -38,28 +37,26 @@ fn incremental_decode_frames(
 test "incremental Object cannot begin before stream open" {
   let publisher = publisher_started()
   let (group, _) = writer_group_open(publisher, 0UL)
-  assert_true(group.begin_object(2UL) is Err(@session.ObjectStreamNotReady))
+  assert_true(group.begin_object(2UL) is Err(ObjectStreamNotReady))
 }
 
 ///|
 test "incremental Object enforces exact payload length and blocks group FIN" {
   let publisher = publisher_started()
   let (group, token) = writer_group_open(publisher, 0UL)
-  let actions = publisher
-    .receive(@session.StreamOpened(@session.Object(token), 50))
-    .unwrap()
+  let actions = publisher.receive(StreamOpened(Object(token), 50)).unwrap()
   let (object, header) = group.begin_object(3UL).unwrap()
-  assert_true(group.begin_object(1UL) is Err(@session.UnexpectedMessage))
-  assert_eq(group.send(b"blocked"), Err(@session.UnexpectedMessage))
-  assert_eq(group.finish(), Err(@session.UnexpectedMessage))
-  assert_eq(object.finish(), Err(@session.ObjectPayloadLengthMismatch))
-  assert_eq(object.write(b"excess"), Err(@session.ObjectPayloadLengthMismatch))
+  assert_true(group.begin_object(1UL) is Err(UnexpectedMessage))
+  assert_eq(group.send(b"blocked"), Err(UnexpectedMessage))
+  assert_eq(group.finish(), Err(UnexpectedMessage))
+  assert_eq(object.finish(), Err(ObjectPayloadLengthMismatch))
+  assert_eq(object.write(b"excess"), Err(ObjectPayloadLengthMismatch))
   let first = object.write(b"ab").unwrap()
-  assert_eq(object.finish(), Err(@session.ObjectPayloadLengthMismatch))
+  assert_eq(object.finish(), Err(ObjectPayloadLengthMismatch))
   let last = object.write(b"c").unwrap()
   assert_eq(object.finish(), Ok([]))
-  assert_eq(object.write(b"late"), Err(@session.UnexpectedMessage))
-  assert_eq(object.finish(), Err(@session.UnexpectedMessage))
+  assert_eq(object.write(b"late"), Err(UnexpectedMessage))
+  assert_eq(object.finish(), Err(UnexpectedMessage))
   let bytes = incremental_send_bytes(actions + header + first + last)
   let frames = incremental_decode_frames(bytes)
   assert_eq(frames.length(), 1)
@@ -71,52 +68,44 @@ test "incremental Object enforces exact payload length and blocks group FIN" {
 ///|
 test "incremental Object starts timeout at first nonempty payload chunk" {
   let publisher = delivery_publisher()
-  ignore(publisher.receive(@session.Clock(100UL)).unwrap())
+  ignore(publisher.receive(Clock(100UL)).unwrap())
   let (group, token) = writer_group_open(publisher, 0UL)
-  ignore(
-    publisher
-    .receive(@session.StreamOpened(@session.Object(token), 50))
-    .unwrap(),
-  )
+  ignore(publisher.receive(StreamOpened(Object(token), 50)).unwrap())
   let (object, header) = group.begin_object(3UL).unwrap()
-  assert_true(header[0] is @session.SendChunk(50, _))
+  assert_true(header[0] is SendChunk(50, _))
   assert_eq(object.write(b""), Ok([]))
-  ignore(publisher.receive(@session.Clock(120UL)).unwrap())
+  ignore(publisher.receive(Clock(120UL)).unwrap())
   let first = object.write(b"a").unwrap()
-  assert_true(first[0] is @session.SendObjectChunk(50, b"a", 130UL))
-  ignore(publisher.receive(@session.Clock(125UL)).unwrap())
+  assert_true(first[0] is SendObjectChunk(50, b"a", 130UL))
+  ignore(publisher.receive(Clock(125UL)).unwrap())
   let next = object.write(b"bc").unwrap()
-  assert_true(next[0] is @session.SendObjectChunk(50, b"bc", 130UL))
+  assert_true(next[0] is SendObjectChunk(50, b"bc", 130UL))
 }
 
 ///|
 test "aborting group invalidates incremental Object writer" {
   let publisher = publisher_started()
   let (group, token) = writer_group_open(publisher, 0UL)
-  ignore(
-    publisher
-    .receive(@session.StreamOpened(@session.Object(token), 50))
-    .unwrap(),
-  )
+  ignore(publisher.receive(StreamOpened(Object(token), 50)).unwrap())
   let (object, _) = group.begin_object(2UL).unwrap()
   ignore(object.write(b"a").unwrap())
   ignore(group.abort(2UL).unwrap())
-  assert_eq(object.write(b"b"), Err(@session.UnknownStream))
-  assert_eq(object.finish(), Err(@session.UnknownStream))
+  assert_eq(object.write(b"b"), Err(UnknownStream))
+  assert_eq(object.finish(), Err(UnknownStream))
 }
 
 ///|
 test "incremental Object carries properties and zero length payload" {
   let publisher = publisher_started()
   let (group, actions) = publisher
-    .open_object_group(@session.StreamId(40), 0UL, has_properties=true)
+    .open_object_group(StreamId(40), 0UL, has_properties=true)
     .unwrap()
   let token = match actions[0] {
-    @session.OpenStream(_, @session.Object(value)) => value
+    OpenStream(_, Object(value)) => value
     _ => fail("expected open")
   }
   let stream_header = publisher
-    .receive(@session.StreamOpened(@session.Object(token), 50))
+    .receive(StreamOpened(Object(token), 50))
     .unwrap()
   let (object, header) = group
     .begin_object(0UL, properties=b"\x02\x01")
@@ -126,7 +115,7 @@ test "incremental Object carries properties and zero length payload" {
   let frames = incremental_decode_frames(bytes)
   assert_eq(frames[0].payload, b"")
   assert_eq(frames[0].properties, b"\x02\x01")
-  assert_eq(frames[0].status, @protocol.Normal)
+  assert_eq(frames[0].status, Normal)
 }
 
 ///|
@@ -135,19 +124,13 @@ test "incremental Object delivers two MiB using independent bounded chunks" {
   let subscriber = subscriber_started()
   subscriber_start_stream(subscriber, 50)
   let (group, token) = writer_group_open(publisher, 0UL)
-  let header = publisher
-    .receive(@session.StreamOpened(@session.Object(token), 50))
-    .unwrap()
+  let header = publisher.receive(StreamOpened(Object(token), 50)).unwrap()
   ignore(
-    subscriber
-    .receive(@session.StreamData(50, incremental_send_bytes(header)))
-    .unwrap(),
+    subscriber.receive(StreamData(50, incremental_send_bytes(header))).unwrap(),
   )
   let (object, actions) = group.begin_object(2UL * 1024UL * 1024UL).unwrap()
   ignore(
-    subscriber
-    .receive(@session.StreamData(50, incremental_send_bytes(actions)))
-    .unwrap(),
+    subscriber.receive(StreamData(50, incremental_send_bytes(actions))).unwrap(),
   )
   let chunk = Bytes::make(64 * 1024, 42)
   let mut received_count = 0
@@ -155,7 +138,7 @@ test "incremental Object delivers two MiB using independent bounded chunks" {
     let actions = object.write(chunk).unwrap()
     assert_eq(actions.length(), 1)
     let notices = subscriber
-      .receive(@session.StreamData(50, incremental_send_bytes(actions)))
+      .receive(StreamData(50, incremental_send_bytes(actions)))
       .unwrap()
     for frame in collect_frames(notices) {
       assert_eq(frame.payload.length(), 2 * 1024 * 1024)
@@ -170,26 +153,18 @@ test "incremental Object delivers two MiB using independent bounded chunks" {
 test "Object receive buffer rejects configured limit" {
   let subscriber = client_session_ready(max_object_buffer_bytes=8UL)
   ignore(subscriber.subscribe_track(subscriber_track()).unwrap())
-  ignore(
-    subscriber
-    .receive(@session.StreamOpened(@session.Request(0UL), 30))
-    .unwrap(),
-  )
-  ignore(
-    subscriber
-    .receive(@session.StreamData(30, b"\x04\x00\x02\x01\x00"))
-    .unwrap(),
-  )
+  ignore(subscriber.receive(StreamOpened(Request(0UL), 30)).unwrap())
+  ignore(subscriber.receive(StreamData(30, b"\x04\x00\x02\x01\x00")).unwrap())
   subscriber_start_stream(subscriber, 9)
   assert_eq(
     subscriber.receive(
-      @session.StreamData(
+      StreamData(
         9,
         @protocol.encode_subgroup_header(subscriber_header(0UL, false)) +
         b"\x00\x10payload",
       ),
     ),
-    Ok([@session.StopReceiving(9, 3UL)]),
+    Ok([StopReceiving(9, 3UL)]),
   )
 }
 
@@ -202,16 +177,12 @@ test "incremental Object encodes the full UInt64 payload length with Draft18 vi6
     ] {
     let publisher = publisher_started()
     let (group, token) = writer_group_open(publisher, 0UL)
-    ignore(
-      publisher
-      .receive(@session.StreamOpened(@session.Object(token), 50L))
-      .unwrap(),
-    )
+    ignore(publisher.receive(StreamOpened(Object(token), 50L)).unwrap())
     let (object, actions) = group.begin_object(length).unwrap()
     // The first Object ID is zero; the declared length occupies nine bytes.
-    assert_eq(actions, [@session.SendChunk(50L, b"\x00" + encoded_length)])
-    assert_eq(object.write(b"a"), Ok([@session.SendChunk(50L, b"a")]))
-    assert_eq(object.finish(), Err(@session.ObjectPayloadLengthMismatch))
+    assert_eq(actions, [SendChunk(50L, b"\x00" + encoded_length)])
+    assert_eq(object.write(b"a"), Ok([SendChunk(50L, b"a")]))
+    assert_eq(object.finish(), Err(ObjectPayloadLengthMismatch))
     ignore(group.abort(2UL).unwrap())
   }
 }

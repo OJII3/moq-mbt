@@ -26,12 +26,12 @@ test "FORWARD parameter defaults to enabled and can be disabled" {
 test "FORWARD parameter encodes as the Draft 18 parameter kind" {
   let parameter = @protocol.forward_parameter(false)
   assert_eq(parameter.kind, 0x10UL)
-  assert_eq(parameter.value, @protocol.Byte(0))
+  assert_eq(parameter.value, Byte(0))
 }
 
 ///|
 test "RENDEZVOUS_TIMEOUT parameter encodes as a varint with the Draft 18 kind" {
   let parameter = @protocol.rendezvous_timeout_parameter(500)
   assert_eq(parameter.kind, 0x04UL)
-  assert_eq(parameter.value, @protocol.VarInt(500))
+  assert_eq(parameter.value, VarInt(500))
 }

@@ -26,7 +26,7 @@ fn ClientSession::delivery_timeout(
       }
       for parameter in subscription.parameters {
         if parameter.kind == kind {
-          if parameter.value is @protocol.VarInt(value) {
+          if parameter.value is VarInt(value) {
             if value == 0UL {
               return publisher_timeout
             }

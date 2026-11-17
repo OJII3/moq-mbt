@@ -60,7 +60,7 @@ fn namespace_parameter_prefix(
       return Err(UnexpectedMessage)
     }
     match parameter.value {
-      @protocol.NamespacePrefix(value) if prefix is None => prefix = Some(value)
+      NamespacePrefix(value) if prefix is None => prefix = Some(value)
       _ => return Err(UnexpectedMessage)
     }
   }
@@ -94,7 +94,7 @@ fn ClientSession::receive_peer_namespace_subscription_update(
   self.note_peer_request_id(update.request_id)
   inbound.pending_updates.push({ request_id: update.request_id, prefix, })
   if self.control_goaway_sent {
-    let error : @protocol.RequestErrorMessage = {
+    let error = @protocol.RequestErrorMessage::{
       code: request_error_going_away,
       retry_interval: 0UL,
       reason: b"",
@@ -144,7 +144,7 @@ fn ClientSession::receive_peer_namespace_subscription(
     }
   }
   if self.control_goaway_sent || overlaps {
-    let error : @protocol.RequestErrorMessage = {
+    let error = @protocol.RequestErrorMessage::{
       code: if overlaps {
         0x30UL
       } else {
@@ -263,7 +263,7 @@ pub fn ClientSession::update_namespace_subscription(
     return Err(SubscriptionNotAccepted)
   }
   let parameters : Array[@protocol.MessageParameter] = [
-    { kind: 0x34UL, value: @protocol.NamespacePrefix(prefix), },
+    { kind: 0x34UL, value: NamespacePrefix(prefix), },
   ]
   let update_id = self.allocate_request_id()
   let bytes = match
@@ -298,7 +298,7 @@ pub fn ClientSession::accept_namespace_subscription(
     if other_stream != stream &&
       other.state == Active &&
       namespace_prefixes_overlap(other.prefix, inbound.prefix) {
-      let error : @protocol.RequestErrorMessage = {
+      let error = @protocol.RequestErrorMessage::{
         code: 0x30UL,
         retry_interval: 0UL,
         reason: b"",
@@ -327,7 +327,7 @@ pub fn ClientSession::accept_namespace_subscription(
   let bytes = match
     @protocol.encode_request_ok_for(
       { parameters: [], properties: b"", },
-      @protocol.Namespace,
+      Namespace,
     ) {
     Ok(value) => value
     Err(error) => return Err(Encoding(error))
@@ -402,7 +402,7 @@ pub fn ClientSession::accept_namespace_subscription_update(
     }
   }
   let response = match
-    @protocol.encode_request_ok_for(response_message, @protocol.RequestUpdate) {
+    @protocol.encode_request_ok_for(response_message, RequestUpdate) {
     Ok(value) => value
     Err(error) => return Err(Encoding(error))
   }
@@ -615,7 +615,7 @@ fn ClientSession::send_namespace_available(
   if inbound.active_namespaces.contains(ns) {
     return Ok([])
   }
-  let suffix : @protocol.TrackNamespace = {
+  let suffix = @protocol.TrackNamespace::{
     fields: ns.fields[inbound.prefix.fields.length():].to_owned(),
   }
   let bytes = match @protocol.encode_namespace({ track_namespace: suffix, }) {
@@ -639,7 +639,7 @@ fn ClientSession::send_namespace_done(
   guard inbound.active_namespaces.search(ns) is Some(index) else {
     return Ok([])
   }
-  let suffix : @protocol.TrackNamespace = {
+  let suffix = @protocol.TrackNamespace::{
     fields: ns.fields[inbound.prefix.fields.length():].to_owned(),
   }
   let bytes = match
@@ -700,21 +700,21 @@ fn ClientSession::receive_namespace_subscription_response(
   }
   request.response_buffer = request.response_buffer + bytes
   let context = if request.established && request.pending_update is Some(_) {
-    @protocol.RequestStreamFor(@protocol.RequestOkContext::RequestUpdate)
+    @protocol.RequestStreamFor(RequestUpdate)
   } else if request.established {
-    @protocol.RequestStream
+    RequestStream
   } else {
-    @protocol.RequestStreamFor(@protocol.RequestOkContext::Namespace)
+    RequestStreamFor(Namespace)
   }
   match
     @protocol.decode_control_with_context(request.response_buffer, context) {
-    @protocol.Incomplete => Ok([])
-    @protocol.Invalid(_) => Err(UnexpectedMessage)
-    @protocol.Complete(message, consumed) => {
+    Incomplete => Ok([])
+    Invalid(_) => Err(UnexpectedMessage)
+    Complete(message, consumed) => {
       let trailing = request.response_buffer[consumed:].to_owned()
       request.response_buffer = b""
       let actions = match (request.established, message) {
-        (false, @protocol.RequestOk(_)) => {
+        (false, RequestOk(_)) => {
           request.established = true
           [
             EmitNotice(
@@ -725,7 +725,7 @@ fn ClientSession::receive_namespace_subscription_response(
             ),
           ]
         }
-        (false, @protocol.RequestError(error)) => {
+        (false, RequestError(error)) => {
           request.rejected = true
           request.lifetime.local_send_closed = true
           [
@@ -739,8 +739,7 @@ fn ClientSession::receive_namespace_subscription_response(
             SendFin(stream, b""),
           ]
         }
-        (true, @protocol.RequestOk(response)) if request.pending_update
-          is Some(pending) => {
+        (true, RequestOk(response)) if request.pending_update is Some(pending) => {
           request.pending_update = None
           request.prefix = pending.prefix
           let changed : Array[SessionAction] = [
@@ -760,8 +759,7 @@ fn ClientSession::receive_namespace_subscription_response(
           request.active_namespaces = []
           changed
         }
-        (true, @protocol.RequestError(error)) if request.pending_update
-          is Some(pending) => {
+        (true, RequestError(error)) if request.pending_update is Some(pending) => {
           request.pending_update = None
           self.end_namespace_subscription(stream, Cancel(1UL)) +
           [
@@ -774,7 +772,7 @@ fn ClientSession::receive_namespace_subscription_response(
             ),
           ]
         }
-        (true, @protocol.Namespace(suffix)) => {
+        (true, Namespace(suffix)) => {
           let ns = match
             namespace_join(request.prefix, suffix.track_namespace) {
             Ok(value) => value
@@ -789,7 +787,7 @@ fn ClientSession::receive_namespace_subscription_response(
             [EmitNotice(NamespaceDiscovered(RequestId(request_id), ns))]
           }
         }
-        (true, @protocol.NamespaceDone(suffix)) => {
+        (true, NamespaceDone(suffix)) => {
           let ns = match
             namespace_join(request.prefix, suffix.track_namespace) {
             Ok(value) => value
@@ -801,7 +799,7 @@ fn ClientSession::receive_namespace_subscription_response(
           ignore(request.active_namespaces.remove(index))
           [EmitNotice(NamespaceNoLongerAvailable(RequestId(request_id), ns))]
         }
-        (true, @protocol.GoAwayRequest(goaway)) =>
+        (true, GoAwayRequest(goaway)) =>
           self.receive_request_goaway(stream, goaway)
         _ => return Err(UnexpectedMessage)
       }

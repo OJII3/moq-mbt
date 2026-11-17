@@ -267,7 +267,7 @@ pub fn ClientSession::update_published_namespace(
   let bytes = match
     @protocol.encode_request_update_for(
       { request_id: update_id, parameters, },
-      @protocol.RequestStreamFor(@protocol.RequestOkContext::Namespace),
+      RequestStreamFor(Namespace),
     ) {
     Ok(value) => value
     Err(error) => return Err(Encoding(error))
@@ -298,7 +298,7 @@ pub fn ClientSession::accept_namespace_publication(
   let bytes = match
     @protocol.encode_request_ok_for(
       { parameters: [], properties: b"", },
-      @protocol.Namespace,
+      Namespace,
     ) {
     Ok(value) => value
     Err(error) => return Err(Encoding(error))
@@ -384,8 +384,7 @@ pub fn ClientSession::accept_namespace_update(
       return Err(UnexpectedMessage)
     }
   }
-  let bytes = match
-    @protocol.encode_request_ok_for(response, @protocol.RequestUpdate) {
+  let bytes = match @protocol.encode_request_ok_for(response, RequestUpdate) {
     Ok(value) => value
     Err(error) => return Err(Encoding(error))
   }
@@ -479,21 +478,21 @@ fn ClientSession::receive_namespace_response(
   }
   request.response_buffer = request.response_buffer + bytes
   let context = if request.state == NamespacePending {
-    @protocol.RequestStreamFor(@protocol.RequestOkContext::Namespace)
+    @protocol.RequestStreamFor(Namespace)
   } else if request.pending_local_update_id is Some(_) {
-    @protocol.RequestStreamFor(@protocol.RequestOkContext::RequestUpdate)
+    RequestStreamFor(RequestUpdate)
   } else {
-    @protocol.RequestStream
+    RequestStream
   }
   match
     @protocol.decode_control_with_context(request.response_buffer, context) {
-    @protocol.Incomplete => Ok([])
-    @protocol.Invalid(_) => Err(UnexpectedMessage)
-    @protocol.Complete(message, consumed) => {
+    Incomplete => Ok([])
+    Invalid(_) => Err(UnexpectedMessage)
+    Complete(message, consumed) => {
       let trailing = request.response_buffer[consumed:].to_owned()
       request.response_buffer = b""
       let actions = match (request.state, message) {
-        (NamespacePending, @protocol.RequestOk(_)) => {
+        (NamespacePending, RequestOk(_)) => {
           request.state = NamespaceAccepted
           let actions : Array[SessionAction] = [
             EmitNotice(
@@ -509,7 +508,7 @@ fn ClientSession::receive_namespace_response(
           }
           actions
         }
-        (NamespacePending, @protocol.RequestError(error)) => {
+        (NamespacePending, RequestError(error)) => {
           request.state = NamespaceTerminal
           request.pending_updates = []
           self.request_local_fin_actions(stream) +
@@ -523,7 +522,7 @@ fn ClientSession::receive_namespace_response(
             ),
           ]
         }
-        (NamespaceAccepted, @protocol.RequestOk(response)) if request.pending_local_update_id
+        (NamespaceAccepted, RequestOk(response)) if request.pending_local_update_id
           is Some(update_id) => {
           request.pending_local_update_id = None
           request.parameters = merge_namespace_parameters(
@@ -541,7 +540,7 @@ fn ClientSession::receive_namespace_response(
             ),
           ]
         }
-        (NamespaceAccepted, @protocol.RequestError(error)) if request.pending_local_update_id
+        (NamespaceAccepted, RequestError(error)) if request.pending_local_update_id
           is Some(update_id) => {
           request.pending_local_update_id = None
           request.state = NamespaceTerminal
@@ -557,7 +556,7 @@ fn ClientSession::receive_namespace_response(
             ),
           ]
         }
-        (NamespaceAccepted, @protocol.GoAwayRequest(goaway)) =>
+        (NamespaceAccepted, GoAwayRequest(goaway)) =>
           self.receive_request_goaway(stream, goaway)
         _ => return Err(UnexpectedMessage)
       }
@@ -593,7 +592,7 @@ fn ClientSession::receive_peer_namespace_update(
   self.peer_request_ids[update.request_id] = stream
   self.note_peer_request_id(update.request_id)
   if self.control_goaway_sent {
-    let error : @protocol.RequestErrorMessage = {
+    let error = @protocol.RequestErrorMessage::{
       code: request_error_going_away,
       retry_interval: 0UL,
       reason: b"",

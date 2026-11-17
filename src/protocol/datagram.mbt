@@ -51,7 +51,7 @@ pub fn encode_object_datagram(
     (!datagram.payload.is_empty() || has_properties) {
     return Err(InvalidDatagram)
   }
-  let bytes : Array[Byte] = Array::Array(
+  let bytes : Array[Byte] = Array(
     capacity=64 + datagram.properties.length() + datagram.payload.length(),
   )
   let mut kind = 0UL

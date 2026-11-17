@@ -1,4 +1,5 @@
 ///|
+/// Errors from request-stream and track state handling.
 #derive(Debug, Eq)
 pub(all) enum TrackSessionError {
   InvalidControlMessage

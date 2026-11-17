@@ -34,10 +34,10 @@ fn start_probe_group(
 ) -> Array[@session.SessionNotice] raise {
   let notices : Array[@session.SessionNotice] = []
   let group_id = group_index.to_uint64()
-  let header : @protocol.SubgroupHeader = {
+  let header = @protocol.SubgroupHeader::{
     track_alias: 1,
     group_id,
-    subgroup_id_mode: @protocol.Zero,
+    subgroup_id_mode: Zero,
     publisher_priority: None,
     end_of_group: true,
     first_object: true,
@@ -55,16 +55,16 @@ fn start_probe_group(
   let mut object_stream : Int64? = None
   for (purpose, opened_stream) in opened {
     match purpose {
-      @session.Object(_) => object_stream = Some(opened_stream)
+      Object(_) => object_stream = Some(opened_stream)
       _ => ()
     }
   }
   let object_stream = object_stream.unwrap()
   state.object_stream_groups[object_stream] = group_id
   for object_index in 0..<state.objects_per_group {
-    let frame : @protocol.SubgroupFrame = {
+    let frame = @protocol.SubgroupFrame::{
       object_id: object_index.to_uint64(),
-      status: @protocol.Normal,
+      status: Normal,
       properties: probe_properties(),
       payload: probe_payload(group_id, object_index.to_uint64()),
     }
@@ -102,7 +102,7 @@ fn probe_datagrams(group_count : UInt64) -> Array[@protocol.ObjectDatagram] {
       publisher_priority: None,
       end_of_group: false,
       properties: b"",
-      status: @protocol.Normal,
+      status: Normal,
       payload: b"track-probe-object-datagram",
     },
     {
@@ -112,7 +112,7 @@ fn probe_datagrams(group_count : UInt64) -> Array[@protocol.ObjectDatagram] {
       publisher_priority: None,
       end_of_group: true,
       properties: b"",
-      status: @protocol.Normal,
+      status: Normal,
       payload: b"track-probe-last-in-group",
     },
     {
@@ -122,7 +122,7 @@ fn probe_datagrams(group_count : UInt64) -> Array[@protocol.ObjectDatagram] {
       publisher_priority: None,
       end_of_group: false,
       properties: b"",
-      status: @protocol.EndOfGroup,
+      status: EndOfGroup,
       payload: b"",
     },
     {
@@ -132,7 +132,7 @@ fn probe_datagrams(group_count : UInt64) -> Array[@protocol.ObjectDatagram] {
       publisher_priority: None,
       end_of_group: false,
       properties: b"",
-      status: @protocol.EndOfTrack,
+      status: EndOfTrack,
       payload: b"",
     },
   ]
@@ -162,7 +162,7 @@ fn serve_publisher_fetch(
   guard start.group <= end.group else {
     fail("relay FETCH requested an invalid group range")
   }
-  let response_end : @protocol.FetchLocation = {
+  let response_end = @protocol.FetchLocation::{
     group: end.group,
     object: if end.object == 0UL {
       state.objects_per_group.to_uint64()
@@ -235,20 +235,13 @@ fn handle_publisher_notices(
 ) -> Unit raise {
   for notice in notices {
     match notice {
-      @session.PublishAccepted(_, _, _) => {
+      PublishAccepted(_, _, _) => {
         eprintln("PUBLISH request accepted")
         state.publish_accepted = true
         state.publish_after = @env.now() + 1000UL
       }
-      @session.PublishRejected(_, error) =>
-        fail("PUBLISH rejected (\{error.code})")
-      @session.SubscriptionUpdateRequested(
-        request_id,
-        update_id,
-        stream,
-        _,
-        parameters,
-      ) => {
+      PublishRejected(_, error) => fail("PUBLISH rejected (\{error.code})")
+      SubscriptionUpdateRequested(request_id, update_id, stream, _, parameters) => {
         eprintln(
           "PUBLISH update requested (request \{request_id}, update \{update_id}, stream \{stream})",
         )
@@ -256,7 +249,7 @@ fn handle_publisher_notices(
           state.peer_ready = true
           eprintln("PUBLISH subscriber forwarding enabled")
         }
-        let response : @protocol.RequestOkMessage = {
+        let response = @protocol.RequestOkMessage::{
           parameters: [],
           properties: [],
         }
@@ -268,7 +261,7 @@ fn handle_publisher_notices(
         )
         for update_notice in update_notices {
           match update_notice {
-            @session.SubscriptionUpdateApplied(_, applied_id, _, _) =>
+            SubscriptionUpdateApplied(_, applied_id, _, _) =>
               eprintln(
                 "PUBLISH subscription update accepted (request \{applied_id})",
               )
@@ -276,20 +269,20 @@ fn handle_publisher_notices(
           }
         }
       }
-      @session.FetchRequested(request_id, _, track, start, end, _) =>
+      FetchRequested(request_id, _, track, start, end, _) =>
         serve_publisher_fetch(
           client, session, driver, state, request_id, track, start, end,
         )
-      @session.ControlGoAwayReceived(uri, timeout_ms, request_id) =>
+      ControlGoAwayReceived(uri, timeout_ms, request_id) =>
         eprintln(
           "session GOAWAY received (URI \{uri.length()} bytes, timeout \{timeout_ms} ms, request ID \{request_id})",
         )
-      @session.RequestGoAwayReceived(request_id, stream, uri, timeout_ms) =>
+      RequestGoAwayReceived(request_id, stream, uri, timeout_ms) =>
         eprintln(
           "request GOAWAY received (request \{request_id}, stream \{stream}, URI \{uri.length()} bytes, timeout \{timeout_ms} ms)",
         )
-      @session.SessionEnded(end) => fail("session ended: \{end.to_repr()}")
-      @session.ObjectStreamSendFinished(stream) =>
+      SessionEnded(end) => fail("session ended: \{end.to_repr()}")
+      ObjectStreamSendFinished(stream) =>
         match state.object_stream_groups.get(stream.to_int64()) {
           Some(group_id) => {
             guard state.finished_object_streams.get(stream.to_int64()) is None else {
@@ -301,7 +294,7 @@ fn handle_publisher_notices(
           }
           None => fail("unknown object stream finished")
         }
-      @session.PublishDone(_, done) => {
+      PublishDone(_, done) => {
         guard done.stream_count == state.group_count else {
           fail(
             "PUBLISH_DONE reported \{done.stream_count} streams; expected \{state.group_count}",
@@ -329,7 +322,7 @@ fn run_publisher(
   wait_for_start : Bool,
   wait_for_fetch : Bool,
 ) -> Unit raise {
-  let track : @protocol.TrackName = {
+  let track = @protocol.TrackName::{
     namespace_fields: [@utf8.encode(namespace_field)],
     name: @utf8.encode(track_name),
   }
@@ -344,12 +337,12 @@ fn run_publisher(
   let mut request_stream : Int64? = None
   for (purpose, stream) in opened {
     match purpose {
-      @session.Request(opened_request_id) if opened_request_id == request_id =>
+      Request(opened_request_id) if opened_request_id == request_id =>
         request_stream = Some(stream)
       _ => ()
     }
   }
-  let state : PublisherProbeState = {
+  let state = PublisherProbeState::{
     track,
     publish_stream: request_stream.unwrap(),
     done_stream: None,
@@ -382,10 +375,7 @@ fn run_publisher(
           session,
           receive_session_event(
             session,
-            @session.InboundStreamStarted(
-              stream,
-              client_stream_direction(direction),
-            ),
+            InboundStreamStarted(stream, client_stream_direction(direction)),
           ),
           driver,
         )
@@ -395,7 +385,7 @@ fn run_publisher(
         let (notices, _) = drive_session_result(
           client,
           session,
-          receive_session_event(session, @session.StreamData(stream, bytes)),
+          receive_session_event(session, StreamData(stream, bytes)),
           driver,
         )
         handle_publisher_notices(client, session, notices, driver, state)
@@ -404,7 +394,7 @@ fn run_publisher(
         let (notices, _) = drive_session_result(
           client,
           session,
-          receive_session_event(session, @session.DatagramReceived(bytes)),
+          receive_session_event(session, DatagramReceived(bytes)),
           driver,
         )
         handle_publisher_notices(client, session, notices, driver, state)
@@ -446,7 +436,7 @@ fn run_publisher(
         let (notices, _) = drive_session_result(
           client,
           session,
-          receive_session_event(session, @session.InboundStreamFinished(stream)),
+          receive_session_event(session, InboundStreamFinished(stream)),
           driver,
         )
         handle_publisher_notices(client, session, notices, driver, state)
@@ -458,7 +448,7 @@ fn run_publisher(
           session,
           receive_session_event(
             session,
-            @session.StreamReset(stream, code.reinterpret_as_uint64()),
+            StreamReset(stream, code.reinterpret_as_uint64()),
           ),
           driver,
         )
@@ -470,7 +460,7 @@ fn run_publisher(
           session,
           receive_session_event(
             session,
-            @session.SendStopped(stream, code.reinterpret_as_uint64()),
+            SendStopped(stream, code.reinterpret_as_uint64()),
           ),
           driver,
         )
@@ -482,7 +472,7 @@ fn run_publisher(
           session,
           receive_session_event(
             session,
-            @session.DatagramSendCapabilityChanged(
+            DatagramSendCapabilityChanged(
               enabled=capability.enabled,
               max_length=capability.max_length,
             ),
@@ -509,7 +499,7 @@ fn run_publisher(
           session,
           receive_session_event(
             session,
-            @session.PeerClosed(code.reinterpret_as_uint64()),
+            PeerClosed(code.reinterpret_as_uint64()),
           ),
           driver,
         )
@@ -519,10 +509,7 @@ fn run_publisher(
         let (notices, _) = drive_session_result(
           client,
           session,
-          receive_session_event(
-            session,
-            @session.TransportFailed(status.to_int64()),
-          ),
+          receive_session_event(session, TransportFailed(status.to_int64())),
           driver,
         )
         handle_publisher_notices(client, session, notices, driver, state)

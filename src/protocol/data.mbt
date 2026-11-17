@@ -62,7 +62,7 @@ pub fn encode_subgroup_header(header : SubgroupHeader) -> Bytes {
   if header.first_object {
     stream_type = stream_type | 0x40UL
   }
-  let bytes : Array[Byte] = Array::Array(capacity=40)
+  let bytes : Array[Byte] = Array(capacity=40)
   for byte in encode_vi64(stream_type) {
     bytes.push(byte)
   }
@@ -144,6 +144,7 @@ pub struct SubgroupDecoder {
 }
 
 ///|
+/// Create a decoder for the Object frames that follow `header`.
 pub fn SubgroupDecoder::new(header : SubgroupHeader) -> SubgroupDecoder {
   let resolved_subgroup_id = match header.subgroup_id_mode {
     Zero => Some(0UL)
@@ -225,7 +226,7 @@ pub fn SubgroupDecoder::decode_next(
     return Incomplete
   }
   let end = next + payload_length.to_int()
-  let frame : SubgroupFrame = {
+  let frame = SubgroupFrame::{
     object_id,
     status,
     properties,
@@ -350,7 +351,7 @@ pub fn encode_subgroup_stream(
   for frame in frames {
     capacity += 36 + frame.properties.length() + frame.payload.length()
   }
-  let bytes : Array[Byte] = Array::Array(capacity~)
+  let bytes : Array[Byte] = Array(capacity~)
   for byte in header_bytes {
     bytes.push(byte)
   }

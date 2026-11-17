@@ -1,18 +1,18 @@
 ///|
 test "FETCH_HEADER encodes and decodes the request ID" {
-  let header : @protocol.FetchHeader = { request_id: 42, }
+  let header = @protocol.FetchHeader::{ request_id: 42, }
   let wire = b"\x05\x2a"
   assert_eq(@protocol.encode_fetch_header(header), wire)
   assert_eq(
     @protocol.decode_fetch_header(wire),
-    @protocol.Complete(header, wire.length()),
+    Complete(header, wire.length()),
   )
-  assert_eq(@protocol.decode_fetch_header(b"\x05"), @protocol.Incomplete)
+  assert_eq(@protocol.decode_fetch_header(b"\x05"), Incomplete)
 }
 
 ///|
 test "FETCH objects round-trip and retain fetch-specific delta state" {
-  let first : @protocol.FetchObject = {
+  let first = @protocol.FetchObject::{
     group_id: 10,
     subgroup_id: Some(3),
     object_id: 7,
@@ -21,7 +21,7 @@ test "FETCH objects round-trip and retain fetch-specific delta state" {
     properties: b"\xaa",
     payload: b"first",
   }
-  let second : @protocol.FetchObject = {
+  let second = @protocol.FetchObject::{
     group_id: 10,
     subgroup_id: Some(3),
     object_id: 8,
@@ -30,17 +30,17 @@ test "FETCH objects round-trip and retain fetch-specific delta state" {
     properties: b"",
     payload: b"",
   }
-  let encoder = @protocol.FetchDataEncoder::new(@protocol.Ascending)
-  let first_wire = encoder.encode(@protocol.FetchDataObject(first)).unwrap()
-  let second_wire = encoder.encode(@protocol.FetchDataObject(second)).unwrap()
-  let decoder = @protocol.FetchDataDecoder::new(@protocol.Ascending)
+  let encoder = @protocol.FetchDataEncoder::new(Ascending)
+  let first_wire = encoder.encode(FetchDataObject(first)).unwrap()
+  let second_wire = encoder.encode(FetchDataObject(second)).unwrap()
+  let decoder = @protocol.FetchDataDecoder::new(Ascending)
   assert_eq(
     decoder.decode_next(first_wire),
-    @protocol.Complete(@protocol.FetchDataObject(first), first_wire.length()),
+    Complete(FetchDataObject(first), first_wire.length()),
   )
   assert_eq(
     decoder.decode_next(second_wire),
-    @protocol.Complete(@protocol.FetchDataObject(second), second_wire.length()),
+    Complete(FetchDataObject(second), second_wire.length()),
   )
   assert_eq(decoder.finish(b""), Ok(()))
 }
@@ -67,16 +67,16 @@ test "FETCH object decoder consumes consecutive frames from one chunk" {
       payload: b"b",
     },
   ]
-  let encoder = @protocol.FetchDataEncoder::new(@protocol.Ascending)
-  let wire = encoder.encode(@protocol.FetchDataObject(objects[0])).unwrap() +
-    encoder.encode(@protocol.FetchDataObject(objects[1])).unwrap()
-  let decoder = @protocol.FetchDataDecoder::new(@protocol.Ascending)
+  let encoder = @protocol.FetchDataEncoder::new(Ascending)
+  let wire = encoder.encode(FetchDataObject(objects[0])).unwrap() +
+    encoder.encode(FetchDataObject(objects[1])).unwrap()
+  let decoder = @protocol.FetchDataDecoder::new(Ascending)
   match decoder.decode_next(wire) {
-    @protocol.Complete(value, consumed) => {
-      assert_eq(value, @protocol.FetchDataObject(objects[0]))
+    Complete(value, consumed) => {
+      assert_eq(value, FetchDataObject(objects[0]))
       match decoder.decode_next(wire[consumed:].to_owned()) {
-        @protocol.Complete(next, final_consumed) => {
-          assert_eq(next, @protocol.FetchDataObject(objects[1]))
+        Complete(next, final_consumed) => {
+          assert_eq(next, FetchDataObject(objects[1]))
           assert_eq(consumed + final_consumed, wire.length())
         }
         _ => fail("expected second FETCH object")
@@ -88,7 +88,7 @@ test "FETCH object decoder consumes consecutive frames from one chunk" {
 
 ///|
 test "FETCH object decoder handles byte splits without advancing on incomplete input" {
-  let object : @protocol.FetchObject = {
+  let object = @protocol.FetchObject::{
     group_id: 1,
     subgroup_id: Some(0),
     object_id: 2,
@@ -97,25 +97,22 @@ test "FETCH object decoder handles byte splits without advancing on incomplete i
     properties: b"",
     payload: b"payload",
   }
-  let wire = @protocol.FetchDataEncoder::new(@protocol.Ascending)
-    .encode(@protocol.FetchDataObject(object))
+  let wire = @protocol.FetchDataEncoder::new(Ascending)
+    .encode(FetchDataObject(object))
     .unwrap()
   for split = 0; split < wire.length(); split = split + 1 {
-    let decoder = @protocol.FetchDataDecoder::new(@protocol.Ascending)
-    assert_eq(
-      decoder.decode_next(wire[:split].to_owned()),
-      @protocol.Incomplete,
-    )
+    let decoder = @protocol.FetchDataDecoder::new(Ascending)
+    assert_eq(decoder.decode_next(wire[:split].to_owned()), Incomplete)
     assert_eq(
       decoder.decode_next(wire),
-      @protocol.Complete(@protocol.FetchDataObject(object), wire.length()),
+      Complete(FetchDataObject(object), wire.length()),
     )
   }
 }
 
 ///|
 test "FETCH object decoder preserves prior state across an incomplete next frame" {
-  let first : @protocol.FetchObject = {
+  let first = @protocol.FetchObject::{
     group_id: 1,
     subgroup_id: Some(0),
     object_id: 2,
@@ -124,7 +121,7 @@ test "FETCH object decoder preserves prior state across an incomplete next frame
     properties: b"",
     payload: b"a",
   }
-  let next : @protocol.FetchObject = {
+  let next = @protocol.FetchObject::{
     group_id: 1,
     subgroup_id: Some(0),
     object_id: 3,
@@ -133,39 +130,39 @@ test "FETCH object decoder preserves prior state across an incomplete next frame
     properties: b"",
     payload: b"payload",
   }
-  let encoder = @protocol.FetchDataEncoder::new(@protocol.Ascending)
-  let first_wire = encoder.encode(@protocol.FetchDataObject(first)).unwrap()
-  let next_wire = encoder.encode(@protocol.FetchDataObject(next)).unwrap()
-  let decoder = @protocol.FetchDataDecoder::new(@protocol.Ascending)
-  assert_true(decoder.decode_next(first_wire) is @protocol.Complete(_, _))
-  assert_eq(decoder.decode_next(next_wire[:2].to_owned()), @protocol.Incomplete)
+  let encoder = @protocol.FetchDataEncoder::new(Ascending)
+  let first_wire = encoder.encode(FetchDataObject(first)).unwrap()
+  let next_wire = encoder.encode(FetchDataObject(next)).unwrap()
+  let decoder = @protocol.FetchDataDecoder::new(Ascending)
+  assert_true(decoder.decode_next(first_wire) is Complete(_, _))
+  assert_eq(decoder.decode_next(next_wire[:2].to_owned()), Incomplete)
   assert_eq(
     decoder.decode_next(next_wire),
-    @protocol.Complete(@protocol.FetchDataObject(next), next_wire.length()),
+    Complete(FetchDataObject(next), next_wire.length()),
   )
 }
 
 ///|
 test "FETCH range end is distinct and updates group and object references" {
-  let marker : @protocol.FetchRangeEnd = {
+  let marker = @protocol.FetchRangeEnd::{
     group_id: 5,
     object_id: 9,
-    kind: @protocol.EndOfUnknownRange,
+    kind: EndOfUnknownRange,
   }
-  let encoder = @protocol.FetchDataEncoder::new(@protocol.Ascending)
-  let wire = encoder.encode(@protocol.FetchDataRangeEnd(marker)).unwrap()
+  let encoder = @protocol.FetchDataEncoder::new(Ascending)
+  let wire = encoder.encode(FetchDataRangeEnd(marker)).unwrap()
   assert_eq(wire, b"\x81\x0c\x05\x09")
-  let decoder = @protocol.FetchDataDecoder::new(@protocol.Ascending)
+  let decoder = @protocol.FetchDataDecoder::new(Ascending)
   assert_eq(
     decoder.decode_next(wire),
-    @protocol.Complete(@protocol.FetchDataRangeEnd(marker), wire.length()),
+    Complete(FetchDataRangeEnd(marker), wire.length()),
   )
-  assert_eq(decoder.finish(b"\x05"), Err(@protocol.InvalidFetchObject))
+  assert_eq(decoder.finish(b"\x05"), Err(InvalidFetchObject))
 }
 
 ///|
 test "FETCH range marker fields are absolute and retain actual object state" {
-  let object : @protocol.FetchObject = {
+  let object = @protocol.FetchObject::{
     group_id: 5,
     subgroup_id: Some(2),
     object_id: 8,
@@ -174,12 +171,12 @@ test "FETCH range marker fields are absolute and retain actual object state" {
     properties: b"",
     payload: b"x",
   }
-  let range : @protocol.FetchRangeEnd = {
+  let range = @protocol.FetchRangeEnd::{
     group_id: 5,
     object_id: 10,
-    kind: @protocol.EndOfNonExistentRange,
+    kind: EndOfNonExistentRange,
   }
-  let after : @protocol.FetchObject = {
+  let after = @protocol.FetchObject::{
     group_id: 5,
     subgroup_id: Some(2),
     object_id: 11,
@@ -188,25 +185,25 @@ test "FETCH range marker fields are absolute and retain actual object state" {
     properties: b"",
     payload: b"y",
   }
-  let encoder = @protocol.FetchDataEncoder::new(@protocol.Ascending)
-  let object_wire = encoder.encode(@protocol.FetchDataObject(object)).unwrap()
-  let range_wire = encoder.encode(@protocol.FetchDataRangeEnd(range)).unwrap()
-  let after_wire = encoder.encode(@protocol.FetchDataObject(after)).unwrap()
-  let decoder = @protocol.FetchDataDecoder::new(@protocol.Ascending)
-  assert_true(decoder.decode_next(object_wire) is @protocol.Complete(_, _))
+  let encoder = @protocol.FetchDataEncoder::new(Ascending)
+  let object_wire = encoder.encode(FetchDataObject(object)).unwrap()
+  let range_wire = encoder.encode(FetchDataRangeEnd(range)).unwrap()
+  let after_wire = encoder.encode(FetchDataObject(after)).unwrap()
+  let decoder = @protocol.FetchDataDecoder::new(Ascending)
+  assert_true(decoder.decode_next(object_wire) is Complete(_, _))
   assert_eq(
     decoder.decode_next(range_wire),
-    @protocol.Complete(@protocol.FetchDataRangeEnd(range), range_wire.length()),
+    Complete(FetchDataRangeEnd(range), range_wire.length()),
   )
   assert_eq(
     decoder.decode_next(after_wire),
-    @protocol.Complete(@protocol.FetchDataObject(after), after_wire.length()),
+    Complete(FetchDataObject(after), after_wire.length()),
   )
 }
 
 ///|
 test "FETCH datagram bit ignores subgroup mode bits" {
-  let object : @protocol.FetchObject = {
+  let object = @protocol.FetchObject::{
     group_id: 3,
     subgroup_id: None,
     object_id: 2,
@@ -215,19 +212,19 @@ test "FETCH datagram bit ignores subgroup mode bits" {
     properties: b"",
     payload: b"d",
   }
-  let wire = @protocol.FetchDataEncoder::new(@protocol.Ascending)
-    .encode(@protocol.FetchDataObject(object))
+  let wire = @protocol.FetchDataEncoder::new(Ascending)
+    .encode(FetchDataObject(object))
     .unwrap()
   let altered = Bytes::from_array([wire[0] | 0x03, ..wire[1:]])
   assert_eq(
-    @protocol.FetchDataDecoder::new(@protocol.Ascending).decode_next(altered),
-    @protocol.Complete(@protocol.FetchDataObject(object), wire.length()),
+    @protocol.FetchDataDecoder::new(Ascending).decode_next(altered),
+    Complete(FetchDataObject(object), wire.length()),
   )
 }
 
 ///|
 test "FETCH descending group order and integer overflow are validated" {
-  let first : @protocol.FetchObject = {
+  let first = @protocol.FetchObject::{
     group_id: 9,
     subgroup_id: Some(0),
     object_id: 4,
@@ -236,7 +233,7 @@ test "FETCH descending group order and integer overflow are validated" {
     properties: b"",
     payload: b"a",
   }
-  let next : @protocol.FetchObject = {
+  let next = @protocol.FetchObject::{
     group_id: 7,
     subgroup_id: Some(0),
     object_id: 0,
@@ -245,14 +242,14 @@ test "FETCH descending group order and integer overflow are validated" {
     properties: b"",
     payload: b"b",
   }
-  let encoder = @protocol.FetchDataEncoder::new(@protocol.Descending)
-  let first_wire = encoder.encode(@protocol.FetchDataObject(first)).unwrap()
-  let next_wire = encoder.encode(@protocol.FetchDataObject(next)).unwrap()
-  let decoder = @protocol.FetchDataDecoder::new(@protocol.Descending)
-  assert_true(decoder.decode_next(first_wire) is @protocol.Complete(_, _))
+  let encoder = @protocol.FetchDataEncoder::new(Descending)
+  let first_wire = encoder.encode(FetchDataObject(first)).unwrap()
+  let next_wire = encoder.encode(FetchDataObject(next)).unwrap()
+  let decoder = @protocol.FetchDataDecoder::new(Descending)
+  assert_true(decoder.decode_next(first_wire) is Complete(_, _))
   assert_eq(
     decoder.decode_next(next_wire),
-    @protocol.Complete(@protocol.FetchDataObject(next), next_wire.length()),
+    Complete(FetchDataObject(next), next_wire.length()),
   )
 
   let max = 0xffffffffffffffffUL
@@ -260,28 +257,18 @@ test "FETCH descending group order and integer overflow are validated" {
     @protocol.encode_vi64(max) +
     @protocol.encode_vi64(max) +
     b"\x03\x00"
-  let at_max = @protocol.FetchDataDecoder::new(@protocol.Ascending)
-  assert_true(at_max.decode_next(initial) is @protocol.Complete(_, _))
-  assert_eq(
-    at_max.decode_next(b"\x00"),
-    @protocol.Invalid(@protocol.InvalidFetchObject),
-  )
+  let at_max = @protocol.FetchDataDecoder::new(Ascending)
+  assert_true(at_max.decode_next(initial) is Complete(_, _))
+  assert_eq(at_max.decode_next(b"\x00"), Invalid(InvalidFetchObject))
 }
 
 ///|
 test "FETCH rejects undefined flags and leading marker state references" {
   assert_true(
-    @protocol.FetchDataDecoder::new(@protocol.Ascending).decode_next(
-      b"\x81\x00",
-    )
-    is @protocol.Invalid(@protocol.InvalidFetchObject),
+    @protocol.FetchDataDecoder::new(Ascending).decode_next(b"\x81\x00")
+    is Invalid(InvalidFetchObject),
   )
-  let decoder = @protocol.FetchDataDecoder::new(@protocol.Ascending)
-  assert_true(
-    decoder.decode_next(b"\x81\x0c\x01\x02") is @protocol.Complete(_, _),
-  )
-  assert_eq(
-    decoder.decode_next(b"\x01\x00"),
-    @protocol.Invalid(@protocol.InvalidFetchObject),
-  )
+  let decoder = @protocol.FetchDataDecoder::new(Ascending)
+  assert_true(decoder.decode_next(b"\x81\x0c\x01\x02") is Complete(_, _))
+  assert_eq(decoder.decode_next(b"\x01\x00"), Invalid(InvalidFetchObject))
 }

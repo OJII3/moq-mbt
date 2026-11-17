@@ -12,34 +12,28 @@ test "ClientSession buffers interleaved fragmented PUBLISH and SUBSCRIBE respons
   for split = 1; split < publish_ok.length(); split = split + 1 {
     let session = client_session_ready()
     ignore(
-      session
-      .publish_track(client_track(b"video"), @session.TrackAlias(1))
-      .unwrap(),
+      session.publish_track(client_track(b"video"), TrackAlias(1)).unwrap(),
     )
     ignore(session.subscribe_track(client_track(b"audio")).unwrap())
-    ignore(
-      session.receive(@session.StreamOpened(@session.Request(0), 20)).unwrap(),
-    )
-    ignore(
-      session.receive(@session.StreamOpened(@session.Request(2), 30)).unwrap(),
-    )
+    ignore(session.receive(StreamOpened(Request(0), 20)).unwrap())
+    ignore(session.receive(StreamOpened(Request(2), 30)).unwrap())
     assert_eq(
-      session.receive(@session.StreamData(20, publish_ok[:split].to_owned())),
+      session.receive(StreamData(20, publish_ok[:split].to_owned())),
       Ok([]),
     )
     assert_eq(
-      session.receive(@session.StreamData(30, subscribe_ok[:split].to_owned())),
+      session.receive(StreamData(30, subscribe_ok[:split].to_owned())),
       Ok([]),
     )
     assert_eq(
-      session.receive(@session.StreamData(30, subscribe_ok[split:].to_owned())),
-      Ok([@session.EmitNotice(@session.SubscribeEstablished(2, 2))]),
+      session.receive(StreamData(30, subscribe_ok[split:].to_owned())),
+      Ok([EmitNotice(SubscribeEstablished(2, 2))]),
     )
     assert_eq(
-      session.receive(@session.StreamData(20, publish_ok[split:].to_owned())),
+      session.receive(StreamData(20, publish_ok[split:].to_owned())),
       Ok([
-        @session.EmitNotice(
-          @session.PublishAccepted(
+        EmitNotice(
+          PublishAccepted(
             0,
             { namespace_fields: [b"demo"], name: b"video", },
             1UL,
@@ -70,12 +64,12 @@ test "ClientSession rejects a second initial response after either request is ac
   for response in [publish_ok, rejected] {
     let session = publisher_announced()
     assert_eq(
-      session.receive(@session.StreamData(20, response)),
+      session.receive(StreamData(20, response)),
       Ok([
-        @session.AbortSend(20, 3),
-        @session.StopReceiving(20, 3),
-        @session.EmitNotice(
-          @session.SubscriptionEnded(0, 20, {
+        AbortSend(20, 3),
+        StopReceiving(20, 3),
+        EmitNotice(
+          SubscriptionEnded(0, 20, {
             namespace_fields: [b"demo"],
             name: b"video",
           }),
@@ -86,12 +80,12 @@ test "ClientSession rejects a second initial response after either request is ac
   for response in [subscribe_ok, rejected] {
     let session = subscriber_started()
     assert_eq(
-      session.receive(@session.StreamData(30, response)),
+      session.receive(StreamData(30, response)),
       Ok([
-        @session.AbortSend(30, 3),
-        @session.StopReceiving(30, 3),
-        @session.EmitNotice(
-          @session.SubscriptionEnded(0, 30, {
+        AbortSend(30, 3),
+        StopReceiving(30, 3),
+        EmitNotice(
+          SubscriptionEnded(0, 30, {
             namespace_fields: [b"demo"],
             name: b"video",
           }),
@@ -104,19 +98,11 @@ test "ClientSession rejects a second initial response after either request is ac
 ///|
 test "ClientSession routes fragmented request rejections by request kind" {
   let session = client_session_ready()
-  ignore(
-    session
-    .publish_track(client_track(b"video"), @session.TrackAlias(1))
-    .unwrap(),
-  )
+  ignore(session.publish_track(client_track(b"video"), TrackAlias(1)).unwrap())
   ignore(session.subscribe_track(client_track(b"audio")).unwrap())
-  ignore(
-    session.receive(@session.StreamOpened(@session.Request(0), 20)).unwrap(),
-  )
-  ignore(
-    session.receive(@session.StreamOpened(@session.Request(2), 30)).unwrap(),
-  )
-  let error : @protocol.RequestErrorMessage = {
+  ignore(session.receive(StreamOpened(Request(0), 20)).unwrap())
+  ignore(session.receive(StreamOpened(Request(2), 30)).unwrap())
+  let error = @protocol.RequestErrorMessage::{
     code: 1,
     retry_interval: 0,
     reason: b"no",
@@ -124,26 +110,14 @@ test "ClientSession routes fragmented request rejections by request kind" {
   }
   let wire = @protocol.encode_request_error(error).unwrap()
   let last = wire.length() - 1
+  assert_eq(session.receive(StreamData(20, wire[:last].to_owned())), Ok([]))
+  assert_eq(session.receive(StreamData(30, wire[:last].to_owned())), Ok([]))
   assert_eq(
-    session.receive(@session.StreamData(20, wire[:last].to_owned())),
-    Ok([]),
+    session.receive(StreamData(20, wire[last:].to_owned())),
+    Ok([SendFin(20, b""), EmitNotice(PublishRejected(0, error))]),
   )
   assert_eq(
-    session.receive(@session.StreamData(30, wire[:last].to_owned())),
-    Ok([]),
-  )
-  assert_eq(
-    session.receive(@session.StreamData(20, wire[last:].to_owned())),
-    Ok([
-      @session.SendFin(20, b""),
-      @session.EmitNotice(@session.PublishRejected(0, error)),
-    ]),
-  )
-  assert_eq(
-    session.receive(@session.StreamData(30, wire[last:].to_owned())),
-    Ok([
-      @session.SendFin(30, b""),
-      @session.EmitNotice(@session.SubscribeRejected(2, error)),
-    ]),
+    session.receive(StreamData(30, wire[last:].to_owned())),
+    Ok([SendFin(30, b""), EmitNotice(SubscribeRejected(2, error))]),
   )
 }

@@ -11,14 +11,13 @@ fn wait_for_datagram_final(
   let deadline = @env.now() + 10000UL
   while @env.now() < deadline {
     match client.next_event(100) {
-      @transport.DatagramSendStateChanged(event_id, state) if event_id == id =>
+      DatagramSendStateChanged(event_id, state) if event_id == id =>
         if state.is_final() {
           return state
         }
-      @transport.QueueOverflow => fail("transport event buffer overflow")
-      @transport.Closed(code) => fail("relay closed connection (\{code})")
-      @transport.TransportClosed(status) =>
-        fail("QUIC failed (MsQuic status \{status})")
+      QueueOverflow => fail("transport event buffer overflow")
+      Closed(code) => fail("relay closed connection (\{code})")
+      TransportClosed(status) => fail("QUIC failed (MsQuic status \{status})")
       _ => ()
     }
   }
@@ -49,8 +48,7 @@ fn run_datagram_smoke(
   let id = client.send_datagram(padding_datagram(capability.max_length))
   let mut rejected = false
   ignore(client.send_datagram(padding_datagram(capability.max_length + 1))) catch {
-    @transport.DatagramTooLarge(actual, maximum) if actual ==
-      capability.max_length + 1 &&
+    DatagramTooLarge(actual, maximum) if actual == capability.max_length + 1 &&
       maximum == capability.max_length => rejected = true
     error => fail("unexpected oversized datagram result: \{error.to_repr()}")
   }
@@ -63,7 +61,7 @@ fn run_datagram_smoke(
   let mut queue_full = false
   for _ in 0..<256 {
     ignore(client.send_datagram(padding_datagram(5))) catch {
-      @transport.DatagramSendQueueFull => {
+      DatagramSendQueueFull => {
         queue_full = true
         break
       }

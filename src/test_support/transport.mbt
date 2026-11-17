@@ -29,6 +29,7 @@ pub struct ScriptedTransport {
 }
 
 ///|
+/// Create an empty scripted transport.
 pub fn ScriptedTransport::new() -> ScriptedTransport {
   {
     open_script: [],
@@ -132,7 +133,7 @@ fn next_acceptance(
   script : Array[@driver.TransportAcceptance],
 ) -> @driver.TransportAcceptance {
   if script.is_empty() {
-    @driver.Accepted
+    Accepted
   } else {
     script.remove(0)
   }
@@ -148,7 +149,7 @@ pub impl @driver.SessionTransport for ScriptedTransport with fn open_stream(
   self.calls.push(OpenStream(direction, purpose))
   let acceptance = next_acceptance(self.open_script)
   match acceptance {
-    @driver.Accepted => self.open_callbacks.push(on_done)
+    Accepted => self.open_callbacks.push(on_done)
     _ => ()
   }
   acceptance
@@ -165,7 +166,7 @@ pub impl @driver.SessionTransport for ScriptedTransport with fn send(
   self.calls.push(Send(stream, bytes, fin))
   let acceptance = next_acceptance(self.send_script)
   match acceptance {
-    @driver.Accepted => self.send_callbacks.push((stream, on_done))
+    Accepted => self.send_callbacks.push((stream, on_done))
     _ => ()
   }
   acceptance
@@ -180,7 +181,7 @@ pub impl @driver.SessionTransport for ScriptedTransport with fn send_datagram(
   self.calls.push(SendDatagram(bytes))
   let acceptance = next_acceptance(self.datagram_script)
   match acceptance {
-    @driver.Accepted => self.datagram_callbacks.push(on_done)
+    Accepted => self.datagram_callbacks.push(on_done)
     _ => ()
   }
   acceptance

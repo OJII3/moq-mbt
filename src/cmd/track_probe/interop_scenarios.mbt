@@ -21,12 +21,11 @@ fn interop_wait_namespace_accepted(
   let mut accepted = false
   for notice in initial {
     match notice {
-      @session.NamespacePublicationAccepted(id, _) if id.to_uint64() ==
-        request_id => accepted = true
-      @session.NamespacePublicationRejected(_, _, error) =>
+      NamespacePublicationAccepted(id, _) if id.to_uint64() == request_id =>
+        accepted = true
+      NamespacePublicationRejected(_, _, error) =>
         fail("PUBLISH_NAMESPACE rejected: \{error.to_repr()}")
-      @session.SessionEnded(end) =>
-        fail("relay ended the session: \{end.to_repr()}")
+      SessionEnded(end) => fail("relay ended the session: \{end.to_repr()}")
       _ => ()
     }
   }
@@ -34,12 +33,11 @@ fn interop_wait_namespace_accepted(
   while !accepted && @env.now() < deadline {
     for notice in lifecycle_poll(peer, 20) {
       match notice {
-        @session.NamespacePublicationAccepted(id, _) if id.to_uint64() ==
-          request_id => accepted = true
-        @session.NamespacePublicationRejected(_, _, error) =>
+        NamespacePublicationAccepted(id, _) if id.to_uint64() == request_id =>
+          accepted = true
+        NamespacePublicationRejected(_, _, error) =>
           fail("PUBLISH_NAMESPACE rejected: \{error.to_repr()}")
-        @session.SessionEnded(end) =>
-          fail("relay ended the session: \{end.to_repr()}")
+        SessionEnded(end) => fail("relay ended the session: \{end.to_repr()}")
         _ => ()
       }
     }
@@ -92,7 +90,7 @@ fn interop_service_publisher(
   let notices = lifecycle_poll(peer, timeout_ms)
   for notice in notices {
     match notice {
-      @session.SubscriptionRequested(_, stream, _) =>
+      SubscriptionRequested(_, stream, _) =>
         ignore(
           drive_session_result(
             peer.client,
@@ -101,7 +99,7 @@ fn interop_service_publisher(
             peer.driver,
           ),
         )
-      @session.NamespacePublicationRequested(_, stream, _, _) =>
+      NamespacePublicationRequested(_, stream, _, _) =>
         ignore(
           drive_session_result(
             peer.client,
@@ -110,8 +108,7 @@ fn interop_service_publisher(
             peer.driver,
           ),
         )
-      @session.SessionEnded(end) =>
-        fail("publisher session ended: \{end.to_repr()}")
+      SessionEnded(end) => fail("publisher session ended: \{end.to_repr()}")
       _ => ()
     }
   }
@@ -128,7 +125,7 @@ fn interop_setup_only(context : InteropContext) -> Unit raise {
 fn interop_announce_only(context : InteropContext) -> Unit raise {
   let publisher = context.connect("publisher")
   defer publisher.client.close()
-  let track_namespace : @protocol.TrackNamespace = {
+  let track_namespace = @protocol.TrackNamespace::{
     fields: [b"moq-test", b"interop"],
   }
   let (request_id, actions) = publisher.session
@@ -148,7 +145,7 @@ fn interop_announce_only(context : InteropContext) -> Unit raise {
 fn interop_publish_namespace_done(context : InteropContext) -> Unit raise {
   let publisher = context.connect("publisher")
   defer publisher.client.close()
-  let track_namespace : @protocol.TrackNamespace = {
+  let track_namespace = @protocol.TrackNamespace::{
     fields: [b"moq-test", b"interop"],
   }
   let (request_id, actions) = publisher.session
@@ -170,11 +167,11 @@ fn interop_publish_namespace_done(context : InteropContext) -> Unit raise {
   while !withdrawn && !ended && @env.now() < deadline {
     for notice in lifecycle_poll(publisher, 20) {
       match notice {
-        @session.NamespaceWithdrawn(id, _) if id.to_uint64() == request_id =>
+        NamespaceWithdrawn(id, _) if id.to_uint64() == request_id =>
           withdrawn = true
-        @session.NamespacePublicationRejected(_, _, error) =>
+        NamespacePublicationRejected(_, _, error) =>
           fail("PUBLISH_NAMESPACE withdrawal failed: \{error.to_repr()}")
-        @session.SessionEnded(_) => ended = true
+        SessionEnded(_) => ended = true
         _ => ()
       }
     }
@@ -206,12 +203,11 @@ fn interop_subscribe_error(context : InteropContext) -> Unit raise {
   let mut rejected = false
   for notice in notices {
     match notice {
-      @session.SubscribeRejected(id, _) if id.to_uint64() == request_id =>
+      SubscribeRejected(id, _) if id.to_uint64() == request_id =>
         rejected = true
-      @session.SubscribeEstablished(id, _) if id.to_uint64() == request_id =>
+      SubscribeEstablished(id, _) if id.to_uint64() == request_id =>
         fail("SUBSCRIBE unexpectedly succeeded")
-      @session.SessionEnded(end) =>
-        fail("relay ended the session: \{end.to_repr()}")
+      SessionEnded(end) => fail("relay ended the session: \{end.to_repr()}")
       _ => ()
     }
   }
@@ -219,12 +215,11 @@ fn interop_subscribe_error(context : InteropContext) -> Unit raise {
   while !rejected && @env.now() < deadline {
     for notice in lifecycle_poll(subscriber, 20) {
       match notice {
-        @session.SubscribeRejected(id, _) if id.to_uint64() == request_id =>
+        SubscribeRejected(id, _) if id.to_uint64() == request_id =>
           rejected = true
-        @session.SubscribeEstablished(id, _) if id.to_uint64() == request_id =>
+        SubscribeEstablished(id, _) if id.to_uint64() == request_id =>
           fail("SUBSCRIBE unexpectedly succeeded")
-        @session.SessionEnded(end) =>
-          fail("relay ended the session: \{end.to_repr()}")
+        SessionEnded(end) => fail("relay ended the session: \{end.to_repr()}")
         _ => ()
       }
     }
@@ -255,16 +250,15 @@ fn interop_rendezvous_timeout(context : InteropContext) -> Unit raise {
   let mut timed_out = false
   for notice in notices {
     match notice {
-      @session.SubscribeRejected(id, error) if id.to_uint64() == request_id =>
+      SubscribeRejected(id, error) if id.to_uint64() == request_id =>
         if error.code == 0x02UL {
           timed_out = true
         } else {
           fail("SUBSCRIBE error code was not TIMEOUT: \{error.to_repr()}")
         }
-      @session.SubscribeEstablished(id, _) if id.to_uint64() == request_id =>
+      SubscribeEstablished(id, _) if id.to_uint64() == request_id =>
         fail("SUBSCRIBE unexpectedly succeeded during the rendezvous window")
-      @session.SessionEnded(end) =>
-        fail("relay ended the session: \{end.to_repr()}")
+      SessionEnded(end) => fail("relay ended the session: \{end.to_repr()}")
       _ => ()
     }
   }
@@ -272,16 +266,15 @@ fn interop_rendezvous_timeout(context : InteropContext) -> Unit raise {
   while !timed_out && @env.now() < deadline {
     for notice in lifecycle_poll(subscriber, 20) {
       match notice {
-        @session.SubscribeRejected(id, error) if id.to_uint64() == request_id =>
+        SubscribeRejected(id, error) if id.to_uint64() == request_id =>
           if error.code == 0x02UL {
             timed_out = true
           } else {
             fail("SUBSCRIBE error code was not TIMEOUT: \{error.to_repr()}")
           }
-        @session.SubscribeEstablished(id, _) if id.to_uint64() == request_id =>
+        SubscribeEstablished(id, _) if id.to_uint64() == request_id =>
           fail("SUBSCRIBE unexpectedly succeeded during the rendezvous window")
-        @session.SessionEnded(end) =>
-          fail("relay ended the session: \{end.to_repr()}")
+        SessionEnded(end) => fail("relay ended the session: \{end.to_repr()}")
         _ => ()
       }
     }
@@ -314,12 +307,11 @@ fn interop_subscribe_namespace_lifecycle(
   let mut established = false
   for notice in notices {
     match notice {
-      @session.NamespaceSubscriptionEstablished(id, _) if id.to_uint64() ==
-        subscription => established = true
-      @session.NamespaceSubscriptionRejected(_, _, error) =>
+      NamespaceSubscriptionEstablished(id, _) if id.to_uint64() == subscription =>
+        established = true
+      NamespaceSubscriptionRejected(_, _, error) =>
         fail("SUBSCRIBE_NAMESPACE rejected: \{error.to_repr()}")
-      @session.SessionEnded(end) =>
-        fail("relay ended the session: \{end.to_repr()}")
+      SessionEnded(end) => fail("relay ended the session: \{end.to_repr()}")
       _ => ()
     }
   }
@@ -327,12 +319,11 @@ fn interop_subscribe_namespace_lifecycle(
   while !established && @env.now() < deadline {
     for notice in lifecycle_poll(subscriber, 20) {
       match notice {
-        @session.NamespaceSubscriptionEstablished(id, _) if id.to_uint64() ==
+        NamespaceSubscriptionEstablished(id, _) if id.to_uint64() ==
           subscription => established = true
-        @session.NamespaceSubscriptionRejected(_, _, error) =>
+        NamespaceSubscriptionRejected(_, _, error) =>
           fail("SUBSCRIBE_NAMESPACE rejected: \{error.to_repr()}")
-        @session.SessionEnded(end) =>
-          fail("relay ended the session: \{end.to_repr()}")
+        SessionEnded(end) => fail("relay ended the session: \{end.to_repr()}")
         _ => ()
       }
     }
@@ -358,25 +349,25 @@ fn interop_subscribe_namespace_lifecycle(
   while !discovered && @env.now() < deadline {
     for notice in lifecycle_poll(subscriber, 20) {
       match notice {
-        @session.NamespaceDiscovered(id, discovered_namespace) if id.to_uint64() ==
+        NamespaceDiscovered(id, discovered_namespace) if id.to_uint64() ==
           subscription =>
           if discovered_namespace == target {
             discovered = true
           } else {
             fail("discovered an unexpected namespace")
           }
-        @session.NamespaceNoLongerAvailable(id, _) if id.to_uint64() ==
-          subscription => fail("namespace was withdrawn before cancellation")
-        @session.SessionEnded(end) =>
+        NamespaceNoLongerAvailable(id, _) if id.to_uint64() == subscription =>
+          fail("namespace was withdrawn before cancellation")
+        SessionEnded(end) =>
           fail("relay ended the subscriber session: \{end.to_repr()}")
         _ => ()
       }
     }
     for notice in lifecycle_poll(publisher, 10) {
       match notice {
-        @session.SessionEnded(end) =>
+        SessionEnded(end) =>
           fail("relay ended the publisher session: \{end.to_repr()}")
-        @session.NamespacePublicationRejected(_, _, error) =>
+        NamespacePublicationRejected(_, _, error) =>
           fail("PUBLISH_NAMESPACE rejected: \{error.to_repr()}")
         _ => ()
       }
@@ -392,14 +383,14 @@ fn interop_subscribe_namespace_lifecycle(
   while !unavailable && @env.now() < deadline {
     for notice in lifecycle_poll(subscriber, 20) {
       match notice {
-        @session.NamespaceNoLongerAvailable(id, discovered_namespace) if id.to_uint64() ==
+        NamespaceNoLongerAvailable(id, discovered_namespace) if id.to_uint64() ==
           subscription =>
           if discovered_namespace == target {
             unavailable = true
           } else {
             fail("withdrew an unexpected namespace")
           }
-        @session.SessionEnded(end) =>
+        SessionEnded(end) =>
           fail("relay ended the subscriber session: \{end.to_repr()}")
         _ => ()
       }
@@ -407,7 +398,7 @@ fn interop_subscribe_namespace_lifecycle(
     for notice in lifecycle_poll(publisher, 10) {
       match notice {
         // The fixed relay closes the publisher session after withdrawal.
-        @session.SessionEnded(_) => ()
+        SessionEnded(_) => ()
         _ => ()
       }
     }
@@ -437,9 +428,9 @@ fn InteropNamespaceWatch::observe(
 ) -> Unit raise {
   for notice in notices {
     match notice {
-      @session.NamespaceSubscriptionEstablished(id, _) if id.to_uint64() ==
+      NamespaceSubscriptionEstablished(id, _) if id.to_uint64() ==
         self.request_id => self.established = true
-      @session.NamespaceDiscovered(id, discovered_namespace) if id.to_uint64() ==
+      NamespaceDiscovered(id, discovered_namespace) if id.to_uint64() ==
         self.request_id =>
         if discovered_namespace == self.shared {
           self.shared_seen = true
@@ -448,7 +439,7 @@ fn InteropNamespaceWatch::observe(
         } else {
           fail("discovered an unexpected namespace")
         }
-      @session.NamespaceNoLongerAvailable(id, discovered_namespace) if id.to_uint64() ==
+      NamespaceNoLongerAvailable(id, discovered_namespace) if id.to_uint64() ==
         self.request_id =>
         if discovered_namespace == self.shared {
           guard self.expect_shared_done else {
@@ -462,9 +453,9 @@ fn InteropNamespaceWatch::observe(
         } else {
           fail("withdrew an unexpected namespace")
         }
-      @session.NamespaceSubscriptionRejected(_, _, error) =>
+      NamespaceSubscriptionRejected(_, _, error) =>
         fail("SUBSCRIBE_NAMESPACE rejected: \{error.to_repr()}")
-      @session.SessionEnded(end) =>
+      SessionEnded(end) =>
         fail("relay ended the namespace subscriber session: \{end.to_repr()}")
       _ => ()
     }
@@ -488,7 +479,7 @@ fn interop_open_namespace_watch(
     actions,
     peer.driver,
   )
-  let watch : InteropNamespaceWatch = {
+  let watch = InteropNamespaceWatch::{
     request_id,
     shared,
     sync,
@@ -529,7 +520,7 @@ fn interop_publish_namespace_multi_publisher_retention(
     observer_state.observe(lifecycle_poll(observer, 20))
     for notice in lifecycle_poll(publisher, 10) {
       match notice {
-        @session.SessionEnded(end) =>
+        SessionEnded(end) =>
           fail("relay ended the publisher session: \{end.to_repr()}")
         _ => ()
       }
@@ -547,7 +538,7 @@ fn interop_publish_namespace_multi_publisher_retention(
     observer_state.observe(lifecycle_poll(observer, 20))
     for notice in lifecycle_poll(publisher_2, 10) {
       match notice {
-        @session.SessionEnded(end) =>
+        SessionEnded(end) =>
           fail("relay ended the second publisher session: \{end.to_repr()}")
         _ => ()
       }
@@ -623,7 +614,7 @@ fn interop_announce_subscribe(context : InteropContext) -> Unit raise {
   defer publisher.client.close()
   let subscriber = context.connect("subscriber")
   defer subscriber.client.close()
-  let track_namespace : @protocol.TrackNamespace = {
+  let track_namespace = @protocol.TrackNamespace::{
     fields: [b"moq-test", b"interop"],
   }
   let (publication, actions) = publisher.session
@@ -655,11 +646,11 @@ fn interop_announce_subscribe(context : InteropContext) -> Unit raise {
   let mut subscribed = false
   for notice in notices {
     match notice {
-      @session.SubscribeEstablished(id, _) if id.to_uint64() == subscription =>
+      SubscribeEstablished(id, _) if id.to_uint64() == subscription =>
         subscribed = true
-      @session.SubscribeRejected(_, error) =>
+      SubscribeRejected(_, error) =>
         fail("SUBSCRIBE rejected: \{error.to_repr()}")
-      @session.SessionEnded(end) =>
+      SessionEnded(end) =>
         fail("relay ended the subscriber session: \{end.to_repr()}")
       _ => ()
     }
@@ -668,11 +659,11 @@ fn interop_announce_subscribe(context : InteropContext) -> Unit raise {
     ignore(interop_service_publisher(publisher, 10))
     for notice in lifecycle_poll(subscriber, 20) {
       match notice {
-        @session.SubscribeEstablished(id, _) if id.to_uint64() == subscription =>
+        SubscribeEstablished(id, _) if id.to_uint64() == subscription =>
           subscribed = true
-        @session.SubscribeRejected(_, error) =>
+        SubscribeRejected(_, error) =>
           fail("SUBSCRIBE rejected: \{error.to_repr()}")
-        @session.SessionEnded(end) =>
+        SessionEnded(end) =>
           fail("relay ended the subscriber session: \{end.to_repr()}")
         _ => ()
       }
@@ -704,11 +695,11 @@ fn interop_subscribe_before_announce(context : InteropContext) -> Unit raise {
   let mut rejected = false
   for notice in notices {
     match notice {
-      @session.SubscribeEstablished(id, _) if id.to_uint64() == subscription =>
+      SubscribeEstablished(id, _) if id.to_uint64() == subscription =>
         subscribed = true
-      @session.SubscribeRejected(id, _) if id.to_uint64() == subscription =>
+      SubscribeRejected(id, _) if id.to_uint64() == subscription =>
         rejected = true
-      @session.SessionEnded(end) =>
+      SessionEnded(end) =>
         fail("relay ended the subscriber session: \{end.to_repr()}")
       _ => ()
     }
@@ -717,11 +708,11 @@ fn interop_subscribe_before_announce(context : InteropContext) -> Unit raise {
   while !subscribed && !rejected && @env.now() < early_deadline {
     for notice in lifecycle_poll(subscriber, 20) {
       match notice {
-        @session.SubscribeEstablished(id, _) if id.to_uint64() == subscription =>
+        SubscribeEstablished(id, _) if id.to_uint64() == subscription =>
           subscribed = true
-        @session.SubscribeRejected(id, _) if id.to_uint64() == subscription =>
+        SubscribeRejected(id, _) if id.to_uint64() == subscription =>
           rejected = true
-        @session.SessionEnded(end) =>
+        SessionEnded(end) =>
           fail("relay ended the subscriber session: \{end.to_repr()}")
         _ => ()
       }
@@ -730,7 +721,7 @@ fn interop_subscribe_before_announce(context : InteropContext) -> Unit raise {
 
   let publisher = context.connect("publisher")
   defer publisher.client.close()
-  let track_namespace : @protocol.TrackNamespace = {
+  let track_namespace = @protocol.TrackNamespace::{
     fields: [b"moq-test", b"interop"],
   }
   let (publication, actions) = publisher.session
@@ -746,11 +737,11 @@ fn interop_subscribe_before_announce(context : InteropContext) -> Unit raise {
   let mut accepted = false
   for notice in notices {
     match notice {
-      @session.NamespacePublicationAccepted(id, _) if id.to_uint64() ==
-        publication => accepted = true
-      @session.NamespacePublicationRejected(_, _, error) =>
+      NamespacePublicationAccepted(id, _) if id.to_uint64() == publication =>
+        accepted = true
+      NamespacePublicationRejected(_, _, error) =>
         fail("PUBLISH_NAMESPACE rejected: \{error.to_repr()}")
-      @session.SessionEnded(end) =>
+      SessionEnded(end) =>
         fail("relay ended the publisher session: \{end.to_repr()}")
       _ => ()
     }
@@ -758,20 +749,20 @@ fn interop_subscribe_before_announce(context : InteropContext) -> Unit raise {
   while (!accepted || (!subscribed && !rejected)) && @env.now() < deadline {
     for notice in interop_service_publisher(publisher, 10) {
       match notice {
-        @session.NamespacePublicationAccepted(id, _) if id.to_uint64() ==
-          publication => accepted = true
-        @session.NamespacePublicationRejected(_, _, error) =>
+        NamespacePublicationAccepted(id, _) if id.to_uint64() == publication =>
+          accepted = true
+        NamespacePublicationRejected(_, _, error) =>
           fail("PUBLISH_NAMESPACE rejected: \{error.to_repr()}")
         _ => ()
       }
     }
     for notice in lifecycle_poll(subscriber, 20) {
       match notice {
-        @session.SubscribeEstablished(id, _) if id.to_uint64() == subscription =>
+        SubscribeEstablished(id, _) if id.to_uint64() == subscription =>
           subscribed = true
-        @session.SubscribeRejected(id, _) if id.to_uint64() == subscription =>
+        SubscribeRejected(id, _) if id.to_uint64() == subscription =>
           rejected = true
-        @session.SessionEnded(end) =>
+        SessionEnded(end) =>
           fail("relay ended the subscriber session: \{end.to_repr()}")
         _ => ()
       }

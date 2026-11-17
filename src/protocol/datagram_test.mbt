@@ -10,28 +10,28 @@ fn object_datagram(
     publisher_priority: None,
     end_of_group: false,
     properties: b"",
-    status: @protocol.Normal,
+    status: Normal,
     payload,
   }
 }
 
 ///|
 test "Draft 18 OBJECT_DATAGRAM matches golden bytes and round trips" {
-  let with_fields : @protocol.ObjectDatagram = {
+  let with_fields = @protocol.ObjectDatagram::{
     track_alias: 7,
     group_id: 100,
     object_id: 9,
     publisher_priority: Some(200),
     end_of_group: true,
     properties: b"\x02\x2a",
-    status: @protocol.Normal,
+    status: Normal,
     payload: b"\x01\x02\x03\x04\x05",
   }
   let with_fields_wire = b"\x03\x07\x64\x09\xc8\x02\x02\x2a\x01\x02\x03\x04\x05"
   assert_eq(@protocol.encode_object_datagram(with_fields), Ok(with_fields_wire))
   assert_eq(
     @protocol.decode_object_datagram(with_fields_wire),
-    @protocol.Complete(with_fields, with_fields_wire.length()),
+    Complete(with_fields, with_fields_wire.length()),
   )
 
   let empty : @protocol.ObjectDatagram = { ..object_datagram(0, b""), }
@@ -39,14 +39,14 @@ test "Draft 18 OBJECT_DATAGRAM matches golden bytes and round trips" {
   assert_eq(@protocol.encode_object_datagram(empty), Ok(empty_wire))
   assert_eq(
     @protocol.decode_object_datagram(empty_wire),
-    @protocol.Complete(empty, empty_wire.length()),
+    Complete(empty, empty_wire.length()),
   )
   assert_eq(
-    @protocol.encode_object_datagram({ ..empty, status: @protocol.EndOfGroup, }),
+    @protocol.encode_object_datagram({ ..empty, status: EndOfGroup, }),
     Ok(b"\x2c\x01\x02\x03"),
   )
   assert_eq(
-    @protocol.encode_object_datagram({ ..empty, status: @protocol.EndOfTrack, }),
+    @protocol.encode_object_datagram({ ..empty, status: EndOfTrack, }),
     Ok(b"\x2c\x01\x02\x04"),
   )
 }
@@ -57,7 +57,7 @@ test "Draft 18 OBJECT_DATAGRAM supports every valid type-bit combination" {
     for end_of_group in [false, true] {
       for zero_object_id in [false, true] {
         for default_priority in [false, true] {
-          let value : @protocol.ObjectDatagram = {
+          let value = @protocol.ObjectDatagram::{
             track_alias: 3,
             group_id: 5,
             object_id: if zero_object_id {
@@ -76,7 +76,7 @@ test "Draft 18 OBJECT_DATAGRAM supports every valid type-bit combination" {
             } else {
               b""
             },
-            status: @protocol.Normal,
+            status: Normal,
             payload: b"payload",
           }
           let mut expected_type = 0UL
@@ -93,25 +93,22 @@ test "Draft 18 OBJECT_DATAGRAM supports every valid type-bit combination" {
             expected_type = expected_type | 0x08UL
           }
           let wire = @protocol.encode_object_datagram(value).unwrap()
-          assert_eq(
-            @protocol.decode_vi64(wire),
-            @protocol.Complete(expected_type, 1),
-          )
+          assert_eq(@protocol.decode_vi64(wire), Complete(expected_type, 1))
           assert_eq(
             @protocol.decode_object_datagram(wire),
-            @protocol.Complete(value, wire.length()),
+            Complete(value, wire.length()),
           )
         }
       }
     }
   }
 
-  for status in [@protocol.Normal, @protocol.EndOfGroup, @protocol.EndOfTrack] {
+  for status in [@protocol.Normal, EndOfGroup, EndOfTrack] {
     for has_properties in [false, true] {
-      if status == @protocol.Normal || !has_properties {
+      if status == Normal || !has_properties {
         for zero_object_id in [false, true] {
           for default_priority in [false, true] {
-            let value : @protocol.ObjectDatagram = {
+            let value = @protocol.ObjectDatagram::{
               track_alias: 3,
               group_id: 5,
               object_id: if zero_object_id {
@@ -144,13 +141,10 @@ test "Draft 18 OBJECT_DATAGRAM supports every valid type-bit combination" {
               expected_type = expected_type | 0x08UL
             }
             let wire = @protocol.encode_object_datagram(value).unwrap()
-            assert_eq(
-              @protocol.decode_vi64(wire),
-              @protocol.Complete(expected_type, 1),
-            )
+            assert_eq(@protocol.decode_vi64(wire), Complete(expected_type, 1))
             assert_eq(
               @protocol.decode_object_datagram(wire),
-              @protocol.Complete(value, wire.length()),
+              Complete(value, wire.length()),
             )
           }
         }
@@ -166,20 +160,20 @@ test "Draft 18 OBJECT_DATAGRAM covers vi64 and properties length boundaries" {
       0UL, 127UL, 128UL, 16383UL, 16384UL, 2097151UL, 2097152UL, 268435455UL, 268435456UL,
       0xffffffffffffffffUL,
     ] {
-    let datagram : @protocol.ObjectDatagram = {
+    let datagram = @protocol.ObjectDatagram::{
       track_alias: value,
       group_id: value,
       object_id: value,
       publisher_priority: Some(0xff),
       end_of_group: false,
       properties: b"",
-      status: @protocol.Normal,
+      status: Normal,
       payload: b"x",
     }
     let wire = @protocol.encode_object_datagram(datagram).unwrap()
     assert_eq(
       @protocol.decode_object_datagram(wire),
-      @protocol.Complete(datagram, wire.length()),
+      Complete(datagram, wire.length()),
     )
   }
 
@@ -193,7 +187,7 @@ test "Draft 18 OBJECT_DATAGRAM covers vi64 and properties length boundaries" {
     let wire = @protocol.encode_object_datagram(datagram).unwrap()
     assert_eq(
       @protocol.decode_object_datagram(wire),
-      @protocol.Complete(datagram, wire.length()),
+      Complete(datagram, wire.length()),
     )
   }
 }
@@ -206,42 +200,32 @@ test "Draft 18 padding datagrams are distinguished and consumed as one datagram"
   for padding in padding_datagrams {
     assert_eq(
       @protocol.decode_datagram(padding),
-      @protocol.Complete(@protocol.Padding, padding.length()),
+      Complete(Padding, padding.length()),
     )
     assert_eq(
       @protocol.decode_object_datagram(padding),
-      @protocol.Invalid(@protocol.InvalidDatagram),
+      Invalid(InvalidDatagram),
     )
   }
   let nonzero_padding = b"\xf0\x13\x2b\x3e\x29\xff\x80\x01"
   assert_eq(
     @protocol.decode_datagram(nonzero_padding),
-    @protocol.Complete(@protocol.Padding, nonzero_padding.length()),
+    Complete(Padding, nonzero_padding.length()),
   )
-  assert_eq(
-    @protocol.decode_datagram(b"\x30"),
-    @protocol.Invalid(@protocol.InvalidDatagram),
-  )
+  assert_eq(@protocol.decode_datagram(b"\x30"), Invalid(InvalidDatagram))
 }
 
 ///|
 test "Draft 18 OBJECT_DATAGRAM validates type range and property KVP syntax" {
-  assert_true(
-    @protocol.decode_datagram(b"\x41\x0c\x01\x02x") is @protocol.Invalid(_),
-  )
-  assert_true(
-    @protocol.decode_datagram(b"\x81\x0c\x01\x02x") is @protocol.Invalid(_),
-  )
+  assert_true(@protocol.decode_datagram(b"\x41\x0c\x01\x02x") is Invalid(_))
+  assert_true(@protocol.decode_datagram(b"\x81\x0c\x01\x02x") is Invalid(_))
 
   for invalid_properties in [b"\x02", b"\x01", b"\x01\x02x"] {
     let datagram : @protocol.ObjectDatagram = {
       ..object_datagram(1, b"payload"),
       properties: invalid_properties,
     }
-    assert_eq(
-      @protocol.encode_object_datagram(datagram),
-      Err(@protocol.InvalidDatagram),
-    )
+    assert_eq(@protocol.encode_object_datagram(datagram), Err(InvalidDatagram))
   }
 
   let overflowing_properties = @protocol.encode_vi64(0xffffffffffffffffUL) +
@@ -257,7 +241,7 @@ test "Draft 18 OBJECT_DATAGRAM validates type range and property KVP syntax" {
     let wire = b"\x0d\x01\x02" +
       @protocol.encode_vi64(properties.length().to_uint64()) +
       properties
-    assert_true(@protocol.decode_datagram(wire) is @protocol.Invalid(_))
+    assert_true(@protocol.decode_datagram(wire) is Invalid(_))
   }
 
   let max_value = Bytes::from_array(Array::make(65535, 0xaa))
@@ -271,7 +255,7 @@ test "Draft 18 OBJECT_DATAGRAM validates type range and property KVP syntax" {
   let max_wire = @protocol.encode_object_datagram(max_datagram).unwrap()
   assert_eq(
     @protocol.decode_object_datagram(max_wire),
-    @protocol.Complete(max_datagram, max_wire.length()),
+    Complete(max_datagram, max_wire.length()),
   )
 
   let oversized_value = Bytes::from_array(Array::make(65536, 0xaa))
@@ -284,13 +268,13 @@ test "Draft 18 OBJECT_DATAGRAM validates type range and property KVP syntax" {
   }
   assert_eq(
     @protocol.encode_object_datagram(oversized_datagram),
-    Err(@protocol.InvalidDatagram),
+    Err(InvalidDatagram),
   )
   let wire = b"\x0d\x01\x02" +
     @protocol.encode_vi64(oversized_properties.length().to_uint64()) +
     oversized_properties +
     b"payload"
-  assert_true(@protocol.decode_datagram(wire) is @protocol.Invalid(_))
+  assert_true(@protocol.decode_datagram(wire) is Invalid(_))
 
   for
     properties in [
@@ -304,7 +288,7 @@ test "Draft 18 OBJECT_DATAGRAM validates type range and property KVP syntax" {
         ..object_datagram(1, b"payload"),
         properties,
       }),
-      Err(@protocol.InvalidDatagram),
+      Err(InvalidDatagram),
     )
   }
 
@@ -313,7 +297,7 @@ test "Draft 18 OBJECT_DATAGRAM validates type range and property KVP syntax" {
     @protocol.encode_vi64(unknown_properties.length().to_uint64()) +
     unknown_properties +
     b"payload"
-  assert_true(@protocol.decode_datagram(wire) is @protocol.Complete(_, _))
+  assert_true(@protocol.decode_datagram(wire) is Complete(_, _))
 }
 
 ///|
@@ -324,10 +308,7 @@ test "Draft 18 OBJECT_DATAGRAM rejects malformed fields and incomplete headers" 
       b"\x2d\x01\x02\x01\xaa\x03", b"\x2c\x01\x02\x05", b"\x2c\x01\x02\x03x", b"\x0c\x01\x02",
       b"\x0d\x01\x02\x01",
     ] {
-    assert_eq(
-      @protocol.decode_datagram(invalid),
-      @protocol.Invalid(@protocol.InvalidDatagram),
-    )
+    assert_eq(@protocol.decode_datagram(invalid), Invalid(InvalidDatagram))
   }
 
   for
@@ -335,7 +316,7 @@ test "Draft 18 OBJECT_DATAGRAM rejects malformed fields and incomplete headers" 
       b"", b"\x00", b"\x00\x01", b"\x00\x01\x02", b"\x00\x01\x02\x03", b"\x2c\x01\x02",
       b"\x0d\x01\x02", b"\xf0\x13",
     ] {
-    assert_eq(@protocol.decode_datagram(incomplete), @protocol.Incomplete)
+    assert_eq(@protocol.decode_datagram(incomplete), Incomplete)
   }
 
   let invalid_end_of_group : @protocol.ObjectDatagram = {
@@ -344,13 +325,13 @@ test "Draft 18 OBJECT_DATAGRAM rejects malformed fields and incomplete headers" 
   }
   assert_eq(
     @protocol.encode_object_datagram(invalid_end_of_group),
-    Err(@protocol.InvalidDatagram),
+    Err(InvalidDatagram),
   )
   assert_eq(
     @protocol.encode_object_datagram({
       ..object_datagram(1, b"payload"),
-      status: @protocol.EndOfGroup,
+      status: EndOfGroup,
     }),
-    Err(@protocol.InvalidDatagram),
+    Err(InvalidDatagram),
   )
 }

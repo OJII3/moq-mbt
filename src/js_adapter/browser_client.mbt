@@ -17,6 +17,7 @@ pub(all) enum BrowserClientError {
 }
 
 ///|
+/// Return a user-facing description of the error.
 pub fn BrowserClientError::message(self : BrowserClientError) -> String {
   match self {
     Connection(message) => message

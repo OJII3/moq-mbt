@@ -1,10 +1,12 @@
 ///|
+/// Whether datagrams are available and the maximum payload length.
 pub(all) struct WebTransportDatagramCapability {
   enabled : Bool
   max_length : Int32
 }
 
 ///|
+/// An error from browser WebTransport datagram operations.
 pub(all) enum WebTransportDatagramError {
   DatagramUnavailable
   DatagramTooLarge(Int32, Int32)
@@ -14,6 +16,7 @@ pub(all) enum WebTransportDatagramError {
 }
 
 ///|
+/// An event from the browser WebTransport datagram stream.
 pub(all) enum WebTransportDatagramEvent {
   DatagramReceived(Bytes)
   DatagramReceiveQueueFull

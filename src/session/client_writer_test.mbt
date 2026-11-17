@@ -4,11 +4,10 @@ fn writer_group_open(
   group_id : UInt64,
 ) -> (@session.ObjectGroupWriter, UInt64) raise {
   let (group, actions) = publisher
-    .open_object_group(@session.StreamId(40), group_id)
+    .open_object_group(StreamId(40), group_id)
     .unwrap()
   let token = match actions {
-    [@session.OpenStream(@session.Unidirectional, @session.Object(token))] =>
-      token
+    [OpenStream(Unidirectional, Object(token))] => token
     _ => fail("expected one object stream open")
   }
   assert_eq(group.token(), token)
@@ -24,18 +23,18 @@ fn writer_object_ids(
   let ids : Array[UInt64] = []
   for action in actions {
     match action {
-      @session.SendChunk(_, bytes) if !bytes.is_empty() =>
+      SendChunk(_, bytes) if !bytes.is_empty() =>
         match decoder {
           None =>
             match @protocol.decode_subgroup_header(bytes) {
-              @protocol.Complete(header, consumed) => {
+              Complete(header, consumed) => {
                 group_id = header.group_id
                 let value = @protocol.SubgroupDecoder::new(header)
                 decoder = Some(value)
                 let mut remaining = bytes[consumed:].to_owned()
                 while !remaining.is_empty() {
                   match value.decode_next(remaining) {
-                    @protocol.Complete(frame, used) => {
+                    Complete(frame, used) => {
                       ids.push(frame.object_id)
                       remaining = remaining[used:].to_owned()
                     }
@@ -49,7 +48,7 @@ fn writer_object_ids(
             let mut remaining = bytes
             while !remaining.is_empty() {
               match value.decode_next(remaining) {
-                @protocol.Complete(frame, used) => {
+                Complete(frame, used) => {
                   ids.push(frame.object_id)
                   remaining = remaining[used:].to_owned()
                 }
@@ -68,23 +67,21 @@ fn writer_object_ids(
 test "object group writer rejects Objects before the stream opens" {
   let publisher = publisher_started()
   let (group, token) = writer_group_open(publisher, 0UL)
-  assert_eq(group.send(b"one"), Err(@session.ObjectStreamNotReady))
-  assert_eq(group.send(b"two"), Err(@session.ObjectStreamNotReady))
+  assert_eq(group.send(b"one"), Err(ObjectStreamNotReady))
+  assert_eq(group.send(b"two"), Err(ObjectStreamNotReady))
   assert_eq(group.finish(), Ok([]))
-  let actions = publisher
-    .receive(@session.StreamOpened(@session.Object(token), 50))
-    .unwrap()
+  let actions = publisher.receive(StreamOpened(Object(token), 50)).unwrap()
   assert_eq(actions.length(), 2)
-  assert_true(actions[1] is @session.SendFin(50, b""))
+  assert_true(actions[1] is SendFin(50, b""))
 }
 
 ///|
 test "object group writer sends immediately after the stream opens" {
   let publisher = publisher_started()
   let (group, token) = writer_group_open(publisher, 4UL)
-  ignore(publisher.receive(@session.StreamOpened(@session.Object(token), 50)))
+  ignore(publisher.receive(StreamOpened(Object(token), 50)))
   match group.send(b"payload") {
-    Ok([@session.SendChunk(50, bytes)]) => {
+    Ok([SendChunk(50, bytes)]) => {
       assert_true(!bytes.is_empty())
       assert_true(group.send(b"next") is Ok(_))
     }
@@ -99,11 +96,11 @@ test "object group writer rejects an out-of-order object id" {
   assert_eq(
     group.send_frame({
       object_id: 3UL,
-      status: @protocol.Normal,
+      status: Normal,
       properties: b"",
       payload: b"skip",
     }),
-    Err(@session.Track(@session.ObjectIdNotIncreasing)),
+    Err(Track(ObjectIdNotIncreasing)),
   )
 }
 
@@ -111,21 +108,16 @@ test "object group writer rejects an out-of-order object id" {
 test "object group writer rotates to the next group" {
   let publisher = publisher_started()
   let (group, token) = writer_group_open(publisher, 7UL)
-  ignore(publisher.receive(@session.StreamOpened(@session.Object(token), 50)))
+  ignore(publisher.receive(StreamOpened(Object(token), 50)))
   ignore(group.send(b"first"))
   let rotate = group.rotate().unwrap()
   let next_token = match rotate {
-    [
-      @session.SendFin(50, _),
-      @session.OpenStream(@session.Unidirectional, @session.Object(token)),
-    ] => token
+    [SendFin(50, _), OpenStream(Unidirectional, Object(token))] => token
     _ => fail("expected FIN and the next OpenStream")
   }
   assert_eq(group.token(), next_token)
-  assert_eq(group.send(b"second"), Err(@session.ObjectStreamNotReady))
-  let opened = publisher
-    .receive(@session.StreamOpened(@session.Object(next_token), 52))
-    .unwrap()
+  assert_eq(group.send(b"second"), Err(ObjectStreamNotReady))
+  let opened = publisher.receive(StreamOpened(Object(next_token), 52)).unwrap()
   let actions = opened + group.send(b"second").unwrap()
   let (group_id, ids) = writer_object_ids(actions)
   assert_eq(group_id, 8UL)
@@ -136,11 +128,11 @@ test "object group writer rotates to the next group" {
 test "object group writer aborts a pending stream on open" {
   let publisher = publisher_started()
   let (group, token) = writer_group_open(publisher, 0UL)
-  assert_eq(group.send(b"queued"), Err(@session.ObjectStreamNotReady))
+  assert_eq(group.send(b"queued"), Err(ObjectStreamNotReady))
   assert_eq(group.abort(5UL), Ok([]))
   assert_eq(
-    publisher.receive(@session.StreamOpened(@session.Object(token), 50)),
-    Ok([@session.AbortSend(50, 5UL)]),
+    publisher.receive(StreamOpened(Object(token), 50)),
+    Ok([AbortSend(50, 5UL)]),
   )
 }
 
@@ -148,16 +140,13 @@ test "object group writer aborts a pending stream on open" {
 test "object group writer aborts an open stream without FIN" {
   let publisher = publisher_started()
   let (group, token) = writer_group_open(publisher, 0UL)
-  ignore(publisher.receive(@session.StreamOpened(@session.Object(token), 50)))
+  ignore(publisher.receive(StreamOpened(Object(token), 50)))
   ignore(group.send(b"payload"))
   assert_eq(
     group.abort(6UL),
-    Ok([
-      @session.AbortSend(50, 6UL),
-      @session.EmitNotice(@session.StreamSendFinished(50, @session.Reset)),
-    ]),
+    Ok([AbortSend(50, 6UL), EmitNotice(StreamSendFinished(50, Reset))]),
   )
-  assert_eq(group.send(b"late"), Err(@session.UnexpectedMessage))
+  assert_eq(group.send(b"late"), Err(UnexpectedMessage))
 }
 
 ///|
@@ -175,16 +164,16 @@ test "send_object_datagram_for_track fans out to every subscription" {
   assert_eq(tokens.length(), 2)
   let sent = actions.filter(fn(action) {
     match action {
-      @session.SendDatagram(_, _) => true
+      SendDatagram(_, _) => true
       _ => false
     }
   })
   assert_eq(sent.length(), 2)
   for action in sent {
     match action {
-      @session.SendDatagram(_, bytes) =>
+      SendDatagram(_, bytes) =>
         match @protocol.decode_datagram(bytes) {
-          @protocol.Complete(@protocol.Object(datagram), _) => {
+          Complete(Object(datagram), _) => {
             assert_eq(datagram.track_alias, 1UL)
             assert_eq(datagram.object_id, 0UL)
             assert_eq(datagram.payload, b"payload")
@@ -204,7 +193,7 @@ test "send_object_datagram_for_track reports an unknown track" {
       { namespace_fields: [b"demo"], name: b"missing", },
       update_datagram(1UL, 0UL, b"payload"),
     ),
-    Err(@session.UnknownRequest),
+    Err(UnknownRequest),
   )
 }
 

@@ -5,6 +5,7 @@
 pub(all) struct RequestId(UInt64)
 
 ///|
+/// Return the numeric request ID used on the wire.
 pub fn RequestId::to_uint64(self : RequestId) -> UInt64 {
   self.0
 }
@@ -15,6 +16,7 @@ pub fn RequestId::to_uint64(self : RequestId) -> UInt64 {
 pub(all) struct StreamId(Int64)
 
 ///|
+/// Return the transport stream identifier.
 pub fn StreamId::to_int64(self : StreamId) -> Int64 {
   self.0
 }
@@ -25,11 +27,13 @@ pub fn StreamId::to_int64(self : StreamId) -> Int64 {
 pub(all) struct TrackAlias(UInt64)
 
 ///|
+/// Return the alias value used by track data streams.
 pub fn TrackAlias::to_uint64(self : TrackAlias) -> UInt64 {
   self.0
 }
 
 ///|
+/// Whether a local stream is unidirectional or bidirectional.
 #derive(Debug, Eq)
 pub(all) enum ClientStreamDirection {
   Unidirectional
@@ -37,6 +41,7 @@ pub(all) enum ClientStreamDirection {
 }
 
 ///|
+/// Why the session opened a local stream.
 #derive(Debug, Eq)
 pub(all) enum ClientStreamPurpose {
   Control
@@ -47,6 +52,7 @@ pub(all) enum ClientStreamPurpose {
 }
 
 ///|
+/// The lifecycle state of a client session.
 #derive(Debug, Eq)
 pub(all) enum ClientSessionState {
   Active
@@ -55,6 +61,7 @@ pub(all) enum ClientSessionState {
 }
 
 ///|
+/// How a client session ended.
 #derive(Debug, Eq)
 pub(all) enum ClientSessionEnd {
   Local(UInt64, Bytes)
@@ -99,6 +106,7 @@ pub(all) enum SessionEvent {
 }
 
 ///|
+/// A protocol event the session reports to the application.
 #derive(Debug, Eq)
 pub(all) enum SessionNotice {
   HandshakeComplete(@protocol.Setup)
@@ -228,6 +236,7 @@ pub(all) enum SessionNotice {
 }
 
 ///|
+/// A transport operation the session asks the adapter to perform.
 #derive(Debug, Eq)
 pub(all) enum SessionAction {
   OpenStream(ClientStreamDirection, ClientStreamPurpose)
@@ -243,6 +252,7 @@ pub(all) enum SessionAction {
 }
 
 ///|
+/// An error returned by client session operations.
 #derive(Debug, Eq)
 pub(all) enum ClientSessionError {
   Handshake(HandshakeError)
@@ -447,6 +457,7 @@ pub fn ClientSession::start(
 }
 
 ///|
+/// Apply one transport event to the session and return the actions it produces.
 pub fn ClientSession::receive(
   self : ClientSession,
   event : SessionEvent,
@@ -689,16 +700,13 @@ fn ClientSession::decode_control_messages(
   let actions : Array[SessionAction] = []
   while !self.control_buffer.is_empty() {
     match
-      @protocol.decode_control_with_context(
-        self.control_buffer,
-        @protocol.ControlStream,
-      ) {
-      @protocol.Incomplete => return Ok(actions)
-      @protocol.Invalid(_) => return Err(UnexpectedMessage)
-      @protocol.Complete(message, consumed) => {
+      @protocol.decode_control_with_context(self.control_buffer, ControlStream) {
+      Incomplete => return Ok(actions)
+      Invalid(_) => return Err(UnexpectedMessage)
+      Complete(message, consumed) => {
         self.control_buffer = self.control_buffer[consumed:].to_owned()
         match message {
-          @protocol.GoAwayControl(goaway) => {
+          GoAwayControl(goaway) => {
             if self.control_goaway_received || (goaway.request_id & 1UL) != 0UL {
               actions.append(self.receive_control_goaway(goaway))
               self.control_buffer = b""

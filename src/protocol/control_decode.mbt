@@ -107,13 +107,13 @@ pub fn decode_control_with_context(
       guard read_parameters_at(input, start, end) is Some((parameters, offset)) else {
         return invalid
       }
-      let message : RequestOkMessage = {
+      let message = RequestOkMessage::{
         parameters,
         properties: input[offset:end].to_owned(),
       }
       let response_context = match context {
         RequestStreamFor(value) => Some(value)
-        FetchRequestStream => Some(RequestOkContext::FetchUpdate)
+        FetchRequestStream => Some(FetchUpdate)
         ControlStream | RequestStream => return invalid
         AnyStream => None
       }
@@ -139,7 +139,7 @@ pub fn decode_control_with_context(
       }
       let update_context = match context {
         FetchRequestStream => ParameterScope::FetchUpdate
-        _ => ParameterScope::RequestUpdate
+        _ => RequestUpdate
       }
       match validate_parameters_scope(parameters, update_context) {
         Ok(_) => ()
@@ -367,7 +367,11 @@ pub fn decode_control_with_context(
       if offset != end {
         return invalid
       }
-      let message = { request_id, track_namespace, parameters, }
+      let message = NamespaceRequestMessage::{
+        request_id,
+        track_namespace,
+        parameters,
+      }
       if kind == 6 {
         Complete(PublishNamespace(message), end)
       } else {
