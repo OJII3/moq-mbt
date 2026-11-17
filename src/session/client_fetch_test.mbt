@@ -69,6 +69,7 @@ test "Standalone FETCH accepts data before its response and finishes after FIN" 
       @session.EmitNotice(
         @session.FetchResponseAccepted(request_id, 20, response),
       ),
+      @session.SendFin(20, b""),
       @session.EmitNotice(@session.FetchFinished(request_id)),
     ]),
   )
@@ -803,6 +804,7 @@ test "empty successful FETCH requires an empty data stream and request errors fa
         @session.FetchResponseAccepted(request_id, 20, response),
       ),
       @session.EmitNotice(@session.FetchEndOfTrack(request_id)),
+      @session.SendFin(20, b""),
       @session.EmitNotice(@session.FetchFinished(request_id)),
     ]),
   )
@@ -821,7 +823,10 @@ test "empty successful FETCH requires an empty data stream and request errors fa
     client.receive(
       @session.StreamData(21, @protocol.encode_request_error(error).unwrap()),
     ),
-    Ok([@session.EmitNotice(@session.FetchFailed(failed_id, error))]),
+    Ok([
+      @session.SendFin(21, b""),
+      @session.EmitNotice(@session.FetchFailed(failed_id, error)),
+    ]),
   )
   assert_eq(client.receive(@session.StreamData(21, b"late")), Ok([]))
 }
@@ -925,6 +930,7 @@ test "FETCH priority updates are acknowledged, and rejected updates reset data" 
     Ok([
       @session.SendChunk(20, @protocol.encode_request_error(error).unwrap()),
       @session.AbortSend(30, error.code),
+      @session.SendFin(20, b""),
       @session.EmitNotice(@session.FetchFailed(1UL, error)),
     ]),
   )
@@ -988,7 +994,10 @@ test "FETCH data reset and GOAWAY each terminate pending requests once" {
   )
   assert_eq(
     client.receive(@session.StreamReset(30, 7UL)),
-    Ok([@session.EmitNotice(@session.FetchReset(reset_id, 30, 7UL))]),
+    Ok([
+      @session.SendFin(20, b""),
+      @session.EmitNotice(@session.FetchReset(reset_id, 30, 7UL)),
+    ]),
   )
   assert_eq(client.receive(@session.StreamReset(30, 7UL)), Ok([]))
 
@@ -1186,5 +1195,137 @@ test "peer FETCH can be rejected before opening its data stream" {
       @session.SendFin(20, @protocol.encode_request_error(error).unwrap()),
       @session.EmitNotice(@session.FetchRejected(1UL, 20, error)),
     ]),
+  )
+}
+
+///|
+test "completed, failed, and peer FETCH close request stream local send once" {
+  let client = client_session_ready()
+  let track = client_track(b"archive")
+  let start : @protocol.FetchLocation = { group: 0UL, object: 0UL, }
+  let end_location : @protocol.FetchLocation = { group: 1UL, object: 0UL, }
+
+  // 1. Local FETCH completes when data stream finishes after FetchOk.
+  let (completed_id, _) = client
+    .fetch_track(track, start, end_location, [])
+    .unwrap()
+  ignore(
+    client.receive(@session.StreamOpened(@session.Request(completed_id), 20)),
+  )
+  let response : @protocol.FetchOkMessage = {
+    end_of_track: 0,
+    end_location,
+    parameters: [],
+    track_properties: b"",
+  }
+  assert_eq(
+    client.receive(
+      @session.StreamData(20, @protocol.encode_fetch_ok(response).unwrap()),
+    ),
+    Ok([
+      @session.EmitNotice(@session.FetchAccepted(completed_id, 20)),
+      @session.EmitNotice(
+        @session.FetchResponseAccepted(completed_id, 20, response),
+      ),
+    ]),
+  )
+  ignore(
+    client.receive(@session.InboundStreamStarted(30, @session.Unidirectional)),
+  )
+  assert_eq(
+    client.receive(
+      @session.StreamData(
+        30,
+        @protocol.encode_fetch_header({ request_id: completed_id.to_uint64(), }),
+      ),
+    ),
+    Ok([]),
+  )
+  assert_eq(
+    client.receive(@session.InboundStreamFinished(30)),
+    Ok([
+      @session.SendFin(20, b""),
+      @session.EmitNotice(@session.FetchFinished(completed_id)),
+    ]),
+  )
+  assert_eq(client.receive(@session.InboundStreamFinished(20)), Ok([]))
+  assert_eq(client.cancel_fetch(completed_id), Ok([]))
+  assert_eq(
+    client.receive(@session.SendCompleted(20, @session.Sent)),
+    Ok([@session.EmitNotice(@session.StreamSendFinished(20, @session.Sent))]),
+  )
+
+  // 2. Local FETCH failed via RequestError sends SendFin once.
+  let (failed_id, _) = client
+    .fetch_track(track, start, end_location, [])
+    .unwrap()
+  ignore(client.receive(@session.StreamOpened(@session.Request(failed_id), 22)))
+  let error : @protocol.RequestErrorMessage = {
+    code: 0x10UL,
+    retry_interval: 0UL,
+    reason: b"not found",
+    redirect: b"",
+  }
+  assert_eq(
+    client.receive(
+      @session.StreamData(22, @protocol.encode_request_error(error).unwrap()),
+    ),
+    Ok([
+      @session.SendFin(22, b""),
+      @session.EmitNotice(@session.FetchFailed(failed_id, error)),
+    ]),
+  )
+  assert_eq(client.receive(@session.InboundStreamFinished(22)), Ok([]))
+  assert_eq(client.cancel_fetch(failed_id), Ok([]))
+
+  // 3. Cancelled local FETCH suppresses late StreamSendFinished on request stream.
+  let (cancelled_id, _) = client
+    .fetch_track(track, start, end_location, [])
+    .unwrap()
+  ignore(
+    client.receive(@session.StreamOpened(@session.Request(cancelled_id), 24)),
+  )
+  assert_eq(
+    client.cancel_fetch(cancelled_id),
+    Ok([
+      @session.AbortSend(24, 1UL),
+      @session.StopReceiving(24, 1UL),
+      @session.EmitNotice(@session.FetchCancelled(cancelled_id, 1UL)),
+    ]),
+  )
+  assert_eq(client.receive(@session.SendCompleted(24, @session.Sent)), Ok([]))
+
+  // 4. Outgoing peer FETCH sends SendFin on request stream when data stream finishes.
+  let server = client_session_ready()
+  let peer_fetch : @protocol.FetchMessage = {
+    request_id: 1UL,
+    fetch_type: @protocol.StandaloneFetch(track, start, end_location),
+    parameters: [],
+  }
+  ignore(
+    server.receive(@session.InboundStreamStarted(40, @session.Bidirectional)),
+  )
+  ignore(
+    server.receive(
+      @session.StreamData(40, @protocol.encode_fetch(peer_fetch).unwrap()),
+    ),
+  )
+  ignore(server.accept_fetch(1UL, response).unwrap())
+  ignore(server.receive(@session.StreamOpened(@session.FetchData(1UL), 50)))
+  assert_eq(
+    server.receive(@session.SendCompleted(50, @session.Sent)),
+    Ok([@session.EmitNotice(@session.StreamSendFinished(50, @session.Sent))]),
+  )
+  assert_eq(server.finish_fetch(1UL), Ok([@session.SendFin(50, b"")]))
+  assert_eq(
+    server.receive(@session.SendCompleted(50, @session.Sent)),
+    Ok([
+      @session.EmitNotice(@session.StreamSendFinished(50, @session.Sent)),
+      @session.SendFin(40, b""),
+    ]),
+  )
+  assert_eq(
+    server.receive(@session.SendCompleted(40, @session.Sent)),
+    Ok([@session.EmitNotice(@session.StreamSendFinished(40, @session.Sent))]),
   )
 }

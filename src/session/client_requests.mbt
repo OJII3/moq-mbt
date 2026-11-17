@@ -523,6 +523,14 @@ fn ClientSession::request_local_fin_actions(
     self.note_request_local_fin(stream)
     return [SendFin(stream, b"")]
   }
+  if self.fetch_streams.get(stream) is Some(request_id) {
+    let fetch = self.fetches.get(request_id).unwrap()
+    if fetch.lifetime.local_send_closed {
+      return []
+    }
+    self.note_request_local_fin(stream)
+    return [SendFin(stream, b"")]
+  }
   guard self.request_streams.get(stream) is Some(request_id) else { return [] }
   let request = self.requests.get(request_id).unwrap()
   if request.lifetime.local_send_closed {
@@ -572,6 +580,13 @@ fn ClientSession::note_request_local_fin(
     None if self.namespace_request_streams.get(stream) is Some(request_id) =>
       ignore(
         self.namespace_requests.get(request_id).unwrap().lifetime.transition(
+          LocalFin,
+          true,
+        ),
+      )
+    None if self.fetch_streams.get(stream) is Some(request_id) =>
+      ignore(
+        self.fetches.get(request_id).unwrap().lifetime.transition(
           LocalFin,
           true,
         ),

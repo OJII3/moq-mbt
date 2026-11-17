@@ -44,7 +44,12 @@ impl @driver.SessionTransport for WebTransportTransport with fn send(
           match failure.stream_error_code {
             Some(code) =>
               on_done(@driver.WriteReset(code.reinterpret_as_uint64()))
-            None => on_done(@driver.WriteFailed(-1L))
+            None =>
+              if failure.source == Some("session") {
+                on_done(@driver.WriteFailed(-1L))
+              } else {
+                on_done(@driver.WriteCanceled)
+              }
           }
       }
       @js.Promise::resolve(())
@@ -400,22 +405,18 @@ fn WebTransportSessionDriver::read_stream_events(
           self.driver.receive(@session.StreamDataCommitted(stream))
           self.flush()
         }
-        StreamReset(stream, failure) =>
-          match failure.stream_error_code {
-            Some(code) =>
-              self.receive_event(
-                @session.StreamReset(stream, code.reinterpret_as_uint64()),
-              )
-            None => self.receive_event(@session.TransportFailed(-5L))
-          }
-        SendStopped(stream, failure) =>
-          match failure.stream_error_code {
-            Some(code) =>
-              self.receive_event(
-                @session.SendStopped(stream, code.reinterpret_as_uint64()),
-              )
-            None => self.receive_event(@session.TransportFailed(-6L))
-          }
+        StreamReset(stream, failure) => {
+          let code = failure.stream_error_code
+            .map(fn(c) { c.reinterpret_as_uint64() })
+            .unwrap_or(0UL)
+          self.receive_event(@session.StreamReset(stream, code))
+        }
+        SendStopped(stream, failure) => {
+          let code = failure.stream_error_code
+            .map(fn(c) { c.reinterpret_as_uint64() })
+            .unwrap_or(0UL)
+          self.receive_event(@session.SendStopped(stream, code))
+        }
         StreamQueueOverflow(_) =>
           self.receive_event(@session.TransportFailed(-2L))
         // The connection.closed() promise carries the close cause into the

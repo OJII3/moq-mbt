@@ -49,10 +49,10 @@ let max_stream_events : Int32 = 256
 let max_stream_event_bytes : Int32 = 1024 * 1024
 
 ///|
-let max_pending_stream_opens : Int32 = 16
+let max_pending_stream_opens : Int32 = 64
 
 ///|
-let max_active_webtransport_streams : Int32 = 16
+let max_active_webtransport_streams : Int32 = 64
 
 ///|
 let max_pending_stream_sends : Int32 = 256
