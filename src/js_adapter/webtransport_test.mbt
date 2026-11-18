@@ -677,7 +677,7 @@ async fn webtransport_session_driver_isolates_stream_errors_without_code() -> Un
     None => fail("session driver stopped before control stream opened")
   }
 
-  // 1. StreamReset without streamErrorCode on a known request stream must not kill the session.
+  // StreamReset without streamErrorCode on a known request stream must not kill the session.
   let track1 = @protocol.TrackName::{
     namespace_fields: [b"demo"],
     name: b"video",
@@ -705,7 +705,7 @@ async fn webtransport_session_driver_isolates_stream_errors_without_code() -> Un
   }
   assert_eq(session.state(), Active)
 
-  // 2. SendStopped without streamErrorCode on a known request stream must not kill the session.
+  // SendStopped without streamErrorCode on a known request stream must not kill the session.
   let track2 = @protocol.TrackName::{
     namespace_fields: [b"demo"],
     name: b"audio",
@@ -733,7 +733,7 @@ async fn webtransport_session_driver_isolates_stream_errors_without_code() -> Un
   }
   assert_eq(session.state(), Active)
 
-  // 3. Stream write failure without streamErrorCode and non-session source maps to WriteCanceled.
+  // Stream write failure without streamErrorCode and non-session source maps to WriteCanceled.
   ffi_fake_reject_next_bidi_write()
   let track3 = @protocol.TrackName::{
     namespace_fields: [b"demo"],

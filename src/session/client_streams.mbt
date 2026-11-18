@@ -1,7 +1,4 @@
 ///|
-/// Inbound and outbound stream classification and lifecycle handling.
-
-///|
 fn ClientSession::receive_stream_data(
   self : ClientSession,
   stream : Int64,

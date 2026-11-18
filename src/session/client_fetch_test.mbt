@@ -1028,7 +1028,7 @@ test "completed, failed, and peer FETCH close request stream local send once" {
   let start = @protocol.FetchLocation::{ group: 0UL, object: 0UL, }
   let end_location = @protocol.FetchLocation::{ group: 1UL, object: 0UL, }
 
-  // 1. Local FETCH completes when data stream finishes after FetchOk.
+  // Local FETCH completes when data stream finishes after FetchOk.
   let (completed_id, _) = client
     .fetch_track(track, start, end_location, [])
     .unwrap()
@@ -1067,7 +1067,7 @@ test "completed, failed, and peer FETCH close request stream local send once" {
     Ok([EmitNotice(StreamSendFinished(20, Sent))]),
   )
 
-  // 2. Local FETCH failed via RequestError sends SendFin once.
+  // Local FETCH failed via RequestError sends SendFin once.
   let (failed_id, _) = client
     .fetch_track(track, start, end_location, [])
     .unwrap()
@@ -1087,7 +1087,7 @@ test "completed, failed, and peer FETCH close request stream local send once" {
   assert_eq(client.receive(InboundStreamFinished(22)), Ok([]))
   assert_eq(client.cancel_fetch(failed_id), Ok([]))
 
-  // 3. Cancelled local FETCH suppresses late StreamSendFinished on request stream.
+  // Cancelled local FETCH suppresses late StreamSendFinished on request stream.
   let (cancelled_id, _) = client
     .fetch_track(track, start, end_location, [])
     .unwrap()
@@ -1102,7 +1102,7 @@ test "completed, failed, and peer FETCH close request stream local send once" {
   )
   assert_eq(client.receive(SendCompleted(24, Sent)), Ok([]))
 
-  // 4. Outgoing peer FETCH sends SendFin on request stream when data stream finishes.
+  // Outgoing peer FETCH sends SendFin on request stream when data stream finishes.
   let server = client_session_ready()
   let peer_fetch = @protocol.FetchMessage::{
     request_id: 1UL,

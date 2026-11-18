@@ -203,7 +203,6 @@ pub fn ObjectGroupWriter::abort(
 }
 
 ///|
-/// The Track Alias and request that a subscription forwards from.
 fn ClientSession::publisher_request_for_subscription(
   self : ClientSession,
   subscription_stream : Int64,

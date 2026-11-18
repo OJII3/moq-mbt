@@ -35,7 +35,6 @@ fn validate_datagram_send(
 }
 
 ///|
-/// Retire the buffer associated with an MsQuic stream send completion.
 fn Client::record_send_complete(self : Client, stream : Int64) -> Unit {
   for i in 0..<self.send_sizes.length() {
     if self.send_sizes[i].0 == stream {
@@ -47,7 +46,6 @@ fn Client::record_send_complete(self : Client, stream : Int64) -> Unit {
 }
 
 ///|
-/// Retire a datagram buffer only once MsQuic reports a final send state.
 fn Client::record_datagram_send_state(
   self : Client,
   id : Int64,

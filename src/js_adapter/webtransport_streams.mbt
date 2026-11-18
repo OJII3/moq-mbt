@@ -559,8 +559,6 @@ fn WebTransportStreamManager::start_accepting(
 }
 
 ///|
-/// Open a local unidirectional stream and return its opaque session reference.
-/// The corresponding StreamStarted event is queued before any data event.
 fn WebTransportStreamManager::open_unidirectional(
   self : WebTransportStreamManager,
 ) -> @js.Promise[Result[Int64, WebTransportFailure]] {
@@ -568,7 +566,6 @@ fn WebTransportStreamManager::open_unidirectional(
 }
 
 ///|
-/// Open a local bidirectional stream and return its opaque session reference.
 fn WebTransportStreamManager::open_bidirectional(
   self : WebTransportStreamManager,
 ) -> @js.Promise[Result[Int64, WebTransportFailure]] {
@@ -643,11 +640,6 @@ fn WebTransportStreamManager::open_stream(
 }
 
 ///|
-/// Write bytes in call order, respecting writer.ready. `fin=true` closes the
-/// send side after the write. Completion means the browser accepted the write;
-/// non-final writes do not report a QUIC acknowledgement. A final write also
-/// waits for close, which the WebTransport specification defines to wait for
-/// all data committed.
 fn WebTransportStreamManager::write_stream(
   self : WebTransportStreamManager,
   stream : Int64,
@@ -735,8 +727,6 @@ fn WebTransportStreamManager::write_stream(
 }
 
 ///|
-/// Cancel the receive side. This maps to reader.cancel and reports a stream
-/// reset only when the browser rejects the operation.
 fn WebTransportStreamManager::cancel_stream_read(
   self : WebTransportStreamManager,
   stream : Int64,
@@ -778,7 +768,6 @@ fn WebTransportStreamManager::cancel_stream_read(
 }
 
 ///|
-/// Abort the send side with a WebTransport stream error code.
 fn WebTransportStreamManager::abort_stream_write(
   self : WebTransportStreamManager,
   stream : Int64,

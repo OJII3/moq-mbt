@@ -1,5 +1,4 @@
 ///|
-/// Browser WebTransport backend for the portable session driver.
 priv struct WebTransportTransport {
   connection : WebTransportConnection
 }
@@ -326,7 +325,6 @@ pub fn WebTransportSessionDriver::next_opened_stream(
 }
 
 ///|
-/// Move driver notices and opened streams into the adapter's waiter queues.
 fn WebTransportSessionDriver::flush(self : WebTransportSessionDriver) -> Unit {
   for notice in self.driver.take_notices() {
     self.enqueue_notice(notice)

@@ -302,7 +302,6 @@ fn ClientSession::receive_subgroup(
 }
 
 ///|
-/// Route a received Object Datagram through the accepted subscription Alias.
 fn ClientSession::receive_object_datagram(
   self : ClientSession,
   bytes : Bytes,

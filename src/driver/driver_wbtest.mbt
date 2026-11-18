@@ -1,5 +1,4 @@
 ///|
-/// Scripted transport for driver contract tests.
 priv struct FakeTransport {
   open_acceptance : TransportAcceptance
   mut send_acceptance : TransportAcceptance
