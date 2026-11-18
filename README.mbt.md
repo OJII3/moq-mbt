@@ -172,7 +172,7 @@ Add `OJII3/moq-mbt` to `moon.mod`:
 ```json
 {
   "import": {
-    "OJII3/moq-mbt": "0.4.3"
+    "OJII3/moq-mbt": "0.4.4"
   }
 }
 ```
