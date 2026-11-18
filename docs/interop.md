@@ -2,7 +2,7 @@
 
 ## 固定 relay と CI の範囲
 
-interop の relay は Draft 18 対応の aiomoqt を Docker image digest `sha256:06ebc32bd63eaf4e72cddda2fafa6c190197064506665f710c7ea67b265085a2` で固定する。CI とローカルの `scripts/check-interop.sh` / `scripts/check-interop-dual.sh` は同じ image を使う。relay は子プロセスとして起動し、終了時に停止する。Docker の UDP port mapping は loopback に限る。
+interop の relay は Draft 18 対応の aiomoqt を Docker image digest で固定する（既定値は `scripts/interop-relay.sh`）。CI とローカルの `scripts/check-interop.sh` / `scripts/check-interop-dual.sh` は同じ image を使う。relay は子プロセスとして起動し、終了時に停止する。Docker の UDP port mapping は loopback に限る。
 
 `scripts/interop-relay.sh` が relay の起動と停止を担う。stream ring は 8 MiB に上げる。これは 2 MiB Object を一つの stream write で送るためであり、MoQ の Object 長の上限ではない。
 
@@ -25,7 +25,7 @@ late join は publisher が group 0 を公開した後に upstream FETCH を待�
 
 Namespace withdrawal は既定で実行する。publisher が namespace を撤回した後も独立 track の subscription と Object 配送が継続することを確認する。publisher は relay からの `SUBSCRIBE` と `REQUEST_UPDATE` を受理してから Object stream を開く。session は Forward State が 0 の間、Object stream の開設を拒否する。
 
-joining FETCH の relay probe は削除した。以前の probe は moq5 が joining FETCH を拒否することを期待しており、Draft 18 の相互接続を確認する test ではなかった。joining FETCH の状態遷移と Object 範囲は `src/session/client_joining_fetch.mbt` と Sans-I/O tests で確認する。
+joining FETCH の状態遷移と Object 範囲は `src/session/client_joining_fetch.mbt` と Sans-I/O tests で確認する。
 
 Playwright Chromium と WebTransport 実装も Nix flake で固定する。workflow は実行時にバージョンをログへ出す。一時 ECDSA P-256 証明書の正しい SHA-256 pin で接続し、誤った pin の拒否を確認する。WebTransport の URL path は `/` とする。Origin allowlist は relay の設定対象ではなく、この repo では扱わない。
 
@@ -35,7 +35,7 @@ Playwright Chromium と WebTransport 実装も Nix flake で固定する。workf
 
 `track_probe` は [moq-interop-runner](https://github.com/englishm/moq-interop-runner) の test client interface を兼ねる。`--list` で対応する identifier を出力し、各 test case の結果を TAP version 14 と YAML diagnostics で書き出す。diagnostics には duration_ms、session role ごとの negotiated version と transport、QUIC Initial Destination Connection ID、失敗理由を含める。Initial Destination Connection ID は MsQuic の `QUIC_PARAM_CONN_ORIG_DEST_CID` から取得する。
 
-対応する scenario は `setup-only`、`announce-only`、`publish-namespace-done`、`subscribe-namespace-lifecycle`、`publish-namespace-multi-publisher-retention`、`subscribe-error`、`rendezvous-timeout`、`announce-subscribe`、`subscribe-before-announce`、`data-subgroup-basic` の10個である。`data-subgroup-basic` は publisher が routing prefix だけを PUBLISH_NAMESPACE し、subscriber が 19 field の MoQT Test tuple を namespace に持つ SUBSCRIBE を送り、publisher が tuple から導いた 15 objects を subgroup stream で返す。media fixture の生成と decode は client の `--list` に含めない。
+対応する scenario は `setup-only`、`announce-only`、`publish-namespace-done`、`subscribe-namespace-lifecycle`、`publish-namespace-multi-publisher-retention`、`subscribe-error`、`rendezvous-timeout`、`announce-subscribe`、`subscribe-before-announce`、`data-subgroup-basic` の10個である。`data-subgroup-basic` は publisher が routing prefix だけを PUBLISH_NAMESPACE し、subscriber が 16 field の MoQT Test tuple を namespace に持つ SUBSCRIBE を送り、publisher が tuple から導いた 15 objects を subgroup stream で返す。media fixture の生成と decode は client の `--list` に含めない。
 
 `scripts/check-interop.sh` は固定 relay に対して、この10個をすべて実行する。
 
@@ -101,8 +101,6 @@ CLI の末尾には Group 数と各 Group の Object 数を指定する。probe 
 
 publisher は PUBLISH_OK 後に 1 秒待ってから有限 batch を送る。この間に別プロセスの subscriber が relay に接続し、PUBLISH_DONE を含む完了通知を受け取れる。
 
-`lifecycle`、Namespace、FETCH、Datagram probe は個別に実装されている。standalone FETCH、object offset FETCH、late join、Namespace withdrawal は既定の relay interop で確認する。transport を介さない session state の検証には Sans-I/O tests を使う。
-
 ## 接続先と参照実装
 
 ~~~sh
@@ -111,8 +109,6 @@ nix develop -c moon run --release --target native src/cmd/setup_probe -- \
 ~~~
 
 引数はホスト、ポート、MoQ URI の path と query。クライアントは ALPN moqt-18 だけを提示し、QUIC DATAGRAM の交渉を確認してから SETUP を送る。Native QUIC 用の PATH、AUTHORITY、MOQT_IMPLEMENTATION を含める。接続から相手の SETUP 受信までの期限は 10 秒。相手の SETUP 受信と自分の SETUP の ACK を待ってから接続を終了する。証明書検証は既定で有効。
-
-Relay は [aiomoqt](https://github.com/gmarzot/aiomoqt) の interop relay を Docker image digest で固定する。Native QUIC と WebTransport は同じ UDP port で ALPN により振り分けられる。
 
 ## API とリソースの範囲
 

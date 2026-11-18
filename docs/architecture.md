@@ -2,7 +2,7 @@
 
 ## 対象
 
-まずは MoQ Transport Draft 18 を実装する。プロトコルのバージョンはトランスポートでの交渉結果からセッション作成時に明示し、セッション中は固定する。受信データからバージョンを推測しない。
+MoQ Transport Draft 18 を実装する。プロトコルのバージョンはトランスポートでの交渉結果からセッション作成時に明示し、セッション中は固定する。受信データからバージョンを推測しない。
 
 ## パッケージの役割
 
@@ -23,8 +23,6 @@
 アダプターはセッションの送信アクションを QUIC / WebTransport の操作に変換し、トランスポートの受信イベントをセッションへ渡す。ストリーム参照はセッション内では不透明な値として扱い、実際のストリーム ID との対応はアダプターが管理する。
 
 アダプターがローカル上限（受信イベント数、受信バイト数、active stream 数）に達した場合、Native adapter は該当 stream の受信 callback を停止し、アプリケーションが event を取り出した後に再開する。停止したまま継続できない stream は `SessionEvent::StreamDropped` でそのストリームだけを通知する。session は該当ストリームの受信状態と Object drain を解放し、`SessionNotice::StreamDropped` で理由をアプリケーションへ返す。`TransportFailed` は接続全体の I/O が継続できない場合に限る。control stream の停止だけはプロトコルを継続できないため session の終了にする。
-
-外部パッケージのテストは `test_support.ScriptedTransport` と実際の `SessionDriver` を組み合わせる。テスト側は受理・再試行・完了をscriptし、peerイベントをdriverへ渡す。sessionの処理や状態遷移をテスト用コードに複製しない。
 
 送信アクションの実行は `driver` の `SessionDriver` に集約する。アダプターは `SessionTransport` の primitive 操作だけを実装する。driver は Stream ごとの順序を守り、transport の一時的な拒否を再試行する。`SessionDriverConfig` は送信中の操作数に加え、driver で待機中のアクション数とバイト数、および一回の Stream write のサイズを制限する。`dispatch` が `QueueFull` を返した場合、呼び出し元は同じアクションを保持し、空きができた後に再試行する。session 操作自体は繰り返さない。`TooLarge` はアクション群を小さくする必要があることを示す。
 
@@ -72,27 +70,10 @@ local PUBLISH、local SUBSCRIBE、peer SUBSCRIBE は同じ `RequestLifetime` で
 
 request stream の ID 索引は session の存続中 tombstone として保持する。終了後に遅れて届いた event を新しい peer request として誤配送しないため、解放は session が破棄される時とする。Object stream tombstone はその stream の FIN または RESET で解放する。通常の SUBSCRIBE Alias は、`PUBLISH_DONE` の stream 数と観測済み stream 数が一致し、active Object stream がなくなった時に解放する。cancel で `PUBLISH_DONE` を待てなくなった Alias は session 終了まで保持し、遅れて到着する Object stream を同じ request に結び付けて破棄できるようにする。
 
-## M3 の Draft 18 スコープ
-
-[M3](https://github.com/OJII3/moq-mbt/milestone/3) では `REQUEST_UPDATE` とその応答、リクエストストリームのキャンセルによる購読解除、`GOAWAY` とセッション終了、および Datagram Object の送受信を追加する。Datagram と Subgroup stream は同じ購読・Alias の状態を参照する。
+## Draft 18 のスコープと制約
 
 購読フィルターは stream と Datagram の Object 送信に共通して適用する。相対フィルターの開始位置は初回要求の受理時とフィルターを明示した更新時に確定し、他のパラメーターだけの更新では維持する。`NEW_GROUP_REQUEST` の送信には、相手の `SUBSCRIBE_OK` に `DYNAMIC_GROUPS=1` が必要となる。
 
 Draft 18 では `MAX_REQUEST_ID` / `REQUESTS_BLOCKED` と独立したキャンセルメッセージが削除されている。購読更新には `REQUEST_UPDATE`、キャンセルには開いているストリーム方向への `STOP_SENDING` / reset を使う。仕様の [§3.3.2](https://www.ietf.org/archive/id/draft-ietf-moq-transport-18.html#section-3.3.2)、[§10.9](https://www.ietf.org/archive/id/draft-ietf-moq-transport-18.html#section-10.9)、[Appendix A.2](https://www.ietf.org/archive/id/draft-ietf-moq-transport-18.html#appendix-A.2) を参照する。
 
-`scripts/check-interop.sh` は固定 aiomoqt relay に対する Draft 18 SETUP と複数 Group/Object の publish/subscribe、2 MiB Object、Native QUIC の証明書検証を確認する。同じ relay に対して `track_probe` の moq-interop-runner client mode も実行し、10 個の scenario すべての TAP 結果を確認する。`scripts/check-interop-dual.sh` は同じ endpoint に raw QUIC と WebTransport のクライアントを同時接続し、両方の SETUP、証明書 pin、Node 接続、Native/Browser 双方向 publish/subscribe と Object Datagram を確認する。
-
-この E2E 経路は Browser WebTransport ↔ aiomoqt relay ↔ Native raw QUIC である。Native WebTransport はこの経路に含まず、M6 の実装対象として扱う。Origin allowlist / 拒否は #92 の対象外で [#104](https://github.com/OJII3/moq-mbt/issues/104) で扱う。standalone FETCH、object offset FETCH、late join、Namespace withdrawal は既定の relay interop で確認する。joining FETCH は Sans-I/O tests で確認する。
-
-## 追加する構成
-
-```text
-src/
-├── protocol/
-├── session/
-├── driver/
-├── js_adapter/
-└── transport/
-```
-
-MsQuic アダプターと JavaScript WebTransport アダプターを用意している。アダプターはそれぞれ `transport` と `js_adapter` にあり、`session` の送受信アクションとトランスポートのイベントを変換する。送信アクションの queue と再試行は `driver` が担う。Browser E2E probe は aiomoqt relay を介した Native/Browser 双方向 publish/subscribe を検証する。relay interop の追加シナリオは [interop notes](interop.md) に記録する。
+E2E 経路は Browser WebTransport ↔ aiomoqt relay ↔ Native raw QUIC である。Native WebTransport は未対応。Origin allowlist と拒否は [#104](https://github.com/OJII3/moq-mbt/issues/104) で扱う。

@@ -1,7 +1,4 @@
 ///|
-/// Peer-initiated SUBSCRIBE request handling.
-
-///|
 fn ClientSession::receive_peer_request(
   self : ClientSession,
   stream : Int64,

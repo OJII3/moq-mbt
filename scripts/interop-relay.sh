@@ -1,11 +1,5 @@
 #!/usr/bin/env bash
 # Start and stop the Draft 18 relay used by the interop scripts.
-#
-# The relay is aiomoqt, pinned by image digest. Its namespace table retains a
-# namespace while any publisher still advertises it, serves object-offset and
-# joining FETCH ranges, and applies RENDEZVOUS_TIMEOUT. The stream ring is
-# raised so a single Object can exceed 1 MiB without being written atomically
-# into a smaller ring.
 
 : "${MOQ_INTEROP_RELAY_IMAGE:=ghcr.io/gmarzot/aiomoqt@sha256:06ebc32bd63eaf4e72cddda2fafa6c190197064506665f710c7ea67b265085a2}"
 : "${MOQ_INTEROP_PORT:=4443}"

@@ -73,7 +73,6 @@ pub fn ObjectWriteState::remaining(
 }
 
 ///|
-/// Classify one chunk and compute the next state.
 fn ObjectWriteState::attempt(
   self : ObjectWriteState,
   chunk_length : UInt64,

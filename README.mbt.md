@@ -23,21 +23,6 @@ Media over QUIC (MoQ) Transport implementation in [MoonBit](https://www.moonbitl
 
 ## Packages
 
-```text
-src/
-├── protocol/       # Wire format, vi64 integer codec, control and data messages
-├── session/        # Sans-I/O session state machine (tracks, requests, streams)
-├── transport/      # Native MsQuic QUIC transport adapter
-├── test_support/   # Scripted in-memory transport for session tests
-├── js_adapter/     # Browser WebTransport adapter
-├── cmd/
-│   ├── setup_probe          # CLI: SETUP handshake verification
-│   ├── track_probe          # CLI: Publish, Subscribe, Fetch, and Namespace probe
-│   └── web_interop_probe    # WebTransport probe for browser
-└── examples/
-    └── browser/             # Browser publish and subscribe sample
-```
-
 | Package | Description | Target |
 | :--- | :--- | :--- |
 | `OJII3/moq-mbt/protocol` | Framing, message serialization, and deserialization | Native, JS |
@@ -206,17 +191,9 @@ let client_result = @js_adapter.BrowserClient::connect(
 ```
 
 `BrowserClient::connect` returns a `Result`; handle its error before using the client.
-Call `start()` to begin the session, then consume `next_notice()` until you
-receive `HandshakeComplete` before making requests through `session()`. Pass
-each request's returned actions to `dispatch()`, and continue reading notices
-to observe its result. `dispatch()` returns `Accepted`, `QueueFull`,
-`TooLarge`, or `DriverFailed`; retain actions after `QueueFull` and retry after
-progress, and split batches after `TooLarge`. `next_notice()` resolves to
-`None` when the session ends.
-Call `close(code, reason)` when the application is done. For an explicitly
-trusted certificate hash, pass `certificate_hashes=hashes` to
-`BrowserClient::connect`. To restore subscriptions after reconnecting, pass
-`desired_subscriptions=desired` to the same function.
+Call `start()`, then consume `next_notice()` until `HandshakeComplete` before
+making requests through `session()`, and call `close(code, reason)` when the
+application is done.
 
 See [`src/js_adapter/README.md`](src/js_adapter/README.md) for the complete
 adapter API, certificate pinning, browser requirements, buffer limits, and

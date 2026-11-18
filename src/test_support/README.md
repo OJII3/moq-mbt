@@ -17,7 +17,6 @@ let driver = @driver.SessionDriver::new(transport, session, {
   max_in_flight_datagrams: 1,
 })
 
-// Exercise public session operations and dispatch their returned actions.
 driver.dispatch(session.start().unwrap())
 assert_eq(transport.take_calls(), [
   @test_support.OpenStream(@session.Unidirectional, @session.Control),
