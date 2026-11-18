@@ -90,13 +90,23 @@ moon run src/cmd/track_probe -- publish 127.0.0.1 4443 /interop my-namespace tra
 # Subscribe to tracks
 moon run src/cmd/track_probe -- subscribe 127.0.0.1 4443 /interop my-namespace track0 2 5 --insecure
 
+# Send a 512 KiB Object payload through the incremental writer on both sides
+moon run src/cmd/track_probe -- publish 127.0.0.1 4443 /interop my-namespace large 1 4 --object-bytes=524288 --insecure
+moon run src/cmd/track_probe -- subscribe 127.0.0.1 4443 /interop my-namespace large 1 4 --object-bytes=524288 --insecure
+
 # Other commands
 moon run src/cmd/track_probe -- lifecycle 127.0.0.1 4443 /interop --insecure
 moon run src/cmd/track_probe -- namespace 127.0.0.1 4443 /interop --insecure
-moon run src/cmd/track_probe -- fetch 127.0.0.1 4443 /interop my-namespace track0 0 2 --insecure
+moon run src/cmd/track_probe -- fetch 127.0.0.1 4443 /interop my-namespace track0 0 0 1 2 2 --insecure
+moon run src/cmd/track_probe -- late-join 127.0.0.1 4443 /interop my-namespace track0 --insecure
 moon run src/cmd/track_probe -- joining-fetch 127.0.0.1 4443 /interop --insecure
 moon run src/cmd/track_probe -- datagram-smoke 127.0.0.1 4443 /interop --insecure
 ```
+
+`fetch` takes `START_GROUP START_OBJECT END_GROUP END_OBJECT OBJECTS_PER_GROUP`.
+An end object of `0` selects the end of the end group. `late-join` fetches
+group 0 and then joins the live track for group 1; its publisher counterpart
+uses `--wait-for-fetch --fetch-after-groups=1`.
 
 #### MoQ Interop Runner client mode
 
@@ -224,6 +234,13 @@ bash scripts/check-interop.sh
 # Native ↔ Browser dual interop check
 bash scripts/check-moqtail-dual.sh
 ```
+
+The relay scripts cover multi-Group/Object transfer, 512 KiB Objects through
+the incremental writer, same-track fan-out to three Native subscribers,
+Native/Browser large payloads and Object Datagrams, standalone FETCH, and a
+late-join FETCH followed by live delivery. Object-offset FETCH and
+`publish-namespace-multi-publisher-retention` remain limited by the pinned
+relay; see [interop notes](docs/interop.md).
 
 ## Documentation
 

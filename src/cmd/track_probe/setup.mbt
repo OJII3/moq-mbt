@@ -9,6 +9,26 @@ fn probe_properties() -> Bytes {
 }
 
 ///|
+/// Build the expected payload for one Object. A zero size keeps the small
+/// identity string used by the existing scenarios; a positive size produces a
+/// deterministic pattern that still carries the Group and Object identity.
+fn probe_object_payload(
+  group_id : UInt64,
+  object_id : UInt64,
+  object_bytes : Int32,
+) -> Bytes {
+  if object_bytes <= 0 {
+    return probe_payload(group_id, object_id)
+  }
+  let seed = @utf8.encode("group-\{group_id}-object-\{object_id}|")
+  let payload : Array[Byte] = Array::make(object_bytes, b'.')
+  for index in 0..<object_bytes {
+    payload[index] = seed[index % seed.length()]
+  }
+  Bytes::from_array(payload)
+}
+
+///|
 fn client_stream_direction(
   direction : @transport.StreamDirection,
 ) -> @session.ClientStreamDirection {

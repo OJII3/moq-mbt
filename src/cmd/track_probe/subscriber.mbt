@@ -3,6 +3,7 @@ priv struct SubscriberProbeState {
   request_id : UInt64
   group_count : UInt64
   objects_per_group : UInt64
+  object_bytes : Int32
   expect_datagram : Bool
   next_object_ids : Map[UInt64, UInt64]
   finished_groups : Map[UInt64, Bool]
@@ -48,7 +49,11 @@ fn handle_subscriber_notices(
               "unexpected object order in group \{header.group_id}: got \{frame.object_id}, expected \{expected_object_id}",
             )
           }
-          let expected_payload = probe_payload(header.group_id, frame.object_id)
+          let expected_payload = probe_object_payload(
+            header.group_id,
+            frame.object_id,
+            state.object_bytes,
+          )
           guard frame.properties == probe_properties() else {
             fail(
               "properties mismatch for group \{header.group_id}, object \{frame.object_id}",
@@ -166,6 +171,7 @@ fn run_subscriber(
   track_name : String,
   group_count : Int32,
   objects_per_group : Int32,
+  object_bytes : Int32,
   datagrams : Bool,
   insecure : Bool,
 ) -> Unit raise {
@@ -188,6 +194,7 @@ fn run_subscriber(
     request_id,
     group_count: group_count.to_uint64(),
     objects_per_group: objects_per_group.to_uint64(),
+    object_bytes,
     expect_datagram: datagrams,
     next_object_ids: {},
     finished_groups: {},

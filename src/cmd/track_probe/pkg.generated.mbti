@@ -2,9 +2,11 @@
 package "OJII3/moq-mbt/cmd/track_probe"
 
 // Values
-pub fn run_fetch(String, Int32, String, String, String, UInt64, UInt64, Bool) -> Unit raise
+pub fn run_fetch(String, Int32, String, String, String, UInt64, UInt64, UInt64, UInt64, Int32, Bool) -> Unit raise
 
 pub fn run_joining_fetch(String, Int32, String, Bool) -> Unit raise
+
+pub fn run_late_join(String, Int32, String, String, String, Bool) -> Unit raise
 
 pub fn run_lifecycle(String, Int32, String, Bool) -> Unit raise
 
