@@ -25,7 +25,7 @@ priv struct InteropOptions {
 priv struct InteropContext {
   endpoint : InteropEndpoint
   insecure : Bool
-  roles : Array[String]
+  sessions : Array[(String, String?)]
 }
 
 ///|
@@ -33,7 +33,7 @@ fn InteropContext::new(
   endpoint : InteropEndpoint,
   insecure : Bool,
 ) -> InteropContext {
-  { endpoint, insecure, roles: [], }
+  { endpoint, insecure, sessions: [], }
 }
 
 ///|
@@ -42,8 +42,28 @@ fn InteropContext::connect(
   role : String,
 ) -> LifecyclePeer raise {
   let peer = interop_peer(self.endpoint, self.insecure)
-  self.roles.push(role)
+  let dcid : String? = try {
+    match peer.client.initial_destination_connection_id() {
+      Some(value) => Some(encode_hex(value))
+      None => None
+    }
+  } catch {
+    _ => None
+  }
+  self.sessions.push((role, dcid))
   peer
+}
+
+///|
+fn encode_hex(bytes : Bytes) -> String {
+  let digits = b"0123456789abcdef"
+  let encoded : Array[Byte] = []
+  for byte in bytes {
+    let value = byte.to_int()
+    encoded.push(digits[value >> 4])
+    encoded.push(digits[value & 0xf])
+  }
+  @utf8.decode_lossy(Bytes::from_array(encoded))
 }
 
 ///|
@@ -221,7 +241,7 @@ fn print_interop_tap_point(
   passed : Bool,
   skipped : Bool,
   duration_ms : UInt64,
-  roles : Array[String],
+  sessions : Array[(String, String?)],
   message : String,
 ) -> Unit {
   let status = if passed { "ok" } else { "not ok" }
@@ -232,12 +252,17 @@ fn print_interop_tap_point(
   println("\{status} \{index} - \{test_case}")
   println("  ---")
   println("  duration_ms: \{duration_ms}")
-  if !roles.is_empty() {
+  if !sessions.is_empty() {
     println("  sessions:")
-    for role in roles {
+    for (role, dcid) in sessions {
       println("    \{role}:")
       println("      moqt_version: \"moqt-18\"")
       println("      transport: \"quic\"")
+      match dcid {
+        Some(value) =>
+          println("      quic_initial_destination_connection_id: \"\{value}\"")
+        None => ()
+      }
     }
   }
   if !passed && !message.is_empty() {
@@ -317,7 +342,7 @@ fn run_interop_client(args : Array[String]) -> Unit {
         passed,
         false,
         duration_ms,
-        context.roles,
+        context.sessions,
         message,
       )
       if !passed {

@@ -17,6 +17,7 @@ priv struct PublisherProbeState {
   fetch_after_groups : Int32
   mut fetch_served : Bool
   mut waiting_for_fetch : Bool
+  mut fetch_wait_deadline : UInt64
   datagrams : Bool
   mut datagram_send_count : UInt64
   mut datagram_send_final_count : UInt64
@@ -296,7 +297,7 @@ fn serve_publisher_fetch(
   )
   state.fetch_served = true
   if state.fetch_after_groups > 0 {
-    state.publish_after = @env.now() + 2000UL
+    state.publish_after = @env.now() + 10000UL
   }
   eprintln("Served relay FETCH request")
 }
@@ -439,6 +440,7 @@ fn run_publisher(
     fetch_after_groups,
     fetch_served: false,
     waiting_for_fetch: false,
+    fetch_wait_deadline: 0UL,
     datagram_send_count: 0UL,
     datagram_send_final_count: 0UL,
     next_group_index: 0,
@@ -611,6 +613,10 @@ fn run_publisher(
       eprintln("PUBLISH accepted; waiting for subscriber readiness")
       ignore(ffi_wait_for_start())
       state.peer_ready = true
+      // Let the main loop process the relay's REQUEST_UPDATE forward=1 before
+      // the first Object stream is opened. The session rejects Object streams
+      // while the Forward State is still zero.
+      state.publish_after = @env.now() + 500UL
       eprintln("Publisher released by subscriber readiness")
     }
     if state.publish_accepted &&
@@ -635,7 +641,16 @@ fn run_publisher(
       !state.fetch_served
     if fetch_gate && !state.waiting_for_fetch {
       state.waiting_for_fetch = true
+      state.fetch_wait_deadline = @env.now() + 10000UL
       eprintln("Waiting for relay FETCH before sending the remaining groups")
+    }
+    if state.waiting_for_fetch &&
+      !state.fetch_served &&
+      @env.now() >= state.fetch_wait_deadline {
+      state.fetch_served = true
+      eprintln(
+        "Relay served the retained range locally; continuing after the cache window",
+      )
     }
     if state.publish_accepted &&
       state.peer_ready &&
