@@ -295,6 +295,40 @@ async test "WebTransport connection and session lifecycle" {
     Err(error) => assert_eq(error.name, "QuotaExceededError")
     Ok(_) => fail("the active stream limit was reported as success")
   }
+  match capped_connection.next_stream_event().wait() {
+    StreamOverflow(_, ActiveStreamLimit) => ()
+    _ => fail("the outgoing stream limit did not report an overflow")
+  }
+  let outgoing_full = capped_connection.stream_statistics()
+  assert_eq(outgoing_full.active_outgoing, 64)
+  assert_eq(outgoing_full.active_incoming, 0)
+  assert_eq(outgoing_full.active_stream_limit_overflows, 1)
+  assert_true(
+    outgoing_full.last_overflow is Some({ reason: ActiveStreamLimit, .. }),
+  )
+  // Incoming publisher streams have their own budget, so a full outgoing table
+  // does not prevent the peer from opening more streams.
+  for _ in 0..<64 {
+    ffi_fake_push_peer_unidirectional_idle()
+  }
+  for _ in 0..<64 {
+    match capped_connection.next_stream_event().wait() {
+      StreamStarted(_, Unidirectional) => ()
+      _ =>
+        fail(
+          "an incoming stream was not accepted alongside 64 outgoing streams",
+        )
+    }
+  }
+  ffi_fake_push_peer_unidirectional_idle()
+  match capped_connection.next_stream_event().wait() {
+    StreamOverflow(_, ActiveStreamLimit) => ()
+    _ => fail("the incoming stream limit did not report an overflow")
+  }
+  let both_full = capped_connection.stream_statistics()
+  assert_eq(both_full.active_incoming, 64)
+  assert_eq(both_full.active_outgoing, 64)
+  assert_eq(both_full.active_stream_limit_overflows, 2)
   ignore(capped_connection.close(0L, "done"))
   ignore(capped_connection.closed().wait())
 
@@ -479,6 +513,8 @@ async test "WebTransport connection and session lifecycle" {
   webtransport_session_driver_reports_close()
   webtransport_session_driver_finishes_after_callback_failure()
   webtransport_session_driver_isolates_stream_errors_without_code()
+  webtransport_session_driver_drops_only_overflowed_stream()
+  webtransport_reports_event_byte_overflow()
 }
 
 ///|
@@ -731,6 +767,95 @@ async fn webtransport_session_driver_isolates_stream_errors_without_code() -> Un
 }
 
 ///|
+async fn webtransport_reports_event_byte_overflow() -> Unit {
+  ffi_install_fake_webtransport("moqt-18", false, false)
+  let connection = match
+    @js_adapter.WebTransportConnection::connect(
+      "moqt://example.test/event-byte-overflow",
+    ) {
+    Ok(connection) => connection
+    Err(message) => fail(message)
+  }
+  let stream = match connection.open_bidirectional().wait() {
+    Ok(stream) => stream
+    Err(error) => fail(error.message)
+  }
+  // Leave StreamStarted queued, then exceed the queued data byte limit.
+  ffi_fake_push_created_data(
+    @js_adapter.bytes_to_uint8array(Bytes::make(1024 * 1024 + 1, 0)),
+  )
+  @js.sleep(1)
+  match connection.next_stream_event().wait() {
+    LocalStreamOpened(id, Bidirectional) => assert_eq(id, stream)
+    _ => fail("local stream start was not announced first")
+  }
+  match connection.next_stream_event().wait() {
+    StreamOverflow(id, EventQueueBytes) => assert_eq(id, stream)
+    _ => fail("the queued data byte limit did not report an overflow")
+  }
+  let statistics = connection.stream_statistics()
+  assert_eq(statistics.active_outgoing, 0)
+  assert_eq(statistics.event_queue_byte_overflows, 1)
+  assert_true(statistics.last_overflow is Some({ reason: EventQueueBytes, .. }))
+  ignore(connection.close(0L, "done"))
+  ignore(connection.closed().wait())
+}
+
+///|
+async fn webtransport_session_driver_drops_only_overflowed_stream() -> Unit {
+  ffi_install_fake_webtransport("moqt-18", false, false)
+  let connection = match
+    @js_adapter.WebTransportConnection::connect(
+      "moqt://example.test/stream-overflow",
+    ) {
+    Ok(connection) => connection
+    Err(message) => fail(message)
+  }
+  let session = match @session.ClientSession::new(Draft18, { options: [], }) {
+    Ok(session) => session
+    Err(_) => fail("session creation failed")
+  }
+  let driver = @js_adapter.WebTransportSessionDriver::new(connection, session)
+  assert_true(driver.start() is Ok(_))
+  let peer_setup = match @protocol.encode_setup({ options: [], }) {
+    Ok(bytes) => bytes
+    Err(_) => fail("SETUP encoding failed")
+  }
+  ffi_fake_push_peer_unidirectional_open(
+    @js_adapter.bytes_to_uint8array(peer_setup),
+  )
+  match driver.next_notice().wait() {
+    Some(HandshakeComplete(_)) => ()
+    Some(_) => fail("unexpected notice before handshake")
+    None => fail("session driver stopped before SETUP completed")
+  }
+
+  // The control stream already occupies one incoming slot. Fill the rest, then
+  // let one more peer stream arrive; only that stream is dropped.
+  for _ in 0..<64 {
+    ffi_fake_push_peer_unidirectional_idle()
+  }
+  let mut dropped = false
+  while !dropped {
+    match driver.next_notice().wait() {
+      Some(StreamDropped(_, ActiveStreamLimit)) => dropped = true
+      Some(StreamSendFinished(_, _)) => ()
+      Some(_) => fail("incoming stream overflow produced an unexpected notice")
+      None => fail("incoming stream overflow ended the session")
+    }
+  }
+  assert_eq(session.state(), Active)
+  let statistics = driver.stream_statistics()
+  assert_eq(statistics.active_incoming, 64)
+  assert_eq(statistics.active_stream_limit_overflows, 1)
+  assert_true(
+    statistics.last_overflow is Some({ reason: ActiveStreamLimit, .. }),
+  )
+  ignore(connection.close(0L, "done"))
+  ignore(connection.closed().wait())
+}
+
+///|
 extern "js" fn ffi_install_fake_webtransport(
   protocol : String,
   pending_ready : Bool,
@@ -933,6 +1058,13 @@ extern "js" fn ffi_fake_push_peer_unidirectional(
 ) -> Unit =
   #| (data) => {
   #|   const readable = new ReadableStream({ start(c) { c.enqueue(data); c.close(); } });
+  #|   globalThis.__moqWtLast.incomingUni.enqueue(readable);
+  #| }
+
+///|
+extern "js" fn ffi_fake_push_peer_unidirectional_idle() -> Unit =
+  #| () => {
+  #|   const readable = new ReadableStream({ start() {} });
   #|   globalThis.__moqWtLast.incomingUni.enqueue(readable);
   #| }
 

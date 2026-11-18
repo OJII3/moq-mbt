@@ -983,3 +983,12 @@ test "ClientSession ends local PUBLISH subscriptions on STOP_SENDING" {
     Err(UnknownStream),
   )
 }
+
+///|
+test "dropping the control stream ends the session locally" {
+  let client = client_session_ready()
+  let actions = client.receive(StreamDropped(11, EventQueueCount)).unwrap()
+  assert_true(actions.contains(CloseConnection(3, b"")))
+  assert_true(actions.contains(EmitNotice(SessionEnded(Local(3, b"")))))
+  assert_eq(client.state(), Closed)
+}

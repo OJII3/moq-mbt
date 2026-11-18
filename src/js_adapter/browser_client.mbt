@@ -88,6 +88,15 @@ pub fn BrowserClient::dispatch(
 }
 
 ///|
+/// Count active streams by direction and report why the adapter last stopped
+/// a stream. Stream drops appear separately as session notices.
+pub fn BrowserClient::stream_statistics(
+  self : BrowserClient,
+) -> WebTransportStreamStatistics {
+  self.connection.stream_statistics()
+}
+
+///|
 /// Wait for the next session notice. Resolves to `None` when the session ends.
 pub fn BrowserClient::next_notice(
   self : BrowserClient,

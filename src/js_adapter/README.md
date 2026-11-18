@@ -34,7 +34,7 @@ whose UTF-8 encoding exceeds the WebTransport API's 1024-byte limit.
 `open_unidirectional()` and `open_bidirectional()` resolve to opaque `Int64`
 references. Peer streams use the same reference space. Consume
 `next_stream_event()` for `StreamStarted`, `LocalStreamOpened`, `Data`, `StreamFinished`,
-`StreamReset`, `SendStopped`, `StreamQueueOverflow`, and `ConnectionClosed`.
+`StreamReset`, `SendStopped`, `StreamOverflow`, and `ConnectionClosed`.
 `StreamStarted` is queued before that stream's first data or finish event.
 `StreamStarted` identifies a peer-opened stream; `LocalStreamOpened` reports a
 stream already returned by a local open call.
@@ -48,11 +48,18 @@ does not expose QUIC acknowledgement for this operation. Call
 `cancel_stream_read(reference, error_code)` to stop the receive side or
 `abort_stream_write(reference, error_code)` to reset the send side.
 
-The adapter bounds active streams and pending stream opens (64 each), queued
-writes (256 and 1 MiB), and queued stream events (256 and 1 MiB of data).
-Exceeding an event queue limit stops the affected stream and emits
-`StreamQueueOverflow`. Event data is copied from the exact Uint8Array view
-range into MoonBit-owned bytes.
+The adapter bounds active incoming streams and active outgoing streams
+independently (64 each) and pending local stream opens (64). Separating the
+limits keeps local subscriptions from consuming the capacity reserved for peer
+publishers. Queued writes are bounded by 256 operations and 1 MiB; queued
+stream events by 256 events and 1 MiB of data. Exceeding an event or active
+stream limit stops only the affected stream and emits `StreamOverflow` with
+`EventQueueCount`, `EventQueueBytes`, or `ActiveStreamLimit`. The session turns
+that into a `StreamDropped` notice and continues; a control stream overflow is
+still a session failure because the protocol cannot continue without it.
+`stream_statistics()` reports active incoming and outgoing counts, per-reason
+overflow counters, and the last stopped stream. Event data is copied from the
+exact Uint8Array view range into MoonBit-owned bytes.
 
 ## Datagrams
 

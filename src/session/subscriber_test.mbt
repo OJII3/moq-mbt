@@ -402,3 +402,42 @@ test "subscriber can reset an incomplete object stream after FIN validation fail
     Ok([SendFin(30, b""), EmitNotice(PublishDone(0, done))]),
   )
 }
+
+///|
+test "dropped object stream releases drain state without ending the session" {
+  let subscriber = subscriber_started()
+  subscriber_start_stream(subscriber, 40)
+  let header = subscriber_header(1, false)
+  let frame = subscriber_frame(0, b"video")
+  assert_eq(
+    subscriber.receive(
+      StreamData(40, @protocol.encode_subgroup_stream(header, [frame]).unwrap()),
+    ),
+    Ok([
+      EmitNotice(
+        ObjectReceived(
+          0,
+          { namespace_fields: [b"demo"], name: b"video", },
+          header,
+          [frame],
+        ),
+      ),
+    ]),
+  )
+  let actions = subscriber.receive(StreamDropped(40, EventQueueBytes)).unwrap()
+  assert_true(
+    actions.contains(EmitNotice(StreamDropped(StreamId(40), EventQueueBytes))),
+  )
+  assert_eq(subscriber.state(), Active)
+  let done = @protocol.PublishDoneMessage::{
+    code: 0,
+    stream_count: 1,
+    reason: b"",
+  }
+  assert_eq(
+    subscriber.receive(
+      StreamData(30, @protocol.encode_publish_done(done).unwrap()),
+    ),
+    Ok([SendFin(30, b""), EmitNotice(PublishDone(0, done))]),
+  )
+}

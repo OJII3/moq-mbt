@@ -11,6 +11,9 @@ impl @driver.SessionTransport for WebTransportTransport with fn open_stream(
   _purpose,
   on_done,
 ) {
+  if !self.connection.has_outgoing_stream_capacity() {
+    return Retry
+  }
   let opening = match direction {
     Unidirectional => self.connection.open_unidirectional()
     Bidirectional => self.connection.open_bidirectional()
@@ -269,6 +272,14 @@ pub fn WebTransportSessionDriver::dispatch(
 }
 
 ///|
+/// Count active streams and report the last local stream drop reason.
+pub fn WebTransportSessionDriver::stream_statistics(
+  self : WebTransportSessionDriver,
+) -> WebTransportStreamStatistics {
+  self.connection.stream_statistics()
+}
+
+///|
 /// Access the driven session to invoke its Sans-I/O operations.
 pub fn WebTransportSessionDriver::session(
   self : WebTransportSessionDriver,
@@ -416,7 +427,17 @@ fn WebTransportSessionDriver::read_stream_events(
             .unwrap_or(0UL)
           self.receive_event(SendStopped(stream, code))
         }
-        StreamQueueOverflow(_) => self.receive_event(TransportFailed(-2L))
+        StreamOverflow(stream, reason) =>
+          self.receive_event(
+            StreamDropped(
+              stream,
+              match reason {
+                EventQueueCount => EventQueueCount
+                EventQueueBytes => EventQueueBytes
+                ActiveStreamLimit => ActiveStreamLimit
+              },
+            ),
+          )
         // The connection.closed() promise carries the close cause into the
         // session state machine. Stop this reader while it is being handled.
         ConnectionClosed(_) => connection_closed = true

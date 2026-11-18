@@ -52,6 +52,16 @@ pub(all) enum ClientStreamPurpose {
 }
 
 ///|
+/// Why the transport discarded a stream without a peer reset. The session
+/// releases only that stream's state; a control stream still ends the session.
+#derive(Debug, Eq)
+pub(all) enum StreamDropReason {
+  EventQueueCount
+  EventQueueBytes
+  ActiveStreamLimit
+}
+
+///|
 /// The lifecycle state of a client session.
 #derive(Debug, Eq)
 pub(all) enum ClientSessionState {
@@ -102,6 +112,9 @@ pub(all) enum SessionEvent {
   DatagramSendFailed(UInt64, Int64)
   Clock(UInt64)
   PeerClosed(UInt64)
+  /// The adapter stopped reading this stream because a local limit was
+  /// exceeded. Unlike `TransportFailed`, this does not end the session.
+  StreamDropped(Int64, StreamDropReason)
   TransportFailed(Int64)
 }
 
@@ -224,6 +237,7 @@ pub(all) enum SessionNotice {
     @protocol.ObjectDatagram,
   )
   ObjectStreamReset(RequestId, StreamId)
+  StreamDropped(StreamId, StreamDropReason)
   ObjectStreamSendFinished(StreamId)
   GroupFinished(RequestId, UInt64)
   PublishDone(RequestId, @protocol.PublishDoneMessage)
@@ -547,6 +561,7 @@ pub fn ClientSession::receive(
     }
     Clock(now_ms) => Ok(self.clock(now_ms))
     PeerClosed(code) => Ok(self.end_session(Peer(code), None, b""))
+    StreamDropped(stream, reason) => self.stream_dropped(stream, reason)
     TransportFailed(status) =>
       Ok(self.end_session(Transport(status), None, b""))
   }
@@ -589,7 +604,8 @@ fn ClientSession::protocol_error_actions(
     StreamData(stream, _)
     | InboundStreamFinished(stream)
     | StreamReset(stream, _)
-    | SendStopped(stream, _) => {
+    | SendStopped(stream, _)
+    | StreamDropped(stream, _) => {
       let kind = self.inbound_stream_kinds.get(stream)
       if self.peer_control_stream == Some(stream) || kind is Some(Control) {
         return Some(self.end_session(Local(code, b""), Some(code), b""))
@@ -744,6 +760,12 @@ pub extend SendCompletion with @moonbitlang/core/debug.Debug::{to_repr}
 
 ///|
 pub extend SendCompletion with Eq::{equal, not_equal}
+
+///|
+pub extend StreamDropReason with @moonbitlang/core/debug.Debug::{to_repr}
+
+///|
+pub extend StreamDropReason with Eq::{equal, not_equal}
 
 ///|
 pub extend SessionEvent with @moonbitlang/core/debug.Debug::{to_repr}
