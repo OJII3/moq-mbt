@@ -6,10 +6,6 @@
     flake-parts.url = "github:hercules-ci/flake-parts";
     moonbit-overlay.url = "github:moonbit-community/moonbit-overlay";
     moonbit-overlay.inputs.nixpkgs.follows = "nixpkgs";
-    moqtail-src = {
-      url = "github:moqtail/moqtail/4cdcb42de6a887754779d74a06c0bf4a8716e5cb";
-      flake = false;
-    };
   };
 
   outputs = inputs@{ flake-parts, ... }:
@@ -21,21 +17,6 @@
 
       perSystem = { pkgs, system, self', ... }:
       let
-        moqtailRelay = pkgs.rustPlatform.buildRustPackage {
-          pname = "moqtail-relay";
-          version =
-            (builtins.fromTOML (
-              builtins.readFile "${inputs.moqtail-src}/apps/relay/Cargo.toml"
-            )).package.version;
-          src = inputs.moqtail-src;
-          cargoLock.lockFile = "${inputs.moqtail-src}/Cargo.lock";
-          cargoBuildFlags = [ "--package" "relay" ];
-          cargoTestFlags = [ "--package" "relay" ];
-          postInstall = ''
-            ln -s $out/bin/relay $out/bin/moqtail-relay
-          '';
-          meta.mainProgram = "moqtail-relay";
-        };
         playwrightBrowsers = pkgs.playwright-driver.browsers.override {
           withChromium = true;
           withFirefox = false;
@@ -48,14 +29,12 @@
           overlays = [ inputs.moonbit-overlay.overlays.default ];
         };
 
-        packages.moqtail-relay = moqtailRelay;
-
         devShells.default = pkgs.mkShell {
           packages = [
             pkgs.libmsquic
             pkgs.moonbit-bin.nightly
             pkgs.z3
-            moqtailRelay
+            pkgs.docker-client
             pkgs.nodejs
             pkgs.playwright-driver
             playwrightBrowsers

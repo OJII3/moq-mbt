@@ -448,6 +448,9 @@ async fn run_publisher(
   let object_bytes = ffi_object_bytes()
   let mut publish_id = @session.RequestId(0UL)
   let mut publish_stream = None
+  let mut start_requested = false
+  let mut forward_enabled = false
+  let mut publishing = false
   let mut finished = false
   while !finished {
     match client.next_notice().wait() {
@@ -496,42 +499,26 @@ async fn run_publisher(
       Some(PublishAccepted(id, _, _)) if id == publish_id => {
         ffi_set_status("published")
         ffi_wait_to_start().wait()
-        let stream = publish_stream.unwrap()
-        for group_id in 0UL..<groups.to_uint64() {
-          if !publish_group(
-              client, stream, group_id, objects_per_group, object_bytes,
-            ) {
-            return
-          }
+        start_requested = true
+      }
+      Some(SubscriptionUpdateRequested(_, update_id, stream, _, parameters)) => {
+        let response = @protocol.RequestOkMessage::{
+          parameters: [],
+          properties: [],
         }
-        match client.session().publish_done(stream, 0UL, b"") {
+        match
+          client
+          .session()
+          .accept_subscription_update(stream, update_id, response) {
           Ok(actions) => if !dispatch_actions(client, actions) { return }
           Err(error) => {
             ffi_set_status("failed: \{error.to_repr()}")
             return
           }
         }
-        let mut done_sent = false
-        while !done_sent {
-          match client.next_notice().wait() {
-            Some(StreamSendFinished(sent_stream, Sent)) if sent_stream == stream =>
-              done_sent = true
-            Some(SessionEnded(end)) => {
-              ffi_set_status("failed: session ended \{end.to_repr()}")
-              return
-            }
-            None => {
-              ffi_set_status("failed: session ended before PUBLISH_DONE FIN")
-              return
-            }
-            _ => ()
-          }
+        if @protocol.forward_requested(parameters) {
+          forward_enabled = true
         }
-        ffi_set_status("publishing-done")
-        ffi_wait_to_finish().wait()
-        finished = true
-        ffi_set_status("passed")
-        close_connection(client)
       }
       Some(PublishRejected(id, error)) if id == publish_id => {
         ffi_set_status("failed: PUBLISH rejected \{error.code}")
@@ -542,6 +529,45 @@ async fn run_publisher(
         return
       }
       _ => ()
+    }
+    if start_requested && forward_enabled && !publishing {
+      publishing = true
+      let stream = publish_stream.unwrap()
+      for group_id in 0UL..<groups.to_uint64() {
+        if !publish_group(
+            client, stream, group_id, objects_per_group, object_bytes,
+          ) {
+          return
+        }
+      }
+      match client.session().publish_done(stream, 0UL, b"") {
+        Ok(actions) => if !dispatch_actions(client, actions) { return }
+        Err(error) => {
+          ffi_set_status("failed: \{error.to_repr()}")
+          return
+        }
+      }
+      let mut done_sent = false
+      while !done_sent {
+        match client.next_notice().wait() {
+          Some(StreamSendFinished(sent_stream, Sent)) if sent_stream == stream =>
+            done_sent = true
+          Some(SessionEnded(end)) => {
+            ffi_set_status("failed: session ended \{end.to_repr()}")
+            return
+          }
+          None => {
+            ffi_set_status("failed: session ended before PUBLISH_DONE FIN")
+            return
+          }
+          _ => ()
+        }
+      }
+      ffi_set_status("publishing-done")
+      ffi_wait_to_finish().wait()
+      finished = true
+      ffi_set_status("passed")
+      close_connection(client)
     }
   }
 }

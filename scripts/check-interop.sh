@@ -2,8 +2,8 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
+source scripts/interop-relay.sh
 task_tmp=$(mktemp -d)
-relay_pid=
 publisher_pid=
 subscriber_pid=
 extra_pids=()
@@ -22,10 +22,7 @@ cleanup() {
     kill "$publisher_pid" 2>/dev/null || true
     wait "$publisher_pid" 2>/dev/null || true
   fi
-  if [[ -n "$relay_pid" ]]; then
-    kill -KILL "$relay_pid" 2>/dev/null || true
-    wait "$relay_pid" 2>/dev/null || true
-  fi
+  interop_relay_stop
   rm -rf "$task_tmp"
 }
 trap cleanup EXIT
@@ -33,34 +30,23 @@ trap cleanup EXIT
 moon run --release --target native --build-only src/cmd/setup_probe
 moon run --release --target native --build-only src/cmd/track_probe
 runner_client=_build/native/release/build/cmd/track_probe/track_probe.exe
-scenario_timeout=${MOQTAIL_SCENARIO_TIMEOUT:-90}s
-openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 1 \
+scenario_timeout=${MOQ_INTEROP_SCENARIO_TIMEOUT:-90}s
+openssl ecparam -name prime256v1 -genkey -noout -out "$task_tmp/key.pem" \
+  >"$task_tmp/cert.log" 2>&1
+openssl req -x509 -new -key "$task_tmp/key.pem" -sha256 -days 1 \
   -subj /CN=localhost -addext 'subjectAltName=DNS:localhost,IP:127.0.0.1' \
-  -keyout "$task_tmp/key.pem" -out "$task_tmp/cert.pem" >"$task_tmp/cert.log" 2>&1
+  -out "$task_tmp/cert.pem" >>"$task_tmp/cert.log" 2>&1
 
-port=${MOQTAIL_PORT:-4443}
-moqtail-relay --host 127.0.0.1 --port "$port" \
-  --cert-file "$task_tmp/cert.pem" --key-file "$task_tmp/key.pem" \
-  >"$task_tmp/relay.log" 2>&1 &
-relay_pid=$!
-for ((attempt = 0; attempt < 100; attempt++)); do
-  if kill -0 "$relay_pid" 2>/dev/null && ((attempt >= 10)); then
-    break
-  fi
-  if ! kill -0 "$relay_pid" 2>/dev/null || ((attempt == 99)); then
-    cat "$task_tmp/relay.log" >&2 || true
-    echo "moqtail failed to start; check the listener port and certificate configuration" >&2
-    exit 1
-  fi
-  sleep 0.1
-done
+port=${MOQ_INTEROP_PORT:-4443}
+interop_relay_start "$task_tmp/cert.pem" "$task_tmp/key.pem" "$port" \
+  "$task_tmp/relay.log"
 
-echo "Checking Draft 18 interoperability with moqtail"
+echo "Checking Draft 18 interoperability with the pinned aiomoqt relay"
 
 # An untrusted self-signed certificate must fail with validation enabled.
 if moon run --release --target native src/cmd/setup_probe -- \
   127.0.0.1 "$port" /interop >"$task_tmp/verify.log" 2>&1; then
-  echo "moqtail unexpectedly trusted the self-signed certificate" >&2
+  echo "the relay unexpectedly trusted the self-signed certificate" >&2
   exit 1
 fi
 
@@ -74,7 +60,7 @@ if ! moon run --release --target native src/cmd/setup_probe -- \
 fi
 cat "$task_tmp/probe.log"
 
-# moqtail rejects subscriptions until a publisher has registered the track.
+# The relay rejects subscriptions until a publisher has registered the track.
 moon run --release --target native src/cmd/track_probe -- \
   publish 127.0.0.1 "$port" /interop interop multi-object 3 2 --insecure \
   >"$task_tmp/publisher.log" 2>&1 &
@@ -238,19 +224,20 @@ run_publish_fanout() {
 }
 
 # Scale and fan-out scenarios share the relay but use distinct track names.
-run_scaled_publish_subscribe large-object 1 4 --object-bytes=524288 --insecure
+run_scaled_publish_subscribe large-object 1 1 --object-bytes=2097152 --insecure
 run_publish_fanout fanout 3 2 3
 run_scaled_publish_subscribe bulk-objects 32 8 --insecure
 
-# Run the moq-interop-runner client scenarios that the fixed relay supports.
-# Retention and rendezvous-timeout are implemented by the client but are not
-# expected to pass against this relay build.
+# Run every moq-interop-runner client scenario. The relay pin is chosen so
+# namespace retention and RENDEZVOUS_TIMEOUT are exercised, not skipped.
 runner_tests=(
   setup-only
   announce-only
   publish-namespace-done
   subscribe-namespace-lifecycle
+  publish-namespace-multi-publisher-retention
   subscribe-error
+  rendezvous-timeout
   announce-subscribe
   subscribe-before-announce
   data-subgroup-basic

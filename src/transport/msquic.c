@@ -21,6 +21,11 @@ typedef struct datagram_send {
     uint8_t data[];
 } datagram_send;
 
+typedef struct paused_stream {
+    struct paused_stream *next;
+    HQUIC stream;
+} paused_stream;
+
 typedef struct client {
     const QUIC_API_TABLE *api;
     HQUIC registration, configuration, connection;
@@ -28,6 +33,7 @@ typedef struct client {
     pthread_cond_t shutdown_complete;
     event *head, *tail, *current;
     datagram_send *pending_datagrams;
+    paused_stream *paused;
     size_t queued_bytes;
     unsigned queued_events;
     size_t max_queued_bytes;
@@ -50,15 +56,15 @@ static int unlink_datagram_locked(client *c, datagram_send *send) {
     return 0;
 }
 
-static void push(client *c, int type, uint64_t id, uint64_t code, HQUIC stream, const uint8_t *data, size_t size) {
+static int push(client *c, int type, uint64_t id, uint64_t code, HQUIC stream, const uint8_t *data, size_t size) {
     pthread_mutex_lock(&c->mutex);
-    event *e = (c->failed || size > c->max_queued_bytes - c->queued_bytes || c->queued_events >= c->max_queued_events)
-        ? NULL : malloc(sizeof(*e) + size);
+    event *e = c->failed ? NULL : malloc(sizeof(*e) + size);
     if (!e) {
         c->failed = 1;
         pthread_mutex_unlock(&c->mutex);
-        c->api->ConnectionShutdown(c->connection, QUIC_CONNECTION_SHUTDOWN_FLAG_NONE, 1);
-        return;
+        if (c->connection)
+            c->api->ConnectionShutdown(c->connection, QUIC_CONNECTION_SHUTDOWN_FLAG_NONE, 1);
+        return -1;
     }
     *e = (event){ .type = type, .id = id, .code = code, .stream = stream, .size = size };
     if (size) memcpy(e->data, data, size);
@@ -66,7 +72,67 @@ static void push(client *c, int type, uint64_t id, uint64_t code, HQUIC stream, 
     c->tail = e;
     c->queued_bytes += size;
     c->queued_events++;
+    int over = c->queued_bytes >= c->max_queued_bytes ||
+        c->queued_events >= c->max_queued_events;
     pthread_mutex_unlock(&c->mutex);
+    return over;
+}
+
+/* Stop receive callbacks on one stream until the application drains the
+ * shared event queue. The current receive callback still copies its buffers,
+ * so the queue may exceed max_queued_bytes by at most that callback. */
+static void pause_stream(client *c, HQUIC s) {
+    if (!s) return;
+    pthread_mutex_lock(&c->mutex);
+    for (paused_stream *p = c->paused; p; p = p->next) {
+        if (p->stream == s) {
+            pthread_mutex_unlock(&c->mutex);
+            return;
+        }
+    }
+    paused_stream *p = malloc(sizeof(*p));
+    if (p) {
+        p->stream = s;
+        p->next = c->paused;
+        c->paused = p;
+    }
+    pthread_mutex_unlock(&c->mutex);
+    if (p) c->api->StreamReceiveSetEnabled(s, FALSE);
+}
+
+static void forget_paused_stream(client *c, HQUIC s) {
+    if (!c || !s) return;
+    pthread_mutex_lock(&c->mutex);
+    paused_stream **link = &c->paused;
+    while (*link) {
+        if ((*link)->stream == s) {
+            paused_stream *p = *link;
+            *link = p->next;
+            free(p);
+            break;
+        }
+        link = &(*link)->next;
+    }
+    pthread_mutex_unlock(&c->mutex);
+}
+
+static paused_stream *take_resumable_locked(client *c) {
+    if (c->queued_bytes > c->max_queued_bytes / 2 ||
+        c->queued_events > c->max_queued_events / 2) {
+        return NULL;
+    }
+    paused_stream *paused = c->paused;
+    c->paused = NULL;
+    return paused;
+}
+
+static void resume_streams(client *c, paused_stream *paused) {
+    while (paused) {
+        paused_stream *next = paused->next;
+        c->api->StreamReceiveSetEnabled(paused->stream, TRUE);
+        free(paused);
+        paused = next;
+    }
 }
 
 static QUIC_STATUS QUIC_API stream_cb(HQUIC s, void *ctx, QUIC_STREAM_EVENT *e) {
@@ -75,10 +141,16 @@ static QUIC_STATUS QUIC_API stream_cb(HQUIC s, void *ctx, QUIC_STREAM_EVENT *e) 
     uint32_t len = sizeof(id);
     c->api->GetParam(s, QUIC_PARAM_STREAM_ID, &len, &id);
     switch (e->Type) {
-    case QUIC_STREAM_EVENT_RECEIVE:
-        for (uint32_t i = 0; i < e->RECEIVE.BufferCount; i++)
-            push(c, 2, id, 0, NULL, e->RECEIVE.Buffers[i].Buffer, e->RECEIVE.Buffers[i].Length);
+    case QUIC_STREAM_EVENT_RECEIVE: {
+        int over = 0;
+        for (uint32_t i = 0; i < e->RECEIVE.BufferCount; i++) {
+            int result = push(c, 2, id, 0, NULL, e->RECEIVE.Buffers[i].Buffer, e->RECEIVE.Buffers[i].Length);
+            if (result < 0) return QUIC_STATUS_SUCCESS;
+            if (result > 0) over = 1;
+        }
+        if (over) pause_stream(c, s);
         break;
+    }
     case QUIC_STREAM_EVENT_PEER_SEND_SHUTDOWN:
         push(c, 3, id, 0, NULL, NULL, 0);
         break;
@@ -97,6 +169,7 @@ static QUIC_STATUS QUIC_API stream_cb(HQUIC s, void *ctx, QUIC_STREAM_EVENT *e) 
             push(c, 15, id, 0, NULL, NULL, 0);
         break;
     case QUIC_STREAM_EVENT_SHUTDOWN_COMPLETE:
+        forget_paused_stream(c, s);
         push(c, 10, id, 0, NULL, NULL, 0);
         break;
     default:
@@ -178,7 +251,19 @@ static QUIC_STATUS QUIC_API conn_cb(HQUIC conn, void *ctx, QUIC_CONNECTION_EVENT
 
 void moq_sleep_ms(int32_t ms) { if (ms > 0) usleep((useconds_t)ms * 1000); }
 int32_t moq_client_valid(client *c) { return c != NULL; }
-void moq_client_stream_close(client *c, HQUIC s) { if (c && s) c->api->StreamClose(s); }
+void moq_client_stream_close(client *c, HQUIC s) {
+    if (!c || !s) return;
+    forget_paused_stream(c, s);
+    c->api->StreamClose(s);
+}
+
+int32_t moq_client_orig_dest_cid(client *c, moonbit_bytes_t out, int32_t capacity) {
+    if (!c || !c->connection || capacity <= 0) return -1;
+    uint32_t len = (uint32_t)capacity;
+    if (QUIC_FAILED(c->api->GetParam(c->connection, QUIC_PARAM_CONN_ORIG_DEST_CID, &len, out)))
+        return -1;
+    return (int32_t)len;
+}
 
 void moq_client_shutdown(client *c, int64_t code) {
     if (c && c->connection)
@@ -212,6 +297,10 @@ void moq_client_free(client *c) {
     if (c->api) MsQuicClose(c->api);
     for (event *e = c->head, *next; e; e = next) { next = e->next; free(e); }
     free(c->current);
+    for (paused_stream *p = c->paused, *next; p; p = next) {
+        next = p->next;
+        free(p);
+    }
     for (datagram_send *send = c->pending_datagrams, *next; send; send = next) {
         next = send->next;
         free(send);
@@ -347,7 +436,9 @@ int32_t moq_client_pop(client *c) {
         c->current = e;
     }
     int type = e ? e->type : (c->closed ? 4 : 0);
+    paused_stream *paused = take_resumable_locked(c);
     pthread_mutex_unlock(&c->mutex);
+    resume_streams(c, paused);
     return type;
 }
 

@@ -5,22 +5,22 @@ const { chromium } = require(process.env.PLAYWRIGHT_CORE_PATH);
 const [mode, url, fingerprintBase64, nativePort, bundlePath] = process.argv.slice(2);
 if (!mode || !["subscribe", "publish"].includes(mode) || !url || !fingerprintBase64 || !nativePort || !bundlePath) {
   throw new Error(
-    "usage: check-moqtail-browser-e2e.cjs <subscribe|publish> <url> <sha256-fingerprint-base64> <native-port> <bundle-path>",
+    "usage: check-interop-browser-e2e.cjs <subscribe|publish> <url> <sha256-fingerprint-base64> <native-port> <bundle-path>",
   );
 }
 
-const groups = Number(process.env.MOQTAIL_BROWSER_GROUPS ?? "2");
-const objectsPerGroup = Number(process.env.MOQTAIL_BROWSER_OBJECTS ?? "2");
-const objectBytes = Number(process.env.MOQTAIL_BROWSER_OBJECT_BYTES ?? "0");
-const datagrams = process.env.MOQTAIL_BROWSER_DATAGRAMS === "1";
+const groups = Number(process.env.MOQ_INTEROP_BROWSER_GROUPS ?? "2");
+const objectsPerGroup = Number(process.env.MOQ_INTEROP_BROWSER_OBJECTS ?? "2");
+const objectBytes = Number(process.env.MOQ_INTEROP_BROWSER_OBJECT_BYTES ?? "0");
+const datagrams = process.env.MOQ_INTEROP_BROWSER_DATAGRAMS === "1";
 if (!Number.isInteger(groups) || groups <= 0) {
-  throw new Error("MOQTAIL_BROWSER_GROUPS must be a positive integer");
+  throw new Error("MOQ_INTEROP_BROWSER_GROUPS must be a positive integer");
 }
 if (!Number.isInteger(objectsPerGroup) || objectsPerGroup <= 0) {
-  throw new Error("MOQTAIL_BROWSER_OBJECTS must be a positive integer");
+  throw new Error("MOQ_INTEROP_BROWSER_OBJECTS must be a positive integer");
 }
 if (!Number.isInteger(objectBytes) || objectBytes < 0) {
-  throw new Error("MOQTAIL_BROWSER_OBJECT_BYTES must be a non-negative integer");
+  throw new Error("MOQ_INTEROP_BROWSER_OBJECT_BYTES must be a non-negative integer");
 }
 if (datagrams && mode === "publish") {
   throw new Error("the browser publisher does not send Object Datagrams");
@@ -121,7 +121,7 @@ async function runNative(role, mode, options = {}) {
 async function main() {
   const originServer = createServer((_request, response) => {
     response.writeHead(200, { "content-type": "text/html" });
-    response.end("<!doctype html><title>moqtail browser interop</title>");
+    response.end("<!doctype html><title>interop browser probe</title>");
   });
   await new Promise(resolve => originServer.listen(0, "127.0.0.1", resolve));
   let browser;
@@ -297,6 +297,6 @@ async function main() {
 }
 
 main().catch(error => {
-  console.error(`moqtail browser E2E failed: ${error.message}`);
+  console.error(`browser E2E failed: ${error.message}`);
   process.exitCode = 1;
 });

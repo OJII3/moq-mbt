@@ -5,7 +5,7 @@ let max_bytes : Int32 = 1024 * 1024
 let max_events : Int32 = 256
 
 ///|
-let max_streams : Int32 = 16
+let max_streams : Int32 = 64
 
 ///|
 let handshake_timeout_ms : Int32 = 10000
@@ -143,6 +143,22 @@ pub fn Client::datagram_send_capability(
   let raw = self.handle()
   let state = native_datagram_state(raw)
   { enabled: (state & 1L) != 0L, max_length: (state >> 1).to_int(), }
+}
+
+///|
+/// The QUIC Initial Destination Connection ID chosen for this connection.
+/// Returns `None` when the transport has no value yet or MsQuic does not expose it.
+pub fn Client::initial_destination_connection_id(
+  self : Client,
+) -> Bytes? raise TransportError {
+  let raw = self.handle()
+  let out = Bytes::make(64, 0)
+  let length = native_orig_dest_cid(raw, out, out.length())
+  if length <= 0 {
+    None
+  } else {
+    Some(out[:length].to_owned())
+  }
 }
 
 ///|

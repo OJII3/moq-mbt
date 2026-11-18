@@ -33,6 +33,58 @@ priv struct NamespaceProbeState {
 }
 
 ///|
+/// Accept subscription requests the relay sends to a publisher and reply to
+/// forwarding-state updates. The session refuses to open Object streams while
+/// the relay's Forward State is zero, so a publisher must service these
+/// requests before sending.
+fn namespace_service_publisher(
+  peer : LifecyclePeer,
+  notices : Array[@session.SessionNotice],
+) -> Array[@session.SessionNotice] raise {
+  let processed : Array[@session.SessionNotice] = []
+  for notice in notices {
+    match notice {
+      SubscriptionRequested(_, stream, _) => {
+        let (more, _) = drive_session_result(
+          peer.client,
+          peer.session,
+          peer.session.accept_subscription(stream),
+          peer.driver,
+        )
+        for item in more {
+          processed.push(item)
+        }
+      }
+      SubscriptionUpdateRequested(_, update_id, stream, _, _) => {
+        let response = @protocol.RequestOkMessage::{
+          parameters: [],
+          properties: [],
+        }
+        let (more, _) = drive_session_result(
+          peer.client,
+          peer.session,
+          peer.session.accept_subscription_update(stream, update_id, response),
+          peer.driver,
+        )
+        for item in more {
+          processed.push(item)
+        }
+      }
+      _ => ()
+    }
+  }
+  notices + processed
+}
+
+///|
+fn namespace_poll_publisher(
+  peer : LifecyclePeer,
+  timeout_ms : Int32,
+) -> Array[@session.SessionNotice] raise {
+  namespace_service_publisher(peer, lifecycle_poll(peer, timeout_ms))
+}
+
+///|
 fn NamespaceProbeState::observe(
   self : NamespaceProbeState,
   notices : Array[@session.SessionNotice],
@@ -144,13 +196,13 @@ fn NamespaceProbeState::observe(
         if publisher && self.cancelling_publication && self.withdrawn {
           self.publisher_session_ended = true
           println(
-            "moqtail closed the Namespace publisher session after withdrawal ({end.to_repr()})",
+            "relay closed the Namespace publisher session after withdrawal ({end.to_repr()})",
           )
         } else if !publisher && self.cancelling_subscription {
           self.subscriber_session_ended = true
           self.ended = true
           println(
-            "moqtail closed the Namespace subscriber session after cancellation ({end.to_repr()})",
+            "relay closed the Namespace subscriber session after cancellation ({end.to_repr()})",
           )
         } else {
           let peer_role = if publisher { "publisher" } else { "subscriber" }
@@ -193,7 +245,7 @@ fn wait_namespace_stage(
 ) -> Unit raise {
   let deadline = @env.now() + 30000UL
   while !state.reached(publisher, subscriber, stage) && @env.now() < deadline {
-    state.observe(lifecycle_poll(publisher, 20), true)
+    state.observe(namespace_poll_publisher(publisher, 20), true)
     state.observe(lifecycle_poll(subscriber, 20), false)
   }
   guard state.reached(publisher, subscriber, stage) else {
@@ -246,11 +298,14 @@ pub fn run_namespace(
     .publish_track(independent_track, 7UL)
     .unwrap()
   let independent_publish = independent_publish.to_uint64()
-  let (publish_notices, _) = drive_session_actions(
+  let (publish_notices, publish_opened) = drive_session_actions(
     publisher_client,
     publisher_session,
     publish_actions,
     publisher.driver,
+  )
+  let publish_stream = lifecycle_request_stream(
+    publish_opened, independent_publish,
   )
   let (subscription, actions) = subscriber_session
     .subscribe_namespace(prefix)
@@ -296,14 +351,14 @@ pub fn run_namespace(
     publisher_session_ended: false,
     ended: false,
   }
-  state.observe(publish_notices, true)
+  state.observe(namespace_service_publisher(publisher, publish_notices), true)
   state.observe(subscribe_notices, false)
   state.observe(notices, false)
   wait_namespace_stage(publisher, subscriber, state, Established)
   let deadline = @env.now() + 30000UL
   while (!state.independent_published || !state.independent_subscribed) &&
         @env.now() < deadline {
-    state.observe(lifecycle_poll(publisher, 20), true)
+    state.observe(namespace_poll_publisher(publisher, 20), true)
     state.observe(lifecycle_poll(subscriber, 20), false)
   }
   guard state.independent_published && state.independent_subscribed else {
@@ -336,7 +391,7 @@ pub fn run_namespace(
   wait_namespace_stage(publisher, subscriber, state, Withdrawn)
   println("Namespace publication request stream shutdown completed")
   if state.publisher_session_ended {
-    println("moqtail closed the publisher session after Namespace withdrawal")
+    println("relay closed the publisher session after Namespace withdrawal")
   }
 
   state.cancelling_subscription = true
@@ -356,67 +411,18 @@ pub fn run_namespace(
     )
   }
   if state.subscriber_session_ended {
-    println(
-      "moqtail closed the subscriber session after Namespace cancellation",
-    )
+    println("relay closed the subscriber session after Namespace cancellation")
     fail(
       "Namespace cancellation closed the session before independent track continuation",
     )
   }
-  // Reconnect the independent track publisher after Namespace withdrawal and
-  // verify that the separate track subscription remains active.
-  let (continuation_client, continuation_session) = setup_client(
-    host, port, path, insecure,
-  )
-  defer continuation_client.close()
-  let continuation_publisher = LifecyclePeer::{
-    client: continuation_client,
-    session: continuation_session,
-    driver: SessionActionDriver::new(),
-    closed_streams: {},
-  }
-  let (continuation_publish, continuation_actions) = continuation_session
-    .publish_track(independent_track, 7UL)
-    .unwrap()
-  let continuation_publish = continuation_publish.to_uint64()
-  let (continuation_notices, continuation_opened) = drive_session_actions(
-    continuation_client,
-    continuation_session,
-    continuation_actions,
-    continuation_publisher.driver,
-  )
-  let continuation_stream = lifecycle_request_stream(
-    continuation_opened, continuation_publish,
-  )
-  let mut continuation_accepted = false
-  for notice in continuation_notices {
-    match notice {
-      PublishAccepted(id, _, _) if id.to_uint64() == continuation_publish =>
-        continuation_accepted = true
-      PublishRejected(_, error) =>
-        fail("independent track republish rejected: \{error.to_repr()}")
-      _ => ()
-    }
-  }
-  let accept_deadline = @env.now() + 30000UL
-  while !continuation_accepted && @env.now() < accept_deadline {
-    for notice in lifecycle_poll(continuation_publisher, 20) {
-      match notice {
-        PublishAccepted(id, _, _) if id.to_uint64() == continuation_publish =>
-          continuation_accepted = true
-        PublishRejected(_, error) =>
-          fail("independent track republish rejected: \{error.to_repr()}")
-        _ => ()
-      }
-    }
-  }
-  guard continuation_accepted else {
-    fail("independent track republish was not accepted")
-  }
+  // The independent track publication and its subscription are separate from
+  // the namespace publication. Send one more group on the same publisher and
+  // verify that the subscription still receives it after the namespace ended.
   let (_, object_streams) = drive_session_result(
-    continuation_client,
-    continuation_session,
-    continuation_session.open_object_stream(continuation_stream, {
+    publisher.client,
+    publisher.session,
+    publisher.session.open_object_stream(publish_stream, {
       track_alias: 7UL,
       group_id: 0UL,
       subgroup_id_mode: Zero,
@@ -425,7 +431,7 @@ pub fn run_namespace(
       first_object: true,
       has_properties: true,
     }),
-    continuation_publisher.driver,
+    publisher.driver,
   )
   let mut object_stream : Int64? = None
   for (purpose, stream) in object_streams {
@@ -437,23 +443,23 @@ pub fn run_namespace(
   let object_stream = object_stream.unwrap()
   ignore(
     drive_session_result(
-      continuation_client,
-      continuation_session,
-      continuation_session.send_object(object_stream, {
+      publisher.client,
+      publisher.session,
+      publisher.session.send_object(object_stream, {
         object_id: 0UL,
         status: Normal,
         properties: probe_properties(),
         payload: probe_payload(0UL, 0UL),
       }),
-      continuation_publisher.driver,
+      publisher.driver,
     ),
   )
   ignore(
     drive_session_result(
-      continuation_client,
-      continuation_session,
-      continuation_session.finish_object_stream(object_stream),
-      continuation_publisher.driver,
+      publisher.client,
+      publisher.session,
+      publisher.session.finish_object_stream(object_stream),
+      publisher.driver,
     ),
   )
   let deadline = @env.now() + 30000UL
@@ -462,7 +468,7 @@ pub fn run_namespace(
           !state.independent_group_finished
         ) &&
         @env.now() < deadline {
-    state.observe(lifecycle_poll(continuation_publisher, 20), true)
+    state.observe(namespace_poll_publisher(publisher, 20), true)
     state.observe(lifecycle_poll(subscriber, 20), false)
   }
   guard state.independent_object_received && state.independent_group_finished else {

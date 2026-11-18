@@ -3,7 +3,7 @@ extern "C" fn exit(status : Int32) -> Unit = "exit"
 
 ///|
 fn probe_usage() -> String {
-  "usage: track_probe publish HOST PORT PATH NAMESPACE TRACK GROUPS OBJECTS_PER_GROUP [--datagrams] [--insecure] [--object-bytes=BYTES] [--hold-open] [--wait-for-start] [--wait-for-fetch] [--fetch-after-groups=N]\n       track_probe subscribe HOST PORT PATH NAMESPACE TRACK GROUPS OBJECTS_PER_GROUP [--datagrams] [--insecure] [--object-bytes=BYTES]\n       track_probe lifecycle HOST PORT PATH [--insecure]\n       track_probe namespace HOST PORT PATH [--insecure]\n       track_probe datagram-smoke HOST PORT PATH [--insecure]\n       track_probe fetch HOST PORT PATH NAMESPACE TRACK START_GROUP START_OBJECT END_GROUP END_OBJECT OBJECTS_PER_GROUP [--insecure]\n       track_probe late-join HOST PORT PATH NAMESPACE TRACK [--insecure]\n       track_probe joining-fetch HOST PORT PATH [--insecure]"
+  "usage: track_probe publish HOST PORT PATH NAMESPACE TRACK GROUPS OBJECTS_PER_GROUP [--datagrams] [--insecure] [--object-bytes=BYTES] [--hold-open] [--wait-for-start] [--wait-for-fetch] [--fetch-after-groups=N]\n       track_probe subscribe HOST PORT PATH NAMESPACE TRACK GROUPS OBJECTS_PER_GROUP [--datagrams] [--insecure] [--object-bytes=BYTES]\n       track_probe lifecycle HOST PORT PATH [--insecure]\n       track_probe namespace HOST PORT PATH [--insecure]\n       track_probe datagram-smoke HOST PORT PATH [--insecure]\n       track_probe fetch HOST PORT PATH NAMESPACE TRACK START_GROUP START_OBJECT END_GROUP END_OBJECT OBJECTS_PER_GROUP [--insecure]\n       track_probe late-join HOST PORT PATH NAMESPACE TRACK [--insecure]"
 }
 
 ///|
@@ -59,7 +59,6 @@ fn main {
     "datagram-smoke" => if insecure { 6 } else { 5 }
     "fetch" => if insecure { 13 } else { 12 }
     "late-join" => if insecure { 8 } else { 7 }
-    "joining-fetch" => if insecure { 6 } else { 5 }
     _ => 0
   }
   guard args.length() == expected_args else {
@@ -90,7 +89,6 @@ fn main {
       "lifecycle" => run_lifecycle(args[2], port, args[4], insecure)
       "namespace" => run_namespace(args[2], port, args[4], insecure)
       "datagram-smoke" => run_datagram_smoke(args[2], port, args[4], insecure)
-      "joining-fetch" => run_joining_fetch(args[2], port, args[4], insecure)
       "late-join" =>
         run_late_join(args[2], port, args[4], args[5], args[6], insecure)
       "fetch" =>

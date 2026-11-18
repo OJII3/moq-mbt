@@ -589,6 +589,8 @@ fn interop_publish_namespace_multi_publisher_retention(
   }
 
   observer_state.expect_shared_done = true
+  subscriber_1_state.expect_shared_done = true
+  subscriber_2_state.expect_shared_done = true
   interop_cancel_request(publisher, shared_publication)
   while (
           !observer_state.shared_done ||
