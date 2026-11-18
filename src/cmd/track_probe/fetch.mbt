@@ -1,5 +1,6 @@
 ///|
-/// Run the FETCH probe for a track range against `host`.
+/// Run the FETCH probe for an Object range against `host`. An end object of 0
+/// means the end of the end group, matching the publisher's group boundary.
 pub fn run_fetch(
   host : String,
   port : Int32,
@@ -7,11 +8,24 @@ pub fn run_fetch(
   namespace_field : String,
   track_name : String,
   start_group : UInt64,
+  start_object : UInt64,
   end_group : UInt64,
+  end_object : UInt64,
+  objects_per_group : Int32,
   insecure : Bool,
 ) -> Unit raise {
-  guard start_group < end_group else {
-    fail("START_GROUP must be less than END_GROUP")
+  guard objects_per_group > 0 else {
+    fail("OBJECTS_PER_GROUP must be positive")
+  }
+  let group_size = objects_per_group.to_uint64()
+  guard start_group <= end_group &&
+    start_object <= group_size &&
+    (end_object == 0UL || end_object <= group_size) &&
+    (
+      start_group < end_group ||
+      (start_group == end_group && start_object < end_object)
+    ) else {
+    fail("START and END must describe a non-empty Object range")
   }
   let track = @protocol.TrackName::{
     namespace_fields: [@utf8.encode(namespace_field)],
@@ -28,16 +42,31 @@ pub fn run_fetch(
   let (request_id, actions) = session
     .fetch_track(
       track,
-      { group: start_group, object: 0UL, },
-      { group: end_group, object: 0UL, },
+      { group: start_group, object: start_object, },
+      { group: end_group, object: end_object, },
       [],
     )
     .unwrap()
   ignore(drive_session_actions(client, session, actions, peer.driver))
   println("FETCH request sent")
 
+  let mut expected_count = 0UL
+  let mut group = start_group
+  while group <= end_group {
+    let first = if group == start_group { start_object } else { 0UL }
+    let last = if group == end_group && end_object != 0UL {
+      end_object
+    } else {
+      group_size
+    }
+    if last > first {
+      expected_count = expected_count + (last - first)
+    }
+    group = group + 1UL
+  }
+
   let mut expected_group = start_group
-  let mut expected_object = 0UL
+  let mut expected_object = start_object
   let mut received = 0UL
   let mut accepted = false
   let mut finished = false
@@ -51,10 +80,15 @@ pub fn run_fetch(
           println("FETCH_OK received")
         }
         FetchResponseAccepted(id, _, response) if id == request_id => {
+          let response_end_object = if end_object == 0UL {
+            group_size
+          } else {
+            end_object
+          }
           guard response.end_location.group == end_group &&
-            response.end_location.object == 2UL else {
+            response.end_location.object == response_end_object else {
             fail(
-              "FETCH_OK end location did not match the requested terminal group",
+              "FETCH_OK end location did not match the requested terminal location",
             )
           }
           guard response.end_of_track == 0 else {
@@ -89,7 +123,12 @@ pub fn run_fetch(
           )
           received = received + 1UL
           expected_object = expected_object + 1UL
-          if expected_object == 2UL {
+          let group_end = if expected_group == end_group && end_object != 0UL {
+            end_object
+          } else {
+            group_size
+          }
+          if expected_object == group_end {
             expected_object = 0UL
             expected_group = expected_group + 1UL
           }
@@ -103,8 +142,10 @@ pub fn run_fetch(
     }
   }
   guard finished else { fail("FETCH did not finish before the deadline") }
-  guard expected_group == end_group + 1UL && expected_object == 0UL else {
-    fail("FETCH ended before the requested group range was complete")
+  guard received == expected_count else {
+    fail(
+      "received \{received} FETCH Objects; expected \{expected_count} for the requested range",
+    )
   }
   println("Verified \{received} FETCH Objects; FETCH data FIN received")
 }

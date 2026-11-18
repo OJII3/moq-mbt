@@ -23,6 +23,40 @@ extern "js" fn ffi_track() -> String =
   #|() => globalThis.__moqE2EConfig.track ?? "multi-object"
 
 ///|
+extern "js" fn ffi_groups() -> Int32 =
+  #|() => globalThis.__moqE2EConfig.groups ?? 2
+
+///|
+extern "js" fn ffi_objects_per_group() -> Int32 =
+  #|() => globalThis.__moqE2EConfig.objectsPerGroup ?? 2
+
+///|
+extern "js" fn ffi_object_bytes() -> Int32 =
+  #|() => globalThis.__moqE2EConfig.objectBytes ?? 0
+
+///|
+extern "js" fn ffi_datagrams() -> Bool =
+  #|() => globalThis.__moqE2EConfig.datagrams ?? false
+
+///|
+/// Match the native probe payload so both transports can share one scenario.
+fn browser_object_payload(
+  group_id : UInt64,
+  object_id : UInt64,
+  object_bytes : Int32,
+) -> Bytes {
+  if object_bytes <= 0 {
+    return @utf8.encode("group-\{group_id}-object-\{object_id}")
+  }
+  let seed = @utf8.encode("group-\{group_id}-object-\{object_id}|")
+  let payload : Array[Byte] = Array::make(object_bytes, b'.')
+  for index in 0..<object_bytes {
+    payload[index] = seed[index % seed.length()]
+  }
+  Bytes::from_array(payload)
+}
+
+///|
 extern "js" fn ffi_wait_to_start() -> @js.Promise[Unit] =
   #|() => globalThis.__moqE2EStartPromise
 
@@ -80,10 +114,18 @@ async fn run_subscriber(
   client : @js_adapter.BrowserClient,
   track : @protocol.TrackName,
 ) -> Unit {
+  let groups = ffi_groups()
+  let objects_per_group = ffi_objects_per_group()
+  let object_bytes = ffi_object_bytes()
+  let expect_datagrams = ffi_datagrams()
   let mut request_id = @session.RequestId(0UL)
   let mut subscribed = false
   let mut received_objects = 0
   let mut finished_groups = 0
+  let next_object_ids : Map[UInt64, UInt64] = Map([])
+  let finished_group_ids : Map[UInt64, Bool] = Map([])
+  let mut track_alias : UInt64? = None
+  let mut received_sample_datagram = false
   let mut finished = false
   while !finished {
     match client.next_notice().wait() {
@@ -130,32 +172,131 @@ async fn run_subscriber(
           }
         }
       }
-      Some(SubscribeEstablished(id, _alias)) if id == request_id => {
+      Some(SubscribeEstablished(id, track_alias_value)) if id == request_id => {
+        track_alias = Some(track_alias_value.to_uint64())
         subscribed = true
         ffi_set_status("subscribed")
       }
-      Some(ObjectReceived(id, _, header, frames)) if id == request_id =>
+      Some(ObjectReceived(id, _, header, frames)) if id == request_id => {
+        if Some(header.track_alias) != track_alias {
+          ffi_set_status(
+            "failed: Object Track Alias did not match SUBSCRIBE_OK",
+          )
+          return
+        }
+        if header.group_id >= groups.to_uint64() {
+          ffi_set_status(
+            "failed: received an unexpected group \{header.group_id}",
+          )
+          return
+        }
         for frame in frames {
-          let expected = @utf8.encode(
-            "group-\{header.group_id}-object-\{frame.object_id}",
+          let expected_object_id = next_object_ids
+            .get(header.group_id)
+            .unwrap_or(0UL)
+          if frame.object_id != expected_object_id {
+            ffi_set_status(
+              "failed: unexpected object order in group \{header.group_id}",
+            )
+            return
+          }
+          let expected = browser_object_payload(
+            header.group_id,
+            frame.object_id,
+            object_bytes,
           )
           if frame.payload != expected || frame.properties != b"\x02\x2a" {
             ffi_set_status("failed: Object payload or Properties mismatch")
             return
           }
+          next_object_ids[header.group_id] = expected_object_id + 1UL
           received_objects += 1
           ffi_set_status("objects-\{received_objects}")
         }
-      Some(GroupFinished(id, _group_id)) if id == request_id => {
+      }
+      Some(ObjectDatagramReceived(id, _, datagram)) if id == request_id => {
+        if !expect_datagrams {
+          ffi_set_status("failed: received an unexpected Object Datagram")
+          return
+        }
+        if Some(datagram.track_alias) != track_alias {
+          ffi_set_status(
+            "failed: Object Datagram Alias did not match SUBSCRIBE_OK",
+          )
+          return
+        }
+        match (datagram.status, datagram.end_of_group, datagram.payload) {
+          (Normal, false, b"track-probe-object-datagram") => {
+            if datagram.group_id != groups.to_uint64() ||
+              datagram.object_id != 0UL {
+              ffi_set_status(
+                "failed: normal Object Datagram fields did not match",
+              )
+              return
+            }
+            received_sample_datagram = true
+            ffi_set_status("datagram-sample")
+          }
+          (Normal, true, b"track-probe-last-in-group") =>
+            if datagram.group_id != groups.to_uint64() ||
+              datagram.object_id != 1UL {
+              ffi_set_status(
+                "failed: end-of-group Object Datagram fields did not match",
+              )
+              return
+            }
+          (EndOfGroup, false, b"") =>
+            if datagram.group_id != groups.to_uint64() + 1UL ||
+              datagram.object_id != 0UL {
+              ffi_set_status(
+                "failed: EndOfGroup Object Datagram fields did not match",
+              )
+              return
+            }
+          (EndOfTrack, false, b"") =>
+            if datagram.group_id != groups.to_uint64() + 2UL ||
+              datagram.object_id != 0UL {
+              ffi_set_status(
+                "failed: EndOfTrack Object Datagram fields did not match",
+              )
+              return
+            }
+          _ => {
+            ffi_set_status(
+              "failed: Object Datagram status or payload did not match",
+            )
+            return
+          }
+        }
+      }
+      Some(GroupFinished(id, group_id)) if id == request_id => {
+        if group_id >= groups.to_uint64() {
+          ffi_set_status("failed: finished an unexpected group \{group_id}")
+          return
+        }
+        if finished_group_ids.get(group_id) is Some(_) {
+          ffi_set_status("failed: group \{group_id} finished more than once")
+          return
+        }
+        let next_object_id = next_object_ids.get(group_id).unwrap_or(0UL)
+        if next_object_id != objects_per_group.to_uint64() {
+          ffi_set_status(
+            "failed: group \{group_id} ended after \{next_object_id} objects",
+          )
+          return
+        }
+        finished_group_ids[group_id] = true
         finished_groups += 1
         ffi_set_status("groups-\{finished_groups}")
       }
       Some(PublishDone(id, done)) if id == request_id => {
-        if done.stream_count != 2UL ||
-          received_objects != 4 ||
-          finished_groups != 2 {
+        let expected_objects = groups * objects_per_group
+        if done.stream_count != groups.to_uint64() ||
+          received_objects != expected_objects ||
+          finished_groups != groups ||
+          (expect_datagrams && !received_sample_datagram) {
           ffi_set_status(
-            "failed: PUBLISH_DONE streams=\{done.stream_count}, objects=\{received_objects}, groups=\{finished_groups}",
+            "failed: PUBLISH_DONE streams=\{done.stream_count}, objects=\{received_objects}, groups=\{finished_groups}, datagram=\{received_sample_datagram}",
           )
           return
         }
@@ -181,6 +322,8 @@ async fn publish_group(
   client : @js_adapter.BrowserClient,
   subscription_stream : @session.StreamId,
   group_id : UInt64,
+  objects_per_group : Int32,
+  object_bytes : Int32,
 ) -> Bool {
   let header = @protocol.SubgroupHeader::{
     track_alias: 1UL,
@@ -215,12 +358,12 @@ async fn publish_group(
     }
   }
   ffi_set_status("sending-group-\{group_id}")
-  for object_id in 0UL..<2UL {
+  for object_id in 0UL..<objects_per_group.to_uint64() {
     let frame = @protocol.SubgroupFrame::{
       object_id,
       status: Normal,
       properties: b"\x02\x2a",
-      payload: @utf8.encode("group-\{group_id}-object-\{object_id}"),
+      payload: browser_object_payload(group_id, object_id, object_bytes),
     }
     match client.session().send_object(object_stream, frame) {
       Ok(actions) => if !dispatch_actions(client, actions) { return false }
@@ -300,6 +443,9 @@ async fn run_publisher(
   client : @js_adapter.BrowserClient,
   track : @protocol.TrackName,
 ) -> Unit {
+  let groups = ffi_groups()
+  let objects_per_group = ffi_objects_per_group()
+  let object_bytes = ffi_object_bytes()
   let mut publish_id = @session.RequestId(0UL)
   let mut publish_stream = None
   let mut finished = false
@@ -351,9 +497,12 @@ async fn run_publisher(
         ffi_set_status("published")
         ffi_wait_to_start().wait()
         let stream = publish_stream.unwrap()
-        if !publish_group(client, stream, 0UL) ||
-          !publish_group(client, stream, 1UL) {
-          return
+        for group_id in 0UL..<groups.to_uint64() {
+          if !publish_group(
+              client, stream, group_id, objects_per_group, object_bytes,
+            ) {
+            return
+          }
         }
         match client.session().publish_done(stream, 0UL, b"") {
           Ok(actions) => if !dispatch_actions(client, actions) { return }

@@ -6,7 +6,14 @@ task_tmp=$(mktemp -d)
 relay_pid=
 publisher_pid=
 subscriber_pid=
+extra_pids=()
 cleanup() {
+  for pid in ${extra_pids[@]+"${extra_pids[@]}"}; do
+    if [[ -n "$pid" ]]; then
+      kill "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+    fi
+  done
   if [[ -n "$subscriber_pid" ]]; then
     kill "$subscriber_pid" 2>/dev/null || true
     wait "$subscriber_pid" 2>/dev/null || true
@@ -25,6 +32,8 @@ trap cleanup EXIT
 
 moon run --release --target native --build-only src/cmd/setup_probe
 moon run --release --target native --build-only src/cmd/track_probe
+runner_client=_build/native/release/build/cmd/track_probe/track_probe.exe
+scenario_timeout=${MOQTAIL_SCENARIO_TIMEOUT:-90}s
 openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 1 \
   -subj /CN=localhost -addext 'subjectAltName=DNS:localhost,IP:127.0.0.1' \
   -keyout "$task_tmp/key.pem" -out "$task_tmp/cert.pem" >"$task_tmp/cert.log" 2>&1
@@ -104,10 +113,138 @@ fi
 publisher_pid=
 cat "$task_tmp/publisher.log" "$task_tmp/subscriber.log"
 
+wait_for_log() {
+  local pattern=$1
+  local file=$2
+  local pid=$3
+  local message=$4
+  for ((attempt = 0; attempt < 150; attempt++)); do
+    if grep -Fq "$pattern" "$file"; then
+      return 0
+    fi
+    if ! kill -0 "$pid" 2>/dev/null || ((attempt == 149)); then
+      cat "$file" >&2 || true
+      cat "$task_tmp/relay.log" >&2 || true
+      echo "$message" >&2
+      return 1
+    fi
+    sleep 0.1
+  done
+}
+
+run_scaled_publish_subscribe() {
+  local name=$1
+  local groups=$2
+  local objects=$3
+  shift 3
+  local publish_flags=("$@")
+  local subscribe_flags=()
+  local flag
+  for flag in "$@"; do
+    case "$flag" in
+      --hold-open|--wait-for-start|--wait-for-fetch) ;;
+      *) subscribe_flags+=("$flag") ;;
+    esac
+  done
+  local publisher_log="$task_tmp/$name-publisher.log"
+  local subscriber_log="$task_tmp/$name-subscriber.log"
+  timeout --signal=TERM --kill-after=5s "$scenario_timeout" \
+    "$runner_client" publish 127.0.0.1 "$port" /interop interop \
+    "$name" "$groups" "$objects" "${publish_flags[@]}" \
+    >"$publisher_log" 2>&1 &
+  publisher_pid=$!
+  wait_for_log 'PUBLISH request accepted' "$publisher_log" "$publisher_pid" \
+    "$name publisher did not register the track"
+  timeout --signal=TERM --kill-after=5s "$scenario_timeout" \
+    "$runner_client" subscribe 127.0.0.1 "$port" /interop interop \
+    "$name" "$groups" "$objects" "${subscribe_flags[@]}" \
+    >"$subscriber_log" 2>&1 &
+  subscriber_pid=$!
+  if ! wait "$subscriber_pid"; then
+    subscriber_pid=
+    cat "$publisher_log" "$subscriber_log" >&2
+    cat "$task_tmp/relay.log" >&2
+    echo "$name subscriber failed" >&2
+    exit 1
+  fi
+  subscriber_pid=
+  if ! wait "$publisher_pid"; then
+    publisher_pid=
+    cat "$publisher_log" >&2
+    cat "$task_tmp/relay.log" >&2
+    echo "$name publisher failed" >&2
+    exit 1
+  fi
+  publisher_pid=
+  grep -F 'Verified' "$subscriber_log" | tail -n 1
+}
+
+run_publish_fanout() {
+  local name=$1
+  local groups=$2
+  local objects=$3
+  local subscribers=$4
+  local fifo="$task_tmp/$name.stdin"
+  local publisher_log="$task_tmp/$name-publisher.log"
+  mkfifo "$fifo"
+  exec 3<>"$fifo"
+  timeout --signal=TERM --kill-after=5s "$scenario_timeout" \
+    "$runner_client" publish 127.0.0.1 "$port" /interop interop \
+    "$name" "$groups" "$objects" --insecure --wait-for-start \
+    <&3 >"$publisher_log" 2>&1 &
+  publisher_pid=$!
+  wait_for_log 'PUBLISH request accepted' "$publisher_log" "$publisher_pid" \
+    "$name publisher did not register the track"
+  local sub_pids=()
+  local index
+  for ((index = 1; index <= subscribers; index++)); do
+    timeout --signal=TERM --kill-after=5s "$scenario_timeout" \
+      "$runner_client" subscribe 127.0.0.1 "$port" /interop interop \
+      "$name" "$groups" "$objects" --insecure \
+      >"$task_tmp/$name-subscriber-$index.log" 2>&1 &
+    sub_pids+=("$!")
+    extra_pids+=("$!")
+  done
+  for ((index = 0; index < subscribers; index++)); do
+    wait_for_log 'SUBSCRIBE_OK received' \
+      "$task_tmp/$name-subscriber-$((index + 1)).log" "${sub_pids[$index]}" \
+      "$name subscriber $((index + 1)) did not subscribe"
+  done
+  printf '\n' >&3
+  exec 3>&-
+  local status=0
+  for pid in "${sub_pids[@]}"; do
+    if ! wait "$pid"; then
+      status=1
+    fi
+  done
+  if ! wait "$publisher_pid"; then
+    status=1
+  fi
+  publisher_pid=
+  extra_pids=()
+  if ((status != 0)); then
+    cat "$publisher_log" >&2
+    for ((index = 1; index <= subscribers; index++)); do
+      cat "$task_tmp/$name-subscriber-$index.log" >&2
+    done
+    cat "$task_tmp/relay.log" >&2
+    echo "$name fan-out failed" >&2
+    exit 1
+  fi
+  for ((index = 1; index <= subscribers; index++)); do
+    grep -F 'Verified' "$task_tmp/$name-subscriber-$index.log" | tail -n 1
+  done
+}
+
+# Scale and fan-out scenarios share the relay but use distinct track names.
+run_scaled_publish_subscribe large-object 1 4 --object-bytes=524288 --insecure
+run_publish_fanout fanout 3 2 3
+run_scaled_publish_subscribe bulk-objects 32 8 --insecure
+
 # Run the moq-interop-runner client scenarios that the fixed relay supports.
 # Retention and rendezvous-timeout are implemented by the client but are not
 # expected to pass against this relay build.
-runner_client=_build/native/release/build/cmd/track_probe/track_probe.exe
 runner_tests=(
   setup-only
   announce-only

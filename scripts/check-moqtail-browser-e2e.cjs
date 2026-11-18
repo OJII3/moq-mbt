@@ -9,6 +9,23 @@ if (!mode || !["subscribe", "publish"].includes(mode) || !url || !fingerprintBas
   );
 }
 
+const groups = Number(process.env.MOQTAIL_BROWSER_GROUPS ?? "2");
+const objectsPerGroup = Number(process.env.MOQTAIL_BROWSER_OBJECTS ?? "2");
+const objectBytes = Number(process.env.MOQTAIL_BROWSER_OBJECT_BYTES ?? "0");
+const datagrams = process.env.MOQTAIL_BROWSER_DATAGRAMS === "1";
+if (!Number.isInteger(groups) || groups <= 0) {
+  throw new Error("MOQTAIL_BROWSER_GROUPS must be a positive integer");
+}
+if (!Number.isInteger(objectsPerGroup) || objectsPerGroup <= 0) {
+  throw new Error("MOQTAIL_BROWSER_OBJECTS must be a positive integer");
+}
+if (!Number.isInteger(objectBytes) || objectBytes < 0) {
+  throw new Error("MOQTAIL_BROWSER_OBJECT_BYTES must be a non-negative integer");
+}
+if (datagrams && mode === "publish") {
+  throw new Error("the browser publisher does not send Object Datagrams");
+}
+
 const fingerprint = [...Buffer.from(fingerprintBase64, "base64")];
 if (fingerprint.length !== 32) throw new Error("expected a 32-byte SHA-256 certificate fingerprint");
 
@@ -22,14 +39,20 @@ function withTimeout(promise, milliseconds, message) {
   ]).finally(() => clearTimeout(timer));
 }
 
-async function runNative(role, mode) {
+async function runNative(role, mode, options = {}) {
   const trackName = mode === "publish" ? "browser-publisher" : "multi-object";
   const args = [
-    role, "127.0.0.1", nativePort, "/interop", "interop", trackName, "2", "2", "--insecure",
+    role, "127.0.0.1", nativePort, "/interop", "interop", trackName,
+    String(groups), String(objectsPerGroup), "--insecure",
   ];
-  if (role === "publish") args.push("--hold-open");
+  if (objectBytes > 0) args.push(`--object-bytes=${objectBytes}`);
+  if (datagrams) args.push("--datagrams");
+  if (role === "publish") {
+    args.push("--hold-open");
+    if (options.waitForStart) args.push("--wait-for-start");
+  }
   const child = spawn("_build/native/release/build/cmd/track_probe/track_probe.exe", args, {
-    stdio: ["ignore", "pipe", "pipe"],
+    stdio: [options.waitForStart ? "pipe" : "ignore", "pipe", "pipe"],
   });
   let output = "";
   let resolveReady;
@@ -81,7 +104,12 @@ async function runNative(role, mode) {
     subscribed,
     success,
     output: () => output,
-    start: () => {},
+    start: () => {
+      if (!child.stdin) {
+        throw new Error(`Native ${role} did not expose stdin for --wait-for-start`);
+      }
+      child.stdin.write("\n");
+    },
     stop: () => {
       stopping = true;
       if (child.exitCode === null) child.kill("SIGTERM");
@@ -104,8 +132,8 @@ async function main() {
     const page = await browser.newPage();
     page.on("console", message => console.log(`browser: ${message.text()}`));
     page.on("pageerror", error => console.error(`browser error: ${error.message}`));
-    await page.addInitScript(({ uri, certificateHash, mode, track }) => {
-      globalThis.__moqE2EConfig = { uri, certificateHash, mode, track };
+    await page.addInitScript(({ uri, certificateHash, mode, track, groups, objectsPerGroup, objectBytes, datagrams }) => {
+      globalThis.__moqE2EConfig = { uri, certificateHash, mode, track, groups, objectsPerGroup, objectBytes, datagrams };
       globalThis.__moqE2EResult = { status: "loading" };
       globalThis.__moqE2EStartPromise = new Promise(resolve => {
         globalThis.__moqE2EStart = resolve;
@@ -118,6 +146,10 @@ async function main() {
       certificateHash: fingerprint,
       mode,
       track: mode === "publish" ? "browser-publisher" : "multi-object",
+      groups,
+      objectsPerGroup,
+      objectBytes,
+      datagrams,
     });
     await page.goto(`http://127.0.0.1:${originServer.address().port}`);
     await page.addScriptTag({ path: bundlePath });
@@ -138,12 +170,26 @@ async function main() {
     if (status !== readyStatus) throw new Error(`Browser ${mode} failed before Native peer start: ${status}`);
 
     if (mode === "subscribe") {
-      const nativePublisher = await runNative("publish", mode);
+      const nativePublisher = await runNative("publish", mode, { waitForStart: true });
       nativePeers.push(nativePublisher);
       await withTimeout(nativePublisher.ready, 20000, "timed out waiting for Native PUBLISH acceptance");
-      nativeSubscriber = await runNative("subscribe", mode);
-      nativePeers.push(nativeSubscriber);
-      await withTimeout(nativeSubscriber.ready, 20000, "timed out waiting for Native SUBSCRIBE request");
+      const nativeSubscribers = [];
+      for (let index = 0; index < 2; index++) {
+        const subscriber = await runNative("subscribe", mode);
+        nativePeers.push(subscriber);
+        await withTimeout(
+          subscriber.ready,
+          20000,
+          `timed out waiting for Native SUBSCRIBE request ${index + 1}`,
+        );
+        await withTimeout(
+          subscriber.subscribed,
+          20000,
+          `timed out waiting for Native SUBSCRIBE acceptance ${index + 1}`,
+        );
+        nativeSubscribers.push(subscriber);
+      }
+      nativeSubscriber = nativeSubscribers[0];
       await page.evaluate(() => globalThis.__moqE2EStart());
       try {
         await page.waitForFunction(
@@ -158,6 +204,27 @@ async function main() {
       }
       status = await page.evaluate(() => globalThis.__moqE2EResult?.status);
       if (status !== "subscribed") throw new Error(`Browser subscribe failed: ${status}`);
+      nativePublisher.start();
+      try {
+        await page.waitForFunction(
+          () => globalThis.__moqE2EResult?.status === "passed" ||
+            globalThis.__moqE2EResult?.status?.startsWith("failed:"),
+          undefined,
+          { timeout: 45000 },
+        );
+      } catch (error) {
+        const current = await page.evaluate(() => globalThis.__moqE2EResult?.status);
+        throw new Error(`timed out waiting for browser SUBSCRIBE delivery (status: ${current}): ${error.message}`);
+      }
+      status = await page.evaluate(() => globalThis.__moqE2EResult?.status);
+      if (status !== "passed") throw new Error(`Browser subscribe failed: ${status}`);
+      for (let index = 0; index < nativeSubscribers.length; index++) {
+        await withTimeout(
+          nativeSubscribers[index].success,
+          20000,
+          `timed out waiting for Native subscriber ${index + 1} PUBLISH_DONE`,
+        );
+      }
     } else {
       nativeSubscriber = await runNative("subscribe", mode);
       nativePeers.push(nativeSubscriber);
@@ -169,15 +236,8 @@ async function main() {
       );
       await page.evaluate(() => globalThis.__moqE2EStart());
     }
-    try {
-      if (mode === "subscribe") {
-        await page.waitForFunction(
-          () => globalThis.__moqE2EResult?.status === "passed" ||
-            globalThis.__moqE2EResult?.status?.startsWith("failed:"),
-          undefined,
-          { timeout: 45000 },
-        );
-      } else {
+    if (mode === "publish") {
+      try {
         await page.waitForFunction(
           () => globalThis.__moqE2EResult?.status === "publishing-done" ||
             globalThis.__moqE2EResult?.status?.startsWith("failed:"),
@@ -195,11 +255,11 @@ async function main() {
           undefined,
           { timeout: 5000 },
         );
+      } catch (error) {
+        const current = await page.evaluate(() => globalThis.__moqE2EResult?.status);
+        const nativeOutput = nativePeers.map(peer => peer.output()).join("\n");
+        throw new Error(`browser ${mode} E2E stopped (status: ${current}): ${error.message}\nNative peer output:\n${nativeOutput}`);
       }
-    } catch (error) {
-      const current = await page.evaluate(() => globalThis.__moqE2EResult?.status);
-      const nativeOutput = nativePeers.map(peer => peer.output()).join("\n");
-      throw new Error(`browser ${mode} E2E stopped (status: ${current}): ${error.message}\nNative peer output:\n${nativeOutput}`);
     }
     status = await page.evaluate(() => globalThis.__moqE2EResult?.status);
     if (status !== "passed") {
@@ -210,10 +270,11 @@ async function main() {
       if (peer.child.exitCode === null) await withTimeout(peer.stop(), 5000, "timed out stopping Native peer");
       else await peer.done;
     }
+    const objects = groups * objectsPerGroup;
     console.log(
       mode === "subscribe"
-        ? "Native publisher → browser subscriber passed: 4 Objects, 2 Groups, Properties, FIN, PUBLISH_DONE(2)"
-        : "Browser publisher → Native subscriber passed: 4 Objects, 2 Groups, Properties, FIN, PUBLISH_DONE(2)",
+        ? `Native publisher → 2 Native subscribers + browser subscriber passed: ${objects} Objects, ${groups} Groups, Properties, FIN, PUBLISH_DONE(${groups})${datagrams ? ", Object Datagrams" : ""}`
+        : `Browser publisher → Native subscriber passed: ${objects} Objects, ${groups} Groups, Properties, FIN, PUBLISH_DONE(${groups})`,
     );
   } finally {
     for (const peer of nativePeers) {

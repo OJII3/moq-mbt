@@ -28,6 +28,7 @@ trap 'exit 143' TERM
 
 port=${MOQTAIL_PORT:-4443}
 browser_e2e_bundle=_build/js/release/build/cmd/web_interop_probe/web_interop_probe.js
+runner_probe=_build/native/release/build/cmd/track_probe/track_probe.exe
 moon build --release --target js src/cmd/web_interop_probe
 moon build --release --target native src/cmd/track_probe
 openssl ecparam -name prime256v1 -genkey -noout -out "$task_tmp/key.pem" \
@@ -92,16 +93,34 @@ if [[ -n ${MOQTAIL_E2E_MODES:-} ]]; then
 else
   e2e_modes=(subscribe publish)
 fi
-for mode in "${e2e_modes[@]}"; do
+run_browser_case() {
+  local mode=$1
+  shift
   timeout --signal=TERM --kill-after=5s "${MOQTAIL_BROWSER_TIMEOUT:-120}s" \
-    node scripts/check-moqtail-browser-e2e.cjs \
+    env "$@" node scripts/check-moqtail-browser-e2e.cjs \
     "$mode" "https://127.0.0.1:$port/interop" "$fingerprint" "$port" \
     "$browser_e2e_bundle" || {
-      echo "Browser E2E ($mode) failed; relay log:" >&2
+      echo "Browser E2E ($mode, $*) failed; relay log:" >&2
       cat "$task_tmp/relay.log" >&2
       exit 1
     }
+}
+for mode in "${e2e_modes[@]}"; do
+  run_browser_case "$mode"
 done
+if [[ " ${e2e_modes[*]} " == *" subscribe "* ]]; then
+  run_browser_case subscribe \
+    MOQTAIL_BROWSER_GROUPS=1 \
+    MOQTAIL_BROWSER_OBJECTS=2 \
+    MOQTAIL_BROWSER_OBJECT_BYTES=524288 \
+    MOQTAIL_BROWSER_DATAGRAMS=1
+fi
+if [[ " ${e2e_modes[*]} " == *" publish "* ]]; then
+  run_browser_case publish \
+    MOQTAIL_BROWSER_GROUPS=1 \
+    MOQTAIL_BROWSER_OBJECTS=2 \
+    MOQTAIL_BROWSER_OBJECT_BYTES=524288
+fi
 
 run_probe() {
   local name=$1
@@ -117,40 +136,85 @@ run_probe() {
   cat "$task_tmp/$name.log"
 }
 
-if [[ ${MOQTAIL_RUN_FETCH:-0} == 1 ]]; then
-  fetch_group_count=2
+run_fetch_case() {
+  local name=$1
+  local start_group=$2
+  local start_object=$3
+  local end_group=$4
+  local end_object=$5
+  local publisher_log="$task_tmp/$name-publisher.log"
+  local fetch_log="$task_tmp/$name-fetch.log"
   timeout --signal=TERM --kill-after=5s "${MOQTAIL_SCENARIO_TIMEOUT:-60}s" \
-    moon run --release --target native src/cmd/track_probe -- \
-    publish 127.0.0.1 "$port" /interop interop fetch-live "$fetch_group_count" 2 \
-    --insecure --hold-open --wait-for-fetch >"$task_tmp/fetch-publisher.log" 2>&1 &
+    "$runner_probe" publish 127.0.0.1 "$port" /interop interop "$name" 2 2 \
+    --insecure --hold-open --wait-for-fetch >"$publisher_log" 2>&1 &
   fetch_publisher_pid=$!
   for ((attempt = 0; attempt < 100; attempt++)); do
-    if grep -Fq 'PUBLISH request accepted' "$task_tmp/fetch-publisher.log"; then break; fi
+    if grep -Fq 'PUBLISH request accepted' "$publisher_log"; then break; fi
     if ! kill -0 "$fetch_publisher_pid" 2>/dev/null || ((attempt == 99)); then
-      tail -n 30 "$task_tmp/fetch-publisher.log" >&2
+      tail -n 30 "$publisher_log" >&2
       cat "$task_tmp/relay.log" >&2
-      echo "FETCH publisher did not register the track" >&2
+      echo "$name publisher did not register the track" >&2
       exit 1
     fi
     sleep 0.1
   done
-  echo "FETCH publisher is active; requesting groups 0 and 1"
+  echo "$name publisher is active; requesting group $start_group object $start_object through group $end_group object $end_object"
   if ! timeout --signal=TERM --kill-after=5s "${MOQTAIL_SCENARIO_TIMEOUT:-60}s" \
-    _build/native/release/build/cmd/track_probe/track_probe.exe \
-    fetch 127.0.0.1 "$port" /interop interop fetch-live 0 1 --insecure \
-    >"$task_tmp/fetch.log" 2>&1; then
-    cat "$task_tmp/fetch.log" >&2
+    "$runner_probe" fetch 127.0.0.1 "$port" /interop interop "$name" \
+    "$start_group" "$start_object" "$end_group" "$end_object" 2 --insecure \
+    >"$fetch_log" 2>&1; then
+    cat "$fetch_log" >&2
     tail -n 50 "$task_tmp/relay.log" >&2
-    tail -n 30 "$task_tmp/fetch-publisher.log" >&2
-    echo "moqtail standalone FETCH scenario failed" >&2
+    tail -n 30 "$publisher_log" >&2
+    echo "$name standalone FETCH scenario failed" >&2
     exit 1
   fi
-  cat "$task_tmp/fetch.log"
+  cat "$fetch_log"
+  kill "$fetch_publisher_pid" 2>/dev/null || true
+  wait "$fetch_publisher_pid" 2>/dev/null || true
+  fetch_publisher_pid=
+}
+if [[ ${MOQTAIL_RUN_FETCH:-1} == 1 ]]; then
+  run_fetch_case fetch-live 0 0 1 2
+  echo "Skipping object-offset FETCH: the pinned relay rounds ranges to group boundaries"
+else
+  echo "Skipping standalone FETCH; set MOQTAIL_RUN_FETCH=1 to probe the pinned relay"
+fi
+if [[ ${MOQTAIL_RUN_LATE_JOIN:-1} == 1 ]]; then
+  late_publisher_log="$task_tmp/late-join-publisher.log"
+  late_log="$task_tmp/late-join.log"
+  timeout --signal=TERM --kill-after=5s "${MOQTAIL_SCENARIO_TIMEOUT:-60}s" \
+    "$runner_probe" publish 127.0.0.1 "$port" /interop interop late-join 2 2 \
+    --insecure --hold-open --wait-for-fetch --fetch-after-groups=1 \
+    >"$late_publisher_log" 2>&1 &
+  fetch_publisher_pid=$!
+  for ((attempt = 0; attempt < 100; attempt++)); do
+    if grep -Fq 'Waiting for relay FETCH before sending the remaining groups' "$late_publisher_log"; then
+      break
+    fi
+    if ! kill -0 "$fetch_publisher_pid" 2>/dev/null || ((attempt == 99)); then
+      tail -n 30 "$late_publisher_log" >&2
+      cat "$task_tmp/relay.log" >&2
+      echo "late-join publisher did not publish its retained group" >&2
+      exit 1
+    fi
+    sleep 0.1
+  done
+  if ! timeout --signal=TERM --kill-after=5s "${MOQTAIL_SCENARIO_TIMEOUT:-60}s" \
+    "$runner_probe" late-join 127.0.0.1 "$port" /interop interop late-join \
+    --insecure >"$late_log" 2>&1; then
+    cat "$late_log" >&2
+    tail -n 50 "$task_tmp/relay.log" >&2
+    tail -n 30 "$late_publisher_log" >&2
+    echo "late-join scenario failed" >&2
+    exit 1
+  fi
+  cat "$late_log"
   kill "$fetch_publisher_pid" 2>/dev/null || true
   wait "$fetch_publisher_pid" 2>/dev/null || true
   fetch_publisher_pid=
 else
-  echo "Skipping standalone FETCH; set MOQTAIL_RUN_FETCH=1 to probe the pinned relay"
+  echo "Skipping late join; set MOQTAIL_RUN_LATE_JOIN=1 to probe the pinned relay"
 fi
 run_probe lifecycle lifecycle 127.0.0.1 "$port" /interop --insecure
 if [[ ${MOQTAIL_RUN_NAMESPACE:-0} == 1 ]]; then

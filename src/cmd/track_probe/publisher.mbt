@@ -5,6 +5,7 @@ priv struct PublisherProbeState {
   mut done_stream : Int64?
   group_count : UInt64
   objects_per_group : Int32
+  object_bytes : Int32
   object_stream_groups : Map[Int64, UInt64]
   finished_object_streams : Map[Int64, Bool]
   mut finished_stream_count : UInt64
@@ -13,7 +14,9 @@ priv struct PublisherProbeState {
   mut peer_ready : Bool
   wait_for_start : Bool
   wait_for_fetch : Bool
+  fetch_after_groups : Int32
   mut fetch_served : Bool
+  mut waiting_for_fetch : Bool
   datagrams : Bool
   mut datagram_send_count : UInt64
   mut datagram_send_final_count : UInt64
@@ -34,19 +37,20 @@ fn start_probe_group(
 ) -> Array[@session.SessionNotice] raise {
   let notices : Array[@session.SessionNotice] = []
   let group_id = group_index.to_uint64()
-  let header = @protocol.SubgroupHeader::{
-    track_alias: 1,
-    group_id,
-    subgroup_id_mode: Zero,
-    publisher_priority: None,
-    end_of_group: true,
-    first_object: true,
-    has_properties: true,
+  let (writer, open_actions) = match
+    session.open_object_group(
+      StreamId(state.publish_stream),
+      group_id,
+      end_of_group=true,
+      has_properties=true,
+    ) {
+    Ok(value) => value
+    Err(error) => fail("could not open group \{group_id}: \{error.to_repr()}")
   }
   let (more, opened) = drive_session_result(
     client,
     session,
-    session.open_object_stream(state.publish_stream, header),
+    Ok(open_actions),
     driver,
   )
   for notice in more {
@@ -62,26 +66,83 @@ fn start_probe_group(
   let object_stream = object_stream.unwrap()
   state.object_stream_groups[object_stream] = group_id
   for object_index in 0..<state.objects_per_group {
-    let frame = @protocol.SubgroupFrame::{
-      object_id: object_index.to_uint64(),
-      status: Normal,
-      properties: probe_properties(),
-      payload: probe_payload(group_id, object_index.to_uint64()),
-    }
-    let (object_notices, _) = drive_session_result(
-      client,
-      session,
-      session.send_object(object_stream, frame),
-      driver,
-    )
-    for notice in object_notices {
-      notices.push(notice)
+    if state.object_bytes <= 0 {
+      let frame = @protocol.SubgroupFrame::{
+        object_id: object_index.to_uint64(),
+        status: Normal,
+        properties: probe_properties(),
+        payload: probe_payload(group_id, object_index.to_uint64()),
+      }
+      let (object_notices, _) = drive_session_result(
+        client,
+        session,
+        writer.send_frame(frame),
+        driver,
+      )
+      for notice in object_notices {
+        notices.push(notice)
+      }
+    } else {
+      let object_id = object_index.to_uint64()
+      let payload = probe_object_payload(
+        group_id,
+        object_id,
+        state.object_bytes,
+      )
+      let (object, header_actions) = match
+        writer.begin_object(
+          payload.length().to_uint64(),
+          properties=probe_properties(),
+        ) {
+        Ok(value) => value
+        Err(error) =>
+          fail(
+            "could not begin group \{group_id} object \{object_id}: \{error.to_repr()}",
+          )
+      }
+      let (header_notices, _) = drive_session_result(
+        client,
+        session,
+        Ok(header_actions),
+        driver,
+      )
+      for notice in header_notices {
+        notices.push(notice)
+      }
+      let chunk_bytes = 64 * 1024
+      let mut offset = 0
+      while offset < payload.length() {
+        let end = if offset + chunk_bytes < payload.length() {
+          offset + chunk_bytes
+        } else {
+          payload.length()
+        }
+        let (write_notices, _) = drive_session_result(
+          client,
+          session,
+          object.write(payload[offset:end].to_owned()),
+          driver,
+        )
+        for notice in write_notices {
+          notices.push(notice)
+        }
+        offset = end
+      }
+      let (object_finish_notices, _) = drive_session_result(
+        client,
+        session,
+        object.finish(),
+        driver,
+      )
+      for notice in object_finish_notices {
+        notices.push(notice)
+      }
     }
   }
   let (finish_notices, _) = drive_session_result(
     client,
     session,
-    session.finish_object_stream(object_stream),
+    writer.finish(),
     driver,
   )
   for notice in finish_notices {
@@ -162,13 +223,25 @@ fn serve_publisher_fetch(
   guard start.group <= end.group else {
     fail("relay FETCH requested an invalid group range")
   }
+  eprintln(
+    "Relay FETCH range: group \{start.group} object \{start.object} through group \{end.group} object \{end.object}",
+  )
+  let last_group = if state.fetch_after_groups > 0 {
+    (state.fetch_after_groups - 1).to_uint64()
+  } else {
+    end.group
+  }
+  guard start.group <= last_group else {
+    fail("relay FETCH requested groups before the retained range")
+  }
+  let fetch_end_object = if state.fetch_after_groups > 0 || end.object == 0UL {
+    state.objects_per_group.to_uint64()
+  } else {
+    end.object
+  }
   let response_end = @protocol.FetchLocation::{
-    group: end.group,
-    object: if end.object == 0UL {
-      state.objects_per_group.to_uint64()
-    } else {
-      end.object
-    },
+    group: last_group,
+    object: fetch_end_object,
   }
   ignore(
     drive_session_result(
@@ -184,10 +257,10 @@ fn serve_publisher_fetch(
     ),
   )
   let mut group = start.group
-  while group <= end.group {
+  while group <= last_group {
     let first_object = if group == start.group { start.object } else { 0UL }
-    let end_object = if group == end.group && end.object != 0UL {
-      end.object
+    let end_object = if group == last_group {
+      fetch_end_object
     } else {
       state.objects_per_group.to_uint64()
     }
@@ -204,7 +277,7 @@ fn serve_publisher_fetch(
             publisher_priority: 128,
             datagram_forwarding: false,
             properties: probe_properties(),
-            payload: probe_payload(group, object),
+            payload: probe_object_payload(group, object, state.object_bytes),
           }),
           driver,
         ),
@@ -222,6 +295,9 @@ fn serve_publisher_fetch(
     ),
   )
   state.fetch_served = true
+  if state.fetch_after_groups > 0 {
+    state.publish_after = @env.now() + 2000UL
+  }
   eprintln("Served relay FETCH request")
 }
 
@@ -316,11 +392,13 @@ fn run_publisher(
   track_name : String,
   group_count : Int32,
   objects_per_group : Int32,
+  object_bytes : Int32,
   datagrams : Bool,
   insecure : Bool,
   hold_open : Bool,
   wait_for_start : Bool,
   wait_for_fetch : Bool,
+  fetch_after_groups : Int32,
 ) -> Unit raise {
   let track = @protocol.TrackName::{
     namespace_fields: [@utf8.encode(namespace_field)],
@@ -348,6 +426,7 @@ fn run_publisher(
     done_stream: None,
     group_count: group_count.to_uint64(),
     objects_per_group,
+    object_bytes,
     datagrams,
     object_stream_groups: {},
     finished_object_streams: {},
@@ -357,7 +436,9 @@ fn run_publisher(
     peer_ready: !wait_for_start,
     wait_for_start,
     wait_for_fetch,
+    fetch_after_groups,
     fetch_served: false,
+    waiting_for_fetch: false,
     datagram_send_count: 0UL,
     datagram_send_final_count: 0UL,
     next_group_index: 0,
@@ -549,10 +630,18 @@ fn run_publisher(
       }
       println("Sent four Object Datagrams (best effort)")
     }
+    let fetch_gate = state.fetch_after_groups > 0 &&
+      state.next_group_index >= state.fetch_after_groups &&
+      !state.fetch_served
+    if fetch_gate && !state.waiting_for_fetch {
+      state.waiting_for_fetch = true
+      eprintln("Waiting for relay FETCH before sending the remaining groups")
+    }
     if state.publish_accepted &&
       state.peer_ready &&
       @env.now() >= state.publish_after &&
       state.next_group_index < state.group_count.to_int() &&
+      !fetch_gate &&
       client.has_stream_capacity() {
       let notices = start_probe_group(
         client,
@@ -565,7 +654,8 @@ fn run_publisher(
     } else if state.publish_accepted &&
       state.peer_ready &&
       @env.now() >= state.publish_after &&
-      state.next_group_index < state.group_count.to_int() {
+      state.next_group_index < state.group_count.to_int() &&
+      !fetch_gate {
       eprintln("Waiting for capacity to open the next object stream")
     }
     if !state.publish_done_sent &&

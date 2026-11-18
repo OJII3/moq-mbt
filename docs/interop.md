@@ -6,9 +6,15 @@ Nix flake は Draft 18 対応の moqtail source commit `4cdcb42de6a887754779d74a
 
 以前の interop は Nix でビルドした moq-rs relay を使っていた。現在の開発環境、CI、手動起動スクリプトから moq-rs 依存を外し、過去の制約はこのファイルのシナリオ別結果に置き換えた。変更前の実装履歴は Git に残している。
 
-CI の実 relay checks は Native QUIC の複数 Group/Object publish/subscribe、Browser WebTransport と raw QUIC の Draft 18 SETUP、証明書 pin の拒否、Native/Browser 双方向 publish/subscribe、Native `REQUEST_UPDATE` と独立 track の継続、Datagram / Subgroup 混在配送を確認する。
+CI の実 relay checks は Native QUIC の複数 Group/Object publish/subscribe、512 KiB Object の分割送信、同一 track への 3 subscriber fan-out、Browser WebTransport と raw QUIC の Draft 18 SETUP、証明書 pin の拒否、Native/Browser 双方向 publish/subscribe と大きな Object、browser の Object Datagram 受信、Native `REQUEST_UPDATE` と独立 track の継続、Datagram / Subgroup 混在配送、standalone FETCH、late join を確認する。
 
-standalone FETCH (`MOQTAIL_RUN_FETCH=1`) は live PUBLISH 中に実行し、probe publisher が relay からの upstream FETCH request に応答して Group 0–1 を返す。Namespace withdrawal (`MOQTAIL_RUN_NAMESPACE=1`) も個別に有効化できる。joining FETCH (`MOQTAIL_RUN_JOINING_FETCH=1`) は固定 moqtail で現在失敗する。relay が FETCH objects を返す一方、probe は unsupported range の拒否を期待している。いずれも既定の relay interop では実行しない。
+512 KiB Object を使うのは、Native transport の受信 event queue が 1 MiB であり、1 MiB の Object は Object header と他の event を含めるとこの上限を超えるためである。この上限は adapter の受信バッファに由来し、MoQ の Object 長の上限ではない。
+
+standalone FETCH は publisher が live PUBLISH 中に relay からの upstream FETCH request へ応答し、Group 0–1 の Object を返す。`track_probe fetch` は group と object の範囲を指定できる。固定 moqtail は upstream FETCH の範囲を group 境界へ丸めるため、object offset を含む範囲は CI で実行しない。client は要求範囲の外にある Object を `InvalidFetchRange` として拒否する。
+
+late join は publisher が group 0 を公開した後に upstream FETCH を待機し、group 0 を FETCH で返してから group 1 を live subscription へ送る。subscriber は同じ session で FETCH の group 0 と live の group 1 を確認する。publisher 側の待機は `--wait-for-fetch --fetch-after-groups=1` で有効にする。FETCH の範囲は group 0 から group 1 までを要求し、publisher は保持済みの group 0 だけを返す。固定 relay が upstream FETCH を group 境界へ送るため、この形では object offset に依存しない。
+
+Namespace withdrawal (`MOQTAIL_RUN_NAMESPACE=1`) は個別に有効化できる。joining FETCH (`MOQTAIL_RUN_JOINING_FETCH=1`) は固定 moqtail で現在失敗する。relay が FETCH objects を返す一方、probe は unsupported range の拒否を期待している。いずれも既定の relay interop では実行しない。
 
 Playwright Chromium と WebTransport 実装も Nix flake で固定する。workflow は実行時にバージョンをログへ出す。一時 ECDSA P-256 証明書の正しい SHA-256 pin で接続し、誤った pin の拒否を確認する。Origin allowlist はこの relay 設定で有効にしていない。Origin 拒否は [#104](https://github.com/OJII3/moq-mbt/issues/104) で扱う。
 
@@ -74,13 +80,13 @@ await transport.ready
 
 この relay では WebTransport Origin allowlist を設定していない。Origin 拒否は [#104](https://github.com/OJII3/moq-mbt/issues/104) の対象とする。証明書 pin の拒否は自動確認する。接続成功はリスナー起動や TLS 成立だけでは判断せず、WebTransport `ready` の後に MoQ Draft 18 SETUP を受信することまで確認する。
 
-CLI の末尾には Group 数と各 Group の Object 数を指定する。probe は `group-<group id>-object-<object id>` 形式の payload を生成し、subscriber 側で各 Group の Object ID 順と payload を照合する。SETUP はどちらのピアからも先に送れるため、probe は相手 SETUP の受信と、自分の SETUP の QUIC ACK の両方を待つ。続く PUBLISH_OK と SUBSCRIBE_OK も確認し、control request が relay を通ることを検証する。publisher は全 Subgroup stream の ACK 後に PUBLISH_DONE を送り、subscriber は各 Object stream の FIN、Object 数、Group 終了、PUBLISH_DONE の stream 数がそろった時点で成功する。
+CLI の末尾には Group 数と各 Group の Object 数を指定する。probe は `group-<group id>-object-<object id>` 形式の payload を生成し、subscriber 側で各 Group の Object ID 順と payload を照合する。`--object-bytes=BYTES` を指定すると、同じ指定長の決定的な payload を incremental writer で送り、subscriber が長さと内容を照合する。SETUP はどちらのピアからも先に送れるため、probe は相手 SETUP の受信と、自分の SETUP の QUIC ACK の両方を待つ。続く PUBLISH_OK と SUBSCRIBE_OK も確認し、control request が relay を通ることを検証する。publisher は全 Subgroup stream の ACK 後に PUBLISH_DONE を送り、subscriber は各 Object stream の FIN、Object 数、Group 終了、PUBLISH_DONE の stream 数がそろった時点で成功する。
 
 有限 batch の publisher は `PUBLISH_DONE(TRACK_ENDED)` で終了する。subscriber probe は購読 request stream を開いたまま応答と Object を受信し、`PUBLISH_DONE` 後に接続を閉じる。購読更新を検証する lifecycle probe も更新方向を開いたままにする。
 
 publisher は PUBLISH_OK 後に 1 秒待ってから有限 batch を送る。この間に別プロセスの subscriber が relay に接続し、PUBLISH_DONE を含む完了通知を受け取れる。
 
-`lifecycle`、Namespace、FETCH、Datagram probe は個別に実装されている。standalone / joining FETCH と Namespace withdrawal は、上記環境変数で追加確認できる。transport を介さない session state の検証には Sans-I/O tests を使う。
+`lifecycle`、Namespace、FETCH、Datagram probe は個別に実装されている。standalone FETCH と late join は既定の relay interop で確認し、joining FETCH と Namespace withdrawal は上記環境変数で追加確認できる。transport を介さない session state の検証には Sans-I/O tests を使う。
 
 ## 接続先と参照実装
 
