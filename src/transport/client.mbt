@@ -5,7 +5,7 @@ let max_bytes : Int32 = 1024 * 1024
 let max_events : Int32 = 256
 
 ///|
-let max_streams : Int32 = 16
+let max_streams : Int32 = 64
 
 ///|
 let handshake_timeout_ms : Int32 = 10000

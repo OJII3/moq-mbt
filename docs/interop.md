@@ -120,6 +120,6 @@ ClientHandshake は I/O、時計、スレッドを持たない。バージョン
 
 MsQuic の callback は C のメモリだけを操作し、受信データをキューにコピーする。MoonBit の割り当ては呼び出し元がイベントを取り出す際に行う。stream 送信 buffer は `SEND_COMPLETE` まで保持し、そのイベントは QUIC ACK / cancel を示す。Datagram buffer は最終送信状態まで保持し、`DatagramSendStateChanged` は送信、喪失、ack、cancel を区別する。acknowledged は QUIC 層の確認であり、アプリケーションの配送確認ではない。
 
-受信イベントは 1 MiB / 256 件を目安に保持する。この上限に達すると adapter は該当 stream の受信 callback を停止し、アプリケーションが event を取り出して半分以下になった時点で再開する。接続全体は停止しない。単一の receive callback が上限を超える分は、その callback の範囲で一時的に保持する。stream 送信は 1 MiB / 256 件、Datagram 送信は 1 MiB / 64 件まで保持する。ストリーム上限は同時 16 本。上限超過を暗黙のデータ破棄として扱わない。
+受信イベントは 1 MiB / 256 件を目安に保持する。この上限に達すると adapter は該当 stream の受信 callback を停止し、アプリケーションが event を取り出して半分以下になった時点で再開する。接続全体は停止しない。単一の receive callback が上限を超える分は、その callback の範囲で一時的に保持する。stream 送信は 1 MiB / 256 件、Datagram 送信は 1 MiB / 64 件まで保持する。ストリーム上限は同時 64 本。上限超過を暗黙のデータ破棄として扱わない。
 
 track_probe は一度に一つの track を publish または subscribe し、各 Group に一つの Subgroup stream を開く。session API は複数の track request と複数の Object stream を管理する。transport.Client の操作は単一の呼び出し元から直列に行い、終了時には close() を呼ぶ。自動 finalizer はない。Native executable は -lmsquic -lpthread を link する。
