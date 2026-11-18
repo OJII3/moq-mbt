@@ -34,6 +34,14 @@ extern "C" fn native_open_bidi(client : RawClient) -> RawStream = "moq_client_op
 extern "C" fn native_stream_id(client : RawClient, stream : RawStream) -> Int64 = "moq_client_stream_id"
 
 ///|
+#borrow(out)
+extern "C" fn native_orig_dest_cid(
+  client : RawClient,
+  out : Bytes,
+  capacity : Int32,
+) -> Int32 = "moq_client_orig_dest_cid"
+
+///|
 extern "C" fn native_stream_close(
   client : RawClient,
   stream : RawStream,
