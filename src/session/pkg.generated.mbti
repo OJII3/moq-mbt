@@ -259,6 +259,7 @@ pub(all) enum SessionEvent {
   DatagramSendFailed(UInt64, Int64)
   Clock(UInt64)
   PeerClosed(UInt64)
+  StreamDropped(Int64, StreamDropReason)
   TransportFailed(Int64)
 }
 pub fn SessionEvent::equal(Self, Self) -> Bool
@@ -315,6 +316,7 @@ pub(all) enum SessionNotice {
   ObjectReceived(RequestId, @protocol.TrackName, @protocol.SubgroupHeader, Array[@protocol.SubgroupFrame])
   ObjectDatagramReceived(RequestId, @protocol.TrackName, @protocol.ObjectDatagram)
   ObjectStreamReset(RequestId, StreamId)
+  StreamDropped(StreamId, StreamDropReason)
   ObjectStreamSendFinished(StreamId)
   GroupFinished(RequestId, UInt64)
   PublishDone(RequestId, @protocol.PublishDoneMessage)
@@ -328,6 +330,16 @@ pub(all) enum SessionNotice {
 pub fn SessionNotice::equal(Self, Self) -> Bool
 pub fn SessionNotice::not_equal(Self, Self) -> Bool
 pub fn SessionNotice::to_repr(Self) -> @debug.Repr
+
+#derive(Eq, @debug.Debug)
+pub(all) enum StreamDropReason {
+  EventQueueCount
+  EventQueueBytes
+  ActiveStreamLimit
+}
+pub fn StreamDropReason::equal(Self, Self) -> Bool
+pub fn StreamDropReason::not_equal(Self, Self) -> Bool
+pub fn StreamDropReason::to_repr(Self) -> @debug.Repr
 
 #derive(Eq, Hash, @debug.Debug)
 pub(all) struct StreamId(Int64)

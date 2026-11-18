@@ -22,6 +22,8 @@
 
 アダプターはセッションの送信アクションを QUIC / WebTransport の操作に変換し、トランスポートの受信イベントをセッションへ渡す。ストリーム参照はセッション内では不透明な値として扱い、実際のストリーム ID との対応はアダプターが管理する。
 
+アダプターがローカル上限（受信イベント数、受信バイト数、active stream 数）で一本のストリームを停止した場合、`SessionEvent::StreamDropped` でそのストリームだけを通知する。session は該当ストリームの受信状態と Object drain を解放し、`SessionNotice::StreamDropped` で理由をアプリケーションへ返す。`TransportFailed` は接続全体の I/O が継続できない場合に限る。control stream の停止だけはプロトコルを継続できないため session の終了にする。
+
 外部パッケージのテストは `test_support.ScriptedTransport` と実際の `SessionDriver` を組み合わせる。テスト側は受理・再試行・完了をscriptし、peerイベントをdriverへ渡す。sessionの処理や状態遷移をテスト用コードに複製しない。
 
 送信アクションの実行は `driver` の `SessionDriver` に集約する。アダプターは `SessionTransport` の primitive 操作だけを実装する。driver は Stream ごとの順序を守り、transport の一時的な拒否を再試行する。`SessionDriverConfig` は送信中の操作数に加え、driver で待機中のアクション数とバイト数、および一回の Stream write のサイズを制限する。`dispatch` が `QueueFull` を返した場合、呼び出し元は同じアクションを保持し、空きができた後に再試行する。session 操作自体は繰り返さない。`TooLarge` はアクション群を小さくする必要があることを示す。

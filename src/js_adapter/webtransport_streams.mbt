@@ -6,6 +6,37 @@ pub(all) enum WebTransportStreamDirection {
 }
 
 ///|
+/// Why a WebTransport stream was stopped locally.
+#derive(Debug, Eq)
+pub(all) enum WebTransportStreamOverflowReason {
+  EventQueueCount
+  EventQueueBytes
+  ActiveStreamLimit
+}
+
+///|
+/// The stream and local limit that stopped it.
+#derive(Debug, Eq)
+pub(all) struct WebTransportStreamOverflow {
+  stream : Int64
+  reason : WebTransportStreamOverflowReason
+}
+
+///|
+/// Current stream counts and overflow counters for one WebTransport connection.
+/// `active_incoming` counts peer-opened streams and `active_outgoing` counts
+/// locally opened streams, including bidirectional streams.
+#derive(Debug, Eq)
+pub(all) struct WebTransportStreamStatistics {
+  active_incoming : Int32
+  active_outgoing : Int32
+  event_queue_count_overflows : Int32
+  event_queue_byte_overflows : Int32
+  active_stream_limit_overflows : Int32
+  last_overflow : WebTransportStreamOverflow?
+}
+
+///|
 /// An event from a browser WebTransport stream.
 pub(all) enum WebTransportStreamEvent {
   StreamStarted(Int64, WebTransportStreamDirection)
@@ -16,12 +47,14 @@ pub(all) enum WebTransportStreamEvent {
   StreamDataCommitted(Int64)
   StreamReset(Int64, WebTransportFailure)
   SendStopped(Int64, WebTransportFailure)
-  StreamQueueOverflow(Int64)
+  /// The adapter stopped this stream because a local limit was exceeded.
+  StreamOverflow(Int64, WebTransportStreamOverflowReason)
   ConnectionClosed(WebTransportClose)
 }
 
 ///|
 priv struct WebTransportStreamState {
+  locally_opened : Bool
   mut reader : @streams.ReadableStreamDefaultReader?
   mut writer : @streams.WritableStreamDefaultWriter?
   read_cancelled : Ref[Bool]
@@ -42,6 +75,10 @@ struct WebTransportStreamManager {
   pending_event_bytes : Ref[Int32]
   connection_ended : Ref[Bool]
   final_close : Ref[WebTransportClose?]
+  mut event_queue_count_overflows : Int32
+  mut event_queue_byte_overflows : Int32
+  mut active_stream_limit_overflows : Int32
+  mut last_overflow : WebTransportStreamOverflow?
 }
 
 ///|
@@ -54,7 +91,12 @@ let max_stream_event_bytes : Int32 = 1024 * 1024
 let max_pending_stream_opens : Int32 = 64
 
 ///|
-let max_active_webtransport_streams : Int32 = 64
+/// Outgoing and incoming streams have independent limits so local subscriptions
+/// and Object streams cannot consume the capacity reserved for peer publishers.
+let max_active_incoming_streams : Int32 = 64
+
+///|
+let max_active_outgoing_streams : Int32 = 64
 
 ///|
 let max_pending_stream_sends : Int32 = 256
@@ -71,6 +113,94 @@ fn WebTransportStreamManager::connection_closed(
   self.final_close.val = Some(outcome)
   self.shutdown_streams()
   self.enqueue_stream_event(ConnectionClosed(outcome))
+}
+
+///|
+fn stream_event_stream(event : WebTransportStreamEvent) -> Int64 {
+  match event {
+    StreamStarted(stream, _)
+    | LocalStreamOpened(stream, _)
+    | Data(stream, _)
+    | StreamFinished(stream)
+    | StreamDataCommitted(stream)
+    | StreamReset(stream, _)
+    | SendStopped(stream, _)
+    | StreamOverflow(stream, _) => stream
+    ConnectionClosed(_) => 0L
+  }
+}
+
+///|
+fn WebTransportStreamManager::active_stream_count(
+  self : WebTransportStreamManager,
+  locally_opened : Bool,
+) -> Int32 {
+  let mut count = 0
+  for _, state in self.streams {
+    if state.locally_opened == locally_opened {
+      count += 1
+    }
+  }
+  count
+}
+
+///|
+fn WebTransportStreamManager::statistics(
+  self : WebTransportStreamManager,
+) -> WebTransportStreamStatistics {
+  {
+    active_incoming: self.active_stream_count(false),
+    active_outgoing: self.active_stream_count(true),
+    event_queue_count_overflows: self.event_queue_count_overflows,
+    event_queue_byte_overflows: self.event_queue_byte_overflows,
+    active_stream_limit_overflows: self.active_stream_limit_overflows,
+    last_overflow: self.last_overflow,
+  }
+}
+
+///|
+fn WebTransportStreamManager::has_outgoing_stream_capacity(
+  self : WebTransportStreamManager,
+) -> Bool {
+  if self.connection_ended.val || self.locally_closed.val {
+    return false
+  }
+  self.active_stream_count(true) + self.pending_stream_opens.val <
+  max_active_outgoing_streams
+}
+
+///|
+fn WebTransportStreamManager::record_stream_overflow(
+  self : WebTransportStreamManager,
+  stream : Int64,
+  reason : WebTransportStreamOverflowReason,
+) -> Unit {
+  match reason {
+    EventQueueCount => self.event_queue_count_overflows += 1
+    EventQueueBytes => self.event_queue_byte_overflows += 1
+    ActiveStreamLimit => self.active_stream_limit_overflows += 1
+  }
+  self.last_overflow = Some({ stream, reason, })
+}
+
+///|
+/// Stop one stream and enqueue its overflow notice even when the event queue is
+/// full. The session must learn about the drop to release that stream's state.
+fn WebTransportStreamManager::drop_stream_for_overflow(
+  self : WebTransportStreamManager,
+  stream : Int64,
+  reason : WebTransportStreamOverflowReason,
+) -> Unit {
+  self.record_stream_overflow(stream, reason)
+  self.stop_stream(stream)
+  let event = StreamOverflow(stream, reason)
+  if !self.event_waiters.is_empty() {
+    let waiter = self.event_waiters[0]
+    ignore(self.event_waiters.remove(0))
+    waiter(event)
+  } else {
+    self.events.push(event)
+  }
 }
 
 ///|
@@ -99,36 +229,23 @@ fn WebTransportStreamManager::enqueue_stream_event(
     let waiter = self.event_waiters[0]
     ignore(self.event_waiters.remove(0))
     waiter(event)
-  } else if self.events.length() < max_stream_events {
-    match event {
-      Data(stream, bytes) if bytes.length() >
-        max_stream_event_bytes - self.pending_event_bytes.val => {
-        self.events.push(StreamQueueOverflow(stream))
-        self.stop_stream(stream)
+    return
+  }
+  match event {
+    Data(stream, bytes) if bytes.length() >
+      max_stream_event_bytes - self.pending_event_bytes.val =>
+      self.drop_stream_for_overflow(stream, EventQueueBytes)
+    _ if self.events.length() >= max_stream_events - 1 => {
+      let stream = stream_event_stream(event)
+      if stream != 0L {
+        self.drop_stream_for_overflow(stream, EventQueueCount)
       }
-      _ if self.events.length() >= max_stream_events - 1 => {
-        let stream = match event {
-          StreamStarted(stream, _)
-          | LocalStreamOpened(stream, _)
-          | Data(stream, _)
-          | StreamFinished(stream)
-          | StreamDataCommitted(stream)
-          | StreamReset(stream, _)
-          | SendStopped(stream, _)
-          | StreamQueueOverflow(stream) => stream
-          ConnectionClosed(_) => 0L
-        }
-        self.events.push(StreamQueueOverflow(stream))
-        if stream != 0L {
-          self.stop_stream(stream)
-        }
-      }
-      Data(_, bytes) => {
-        self.pending_event_bytes.val += bytes.length()
-        self.events.push(event)
-      }
-      _ => self.events.push(event)
     }
+    Data(_, bytes) => {
+      self.pending_event_bytes.val += bytes.length()
+      self.events.push(event)
+    }
+    _ => self.events.push(event)
   }
 }
 
@@ -256,16 +373,14 @@ fn WebTransportStreamManager::register_stream(
     )
     return 0L
   }
-  if self.streams.length() >= max_active_webtransport_streams {
+  let active_limit = if locally_opened {
+    max_active_outgoing_streams
+  } else {
+    max_active_incoming_streams
+  }
+  if self.active_stream_count(locally_opened) >= active_limit {
     let id = self.allocate_stream_ref()
-    self.enqueue_stream_event(
-      if locally_opened {
-        LocalStreamOpened(id, direction)
-      } else {
-        StreamStarted(id, direction)
-      },
-    )
-    self.enqueue_stream_event(StreamQueueOverflow(id))
+    self.drop_stream_for_overflow(id, ActiveStreamLimit)
     ffi_webtransport_discard_stream(
       stream,
       has_reader,
@@ -296,6 +411,7 @@ fn WebTransportStreamManager::register_stream(
   }
   let id = self.allocate_stream_ref()
   let state = WebTransportStreamState::{
+    locally_opened,
     reader,
     writer,
     read_cancelled: Ref(false),
@@ -761,3 +877,27 @@ extern "js" fn ffi_webtransport_discard_stream(
   #|   if (hasReader) void readable.cancel().catch(() => {});
   #|   if (hasWriter) void writable.abort().catch(() => {});
   #| }
+
+///|
+pub extend WebTransportStreamOverflowReason with @moonbitlang/core/debug.Debug::{
+  to_repr,
+}
+
+///|
+pub extend WebTransportStreamOverflowReason with Eq::{equal, not_equal}
+
+///|
+pub extend WebTransportStreamOverflow with @moonbitlang/core/debug.Debug::{
+  to_repr,
+}
+
+///|
+pub extend WebTransportStreamOverflow with Eq::{equal, not_equal}
+
+///|
+pub extend WebTransportStreamStatistics with @moonbitlang/core/debug.Debug::{
+  to_repr,
+}
+
+///|
+pub extend WebTransportStreamStatistics with Eq::{equal, not_equal}

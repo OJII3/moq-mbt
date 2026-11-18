@@ -143,6 +143,10 @@ pub fn WebTransportConnection::connect(
         pending_event_bytes: Ref(0),
         connection_ended: Ref(false),
         final_close: Ref(None),
+        event_queue_count_overflows: 0,
+        event_queue_byte_overflows: 0,
+        active_stream_limit_overflows: 0,
+        last_overflow: None,
       },
       datagram_manager: WebTransportDatagramManager::new(raw),
     }
@@ -166,6 +170,24 @@ pub fn WebTransportConnection::next_stream_event(
   self : WebTransportConnection,
 ) -> @js.Promise[WebTransportStreamEvent] {
   self.stream_manager.next_stream_event()
+}
+
+///|
+/// Count active streams by direction and report why the adapter last stopped
+/// a stream. Incoming and outgoing streams have separate limits.
+pub fn WebTransportConnection::stream_statistics(
+  self : WebTransportConnection,
+) -> WebTransportStreamStatistics {
+  self.stream_manager.statistics()
+}
+
+///|
+/// Whether another locally opened stream can be registered without exceeding
+/// the outgoing stream limit. Pending opens count against the limit.
+pub fn WebTransportConnection::has_outgoing_stream_capacity(
+  self : WebTransportConnection,
+) -> Bool {
+  self.stream_manager.has_outgoing_stream_capacity()
 }
 
 ///|

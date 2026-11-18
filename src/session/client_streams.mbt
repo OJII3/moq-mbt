@@ -393,6 +393,63 @@ fn ClientSession::stream_reset(
 }
 
 ///|
+/// Release the state of a stream the adapter stopped locally. Only the control
+/// stream is fatal because the session cannot continue without it. Every other
+/// stream is dropped with a notice so callers can observe the reason.
+fn ClientSession::stream_dropped(
+  self : ClientSession,
+  stream : Int64,
+  reason : StreamDropReason,
+) -> Result[Array[SessionAction], ClientSessionError] {
+  if self.peer_control_stream == Some(stream) ||
+    self.inbound_stream_kinds.get(stream) is Some(Control) {
+    return Err(Handshake(self.handshake.control_closed()))
+  }
+  let notice = EmitNotice(StreamDropped(StreamId(stream), reason))
+  if self.inbound_fetch_streams.get(stream) is Some(inbound) {
+    let fetch = self.fetches.get(inbound.request_id).unwrap()
+    return Ok(self.terminate_fetch(fetch, [], Some(notice), RemoveFetchData))
+  }
+  match self.ignored_object_streams.get(stream) {
+    Some(ignored) => {
+      self.ignored_object_streams.remove(stream)
+      self.inbound_stream_kinds.remove(stream)
+      if ignored.counted_active {
+        let request = self.requests.get(ignored.request_id).unwrap()
+        request.object_drain.note_stream_closed()
+      }
+      return Ok([notice])
+    }
+    None => ()
+  }
+  match self.incoming_object_streams.get(stream) {
+    Some(state) => {
+      let actions : Array[SessionAction] = [notice]
+      if state.request_id is Some(request_id) {
+        let request = self.requests.get(request_id).unwrap()
+        request.object_drain.note_stream_closed()
+        if self.take_ready_publish_done(request_id) is Some(done) {
+          actions.push(EmitNotice(PublishDone(RequestId(request_id), done)))
+        }
+      }
+      self.incoming_object_streams.remove(stream)
+      self.inbound_stream_kinds.remove(stream)
+      return Ok(actions)
+    }
+    None => ()
+  }
+  if self.request_stream_exists(stream) {
+    let actions = self.end_request_stream(stream, Cancel(1UL))
+    actions.push(notice)
+    return Ok(actions)
+  }
+  self.inbound_buffers.remove(stream)
+  self.inbound_unclassified_buffers.remove(stream)
+  self.inbound_stream_kinds.remove(stream)
+  Ok([notice])
+}
+
+///|
 fn ClientSession::send_complete(
   self : ClientSession,
   stream : Int64,
