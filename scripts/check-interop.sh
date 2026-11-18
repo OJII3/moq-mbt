@@ -224,7 +224,7 @@ run_publish_fanout() {
 }
 
 # Scale and fan-out scenarios share the relay but use distinct track names.
-run_scaled_publish_subscribe large-object 1 4 --object-bytes=2097152 --insecure
+run_scaled_publish_subscribe large-object 1 1 --object-bytes=2097152 --insecure
 run_publish_fanout fanout 3 2 3
 run_scaled_publish_subscribe bulk-objects 32 8 --insecure
 

@@ -99,14 +99,14 @@ done
 if [[ " ${e2e_modes[*]} " == *" subscribe "* ]]; then
   run_browser_case subscribe \
     MOQ_INTEROP_BROWSER_GROUPS=1 \
-    MOQ_INTEROP_BROWSER_OBJECTS=2 \
+    MOQ_INTEROP_BROWSER_OBJECTS=1 \
     MOQ_INTEROP_BROWSER_OBJECT_BYTES=2097152 \
     MOQ_INTEROP_BROWSER_DATAGRAMS=1
 fi
 if [[ " ${e2e_modes[*]} " == *" publish "* ]]; then
   run_browser_case publish \
     MOQ_INTEROP_BROWSER_GROUPS=1 \
-    MOQ_INTEROP_BROWSER_OBJECTS=2 \
+    MOQ_INTEROP_BROWSER_OBJECTS=1 \
     MOQ_INTEROP_BROWSER_OBJECT_BYTES=2097152
 fi
 

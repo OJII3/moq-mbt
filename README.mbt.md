@@ -92,8 +92,8 @@ moon run src/cmd/track_probe -- publish 127.0.0.1 4443 /interop my-namespace tra
 moon run src/cmd/track_probe -- subscribe 127.0.0.1 4443 /interop my-namespace track0 2 5 --insecure
 
 # Send a 2 MiB Object payload through the incremental writer on both sides
-moon run src/cmd/track_probe -- publish 127.0.0.1 4443 /interop my-namespace large 1 4 --object-bytes=2097152 --insecure
-moon run src/cmd/track_probe -- subscribe 127.0.0.1 4443 /interop my-namespace large 1 4 --object-bytes=2097152 --insecure
+moon run src/cmd/track_probe -- publish 127.0.0.1 4443 /interop my-namespace large 1 1 --object-bytes=2097152 --insecure
+moon run src/cmd/track_probe -- subscribe 127.0.0.1 4443 /interop my-namespace large 1 1 --object-bytes=2097152 --insecure
 
 # Other commands
 moon run src/cmd/track_probe -- lifecycle 127.0.0.1 4443 /interop --insecure
@@ -238,7 +238,7 @@ bash scripts/check-interop-dual.sh
 ```
 
 The interop scripts run a pinned aiomoqt Draft 18 relay in Docker. They cover
-multi-Group/Object transfer, 2 MiB Objects through the incremental writer,
+multi-Group/Object transfer, a 2 MiB Object through the incremental writer,
 same-track fan-out to three Native subscribers, Native/Browser large payloads
 and Object Datagrams, standalone FETCH with object offsets, late join, and all
 ten moq-interop-runner client scenarios. See
