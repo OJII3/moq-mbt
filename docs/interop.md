@@ -2,31 +2,42 @@
 
 ## 固定 relay と CI の範囲
 
-Nix flake は Draft 18 対応の moqtail source commit `4cdcb42de6a887754779d74a06c0bf4a8716e5cb` を固定し、Rust relay を package としてビルドする。CI とローカルの `scripts/check-interop.sh` / `scripts/check-moqtail-dual.sh` はこの同じ Nix package を使う。relay は子プロセスとして起動し、終了時に停止する。
+interop の relay は Draft 18 対応の aiomoqt を Docker image digest `sha256:06ebc32bd63eaf4e72cddda2fafa6c190197064506665f710c7ea67b265085a2` で固定する。CI とローカルの `scripts/check-interop.sh` / `scripts/check-interop-dual.sh` は同じ image を使う。relay は子プロセスとして起動し、終了時に停止する。Docker の UDP port mapping は loopback に限る。
 
-以前の interop は Nix でビルドした moq-rs relay を使っていた。現在の開発環境、CI、手動起動スクリプトから moq-rs 依存を外し、過去の制約はこのファイルのシナリオ別結果に置き換えた。変更前の実装履歴は Git に残している。
+`scripts/interop-relay.sh` が relay の起動と停止を担う。stream ring は 8 MiB に上げる。これは 2 MiB Object を一つの stream write で送るためであり、MoQ の Object 長の上限ではない。
 
-CI の実 relay checks は Native QUIC の複数 Group/Object publish/subscribe、512 KiB Object の分割送信、同一 track への 3 subscriber fan-out、Browser WebTransport と raw QUIC の Draft 18 SETUP、証明書 pin の拒否、Native/Browser 双方向 publish/subscribe と大きな Object、browser の Object Datagram 受信、Native `REQUEST_UPDATE` と独立 track の継続、Datagram / Subgroup 混在配送、standalone FETCH、late join を確認する。
+CI の実 relay checks は Native QUIC の複数 Group/Object publish/subscribe、2 MiB Object の分割送信、同一 track への 3 subscriber fan-out、Browser WebTransport と raw QUIC の Draft 18 SETUP、証明書 pin の拒否、Native/Browser 双方向 publish/subscribe と 2 MiB Object、browser の Object Datagram 受信、Native `REQUEST_UPDATE` と独立 track の継続、Datagram / Subgroup 混在配送、standalone FETCH の group/object offset、late join を確認する。
 
-512 KiB Object を使うのは、Native transport の受信 event queue が 1 MiB であり、1 MiB の Object は Object header と他の event を含めるとこの上限を超えるためである。この上限は adapter の受信バッファに由来し、MoQ の Object 長の上限ではない。
+固定 relay は次を実装する。
 
-standalone FETCH は publisher が live PUBLISH 中に relay からの upstream FETCH request へ応答し、Group 0–1 の Object を返す。`track_probe fetch` は group と object の範囲を指定できる。固定 moqtail は upstream FETCH の範囲を group 境界へ丸めるため、object offset を含む範囲は CI で実行しない。client は要求範囲の外にある Object を `InvalidFetchRange` として拒否する。
+- 同じ namespace を広告する publisher が残っている間、namespace を保持する。
+- upstream FETCH の group と object の範囲を保持する。
+- `RENDEZVOUS_TIMEOUT` を解釈し、期限まで publisher を待つ。
+- raw QUIC と WebTransport を同じ UDP port で ALPN により振り分ける。
 
-late join は publisher が group 0 を公開した後に upstream FETCH を待機し、group 0 を FETCH で返してから group 1 を live subscription へ送る。subscriber は同じ session で FETCH の group 0 と live の group 1 を確認する。publisher 側の待機は `--wait-for-fetch --fetch-after-groups=1` で有効にする。FETCH の範囲は group 0 から group 1 までを要求し、publisher は保持済みの group 0 だけを返す。固定 relay が upstream FETCH を group 境界へ送るため、この形では object offset に依存しない。
+このため `publish-namespace-multi-publisher-retention` と `rendezvous-timeout` を含む 10 個の moq-interop-runner client scenario をすべて CI で実行する。
 
-Namespace withdrawal (`MOQTAIL_RUN_NAMESPACE=1`) は個別に有効化できる。joining FETCH (`MOQTAIL_RUN_JOINING_FETCH=1`) は固定 moqtail で現在失敗する。relay が FETCH objects を返す一方、probe は unsupported range の拒否を期待している。いずれも既定の relay interop では実行しない。
+## シナリオ
 
-Playwright Chromium と WebTransport 実装も Nix flake で固定する。workflow は実行時にバージョンをログへ出す。一時 ECDSA P-256 証明書の正しい SHA-256 pin で接続し、誤った pin の拒否を確認する。Origin allowlist はこの relay 設定で有効にしていない。Origin 拒否は [#104](https://github.com/OJII3/moq-mbt/issues/104) で扱う。
+standalone FETCH は publisher が live PUBLISH 中に relay からの upstream FETCH request へ応答し、Group 0–1 の Object を返す。`track_probe fetch` は group と object の範囲を指定できる。relay は要求された object offset を保持し、client は要求範囲の外にある Object を `InvalidFetchRange` として拒否する。CI は group 0 object 1 から group 1 object 1 までを取得し、2 Objects を確認する。
+
+late join は publisher が group 0 を公開した後に upstream FETCH を待機し、group 0 を返してから group 1 を live subscription へ送る。relay が保持済みの group 0 を自身で返す場合は upstream FETCH を送らないため、publisher は FETCH の到着か 10 秒の cache window の経過で group 1 へ進む。subscriber は同じ session で FETCH の group 0 と live の group 1 を確認する。publisher 側の待機は `--wait-for-fetch --fetch-after-groups=1` で有効にする。CI は publisher が group 0 を送れるよう、先に同じ track へ warm-up subscriber を接続する。
+
+Namespace withdrawal は既定で実行する。publisher が namespace を撤回した後も独立 track の subscription と Object 配送が継続することを確認する。publisher は relay からの `SUBSCRIBE` と `REQUEST_UPDATE` を受理してから Object stream を開く。session は Forward State が 0 の間、Object stream の開設を拒否する。
+
+joining FETCH の relay probe は削除した。以前の probe は moq5 が joining FETCH を拒否することを期待しており、Draft 18 の相互接続を確認する test ではなかった。joining FETCH の状態遷移と Object 範囲は `src/session/client_joining_fetch.mbt` と Sans-I/O tests で確認する。
+
+Playwright Chromium と WebTransport 実装も Nix flake で固定する。workflow は実行時にバージョンをログへ出す。一時 ECDSA P-256 証明書の正しい SHA-256 pin で接続し、誤った pin の拒否を確認する。WebTransport の URL path は `/` とする。Origin allowlist は relay の設定対象ではなく、この repo では扱わない。
 
 仕様は [Draft 18](https://www.ietf.org/archive/id/draft-ietf-moq-transport-18.txt) に固定する。vi64 は QUIC の 62-bit varint と異なり、1〜9 bytes で UInt64 全域を表現する。SETUP の type 0x2f00 は制御ストリームの type も兼ねるので、別のストリームヘッダーを付けない。制御ストリームは SETUP の後も開いたままにする。
 
 ## moq-interop-runner クライアント
 
-`track_probe` は [moq-interop-runner](https://github.com/englishm/moq-interop-runner) の test client interface を兼ねる。`--list` で対応する identifier を出力し、各 test case の結果を TAP version 14 と YAML diagnostics で書き出す。diagnostics には duration_ms、session role ごとの negotiated version と transport、失敗理由を含める。QUIC Initial Destination Connection ID は transport API が公開していないため省略する。
+`track_probe` は [moq-interop-runner](https://github.com/englishm/moq-interop-runner) の test client interface を兼ねる。`--list` で対応する identifier を出力し、各 test case の結果を TAP version 14 と YAML diagnostics で書き出す。diagnostics には duration_ms、session role ごとの negotiated version と transport、QUIC Initial Destination Connection ID、失敗理由を含める。Initial Destination Connection ID は MsQuic の `QUIC_PARAM_CONN_ORIG_DEST_CID` から取得する。
 
-対応する scenario は `setup-only`、`announce-only`、`publish-namespace-done`、`subscribe-namespace-lifecycle`、`publish-namespace-multi-publisher-retention`、`subscribe-error`、`rendezvous-timeout`、`announce-subscribe`、`subscribe-before-announce`、`data-subgroup-basic` の10個である。`data-subgroup-basic` は publisher が routing prefix だけを PUBLISH_NAMESPACE し、subscriber が 19 field の MoQT Test tuple を namespace に持つ SUBSCRIBE を送り、publisher が tuple から導いた 15 objects を subgroup stream で返す。media 系の `publish-subscribe-media` と `cmsf-*` は fixture の生成と decode の検証が必要なため実装しない。
+対応する scenario は `setup-only`、`announce-only`、`publish-namespace-done`、`subscribe-namespace-lifecycle`、`publish-namespace-multi-publisher-retention`、`subscribe-error`、`rendezvous-timeout`、`announce-subscribe`、`subscribe-before-announce`、`data-subgroup-basic` の10個である。`data-subgroup-basic` は publisher が routing prefix だけを PUBLISH_NAMESPACE し、subscriber が 19 field の MoQT Test tuple を namespace に持つ SUBSCRIBE を送り、publisher が tuple から導いた 15 objects を subgroup stream で返す。media fixture の生成と decode は client の `--list` に含めない。
 
-`scripts/check-interop.sh` は固定 moqtail relay に対して、このうち `setup-only`、`announce-only`、`publish-namespace-done`、`subscribe-namespace-lifecycle`、`subscribe-error`、`announce-subscribe`、`subscribe-before-announce`、`data-subgroup-basic` の8個を実行する。`publish-namespace-multi-publisher-retention` は、固定 moqtail が同じ namespace を広告する publisher をまだ保持している状態で、一方の withdrawal により共有 namespace の NAMESPACE_DONE を送るため失敗する。`rendezvous-timeout` は固定 moqtail が RENDEZVOUS_TIMEOUT を解釈せず DOES_NOT_EXIST を返すため失敗する。クライアントの期待は Draft 18 の仕様に合わせてあり、どちらも relay 側の差分として記録する。
+`scripts/check-interop.sh` は固定 relay に対して、この10個をすべて実行する。
 
 ## ローカルで再現する
 
@@ -38,12 +49,16 @@ nix develop -c moon test --target wasm-gc src/protocol src/session
 nix develop -c moon test --target js src/protocol src/session src/js_adapter
 nix develop -c bash scripts/check-interop.sh
 nix develop -c npm ci
-nix develop -c bash scripts/check-moqtail-dual.sh
+nix develop -c bash scripts/check-interop-dual.sh
 ~~~
 
-`check-interop.sh`、`check-moqtail-dual.sh`、`serve-moqtail.sh` が起動する moqtail relay は全インターフェースに bind する。固定版の UDP socket は IPv4/IPv6 dual-stack の `[::]:port` で、`--host 127.0.0.1` は起動ログに表示する接続先を変えるだけで bind address を制限しない。scripts の probe は loopback 経由で接続するが、socket は loopback に限定されない。外部から到達できるかはホストの firewall/network 設定に依存する。実行中の relay がある場合は終了してから実行する。ポートは `MOQTAIL_PORT` で変更できる。Native QUIC の証明書検証失敗を確認したあと、自己署名証明書の検証を loopback probe に限って無効にする。
+interop script は Docker daemon と `docker` CLI を必要とする。relay image は初回に pull する。`MOQ_INTEROP_PORT` で host の UDP port を変更でき、`MOQ_INTEROP_RELAY_IMAGE` で image を差し替えられる。実行中の relay がある場合は終了してから実行する。Native QUIC の証明書検証失敗を確認したあと、自己署名証明書の検証を loopback probe に限って無効にする。
 
-手動確認では2つの terminal を使う。まず publisher を起動し、次に別の terminal から subscriber を起動する。両方に同じ relay、path、namespace、track を指定する。
+手動確認では2つの terminal を使う。まず relay を起動し、次に publisher と subscriber を起動する。両方に同じ relay、path、namespace、track を指定する。
+
+~~~sh
+nix develop -c scripts/serve-interop-relay.sh
+~~~
 
 ~~~sh
 nix develop -c moon run --release --target native src/cmd/track_probe -- \
@@ -55,15 +70,15 @@ nix develop -c moon run --release --target native src/cmd/track_probe -- \
   subscribe 127.0.0.1 4443 /interop interop multi-object 2 2 --insecure
 ~~~
 
-`check-interop.sh` は一時証明書を生成し、moqtail relay を `MOQTAIL_PORT`（既定値 `4443`）の UDP port で全インターフェースに bind して Native QUIC の Draft 18 interop を確認する。自己署名証明書が既定の Native 証明書検証で拒否されることを確認した後、loopback probe に限って `--insecure` を使う。終了時に publisher、relay、一時ファイルを削除する。
+`check-interop.sh` は一時証明書を生成し、relay を `MOQ_INTEROP_PORT`（既定値 `4443`）の UDP port に loopback で公開する。自己署名証明書が既定の Native 証明書検証で拒否されることを確認した後、loopback probe に限って `--insecure` を使う。終了時に publisher、relay container、一時ファイルを削除する。publisher は Forward State が 1 になるまで Object stream を開かないため、subscriber を先に起動するか、`--wait-for-start` で開始を待つ。
 
 ### Browser WebTransport 検証
 
-`nix develop -c bash scripts/check-moqtail-dual.sh` は同じ moqtail relay process に raw QUIC と WebTransport の接続を同時に開き、両方で Draft 18 SETUP を確認する。さらに一時 ECDSA P-256 証明書の正しい SHA-256 pin で接続し、誤った pin の拒否と Native/Browser 双方向 publish/subscribe を確認する。各接続と E2E に期限を設定し、失敗時は relay / peer log を出力して子プロセスを終了する。Native probe は loopback の一時自己署名証明書に限り `--insecure` を使う。
+`nix develop -c bash scripts/check-interop-dual.sh` は同じ relay process に raw QUIC と WebTransport の接続を同時に開き、両方で Draft 18 SETUP を確認する。さらに一時 ECDSA P-256 証明書の正しい SHA-256 pin で接続し、誤った pin の拒否と Native/Browser 双方向 publish/subscribe を確認する。各接続と E2E に期限を設定し、失敗時は relay / peer log を出力して子プロセスを終了する。Native probe は loopback の一時自己署名証明書に限り `--insecure` を使う。
 
-Browser WebTransport の connect timeout、遅延した open/write、方向ごとの FIN、送信失敗、close 後に保留 I/O が解放されることは `src/js_adapter/webtransport_test.mbt` の fake-transport tests で決定的に確認する。`check-moqtail-dual.sh` は Datagram の単独 probe と、Datagram / Subgroup の混在配送を別々に確認する。Sans-I/O tests は peer-side decode と session routing も確認する。
+Browser WebTransport の connect timeout、遅延した open/write、方向ごとの FIN、送信失敗、close 後に保留 I/O が解放されることは `src/js_adapter/webtransport_test.mbt` の fake-transport tests で決定的に確認する。`check-interop-dual.sh` は Datagram の単独 probe と、Datagram / Subgroup の混在配送を別々に確認する。Sans-I/O tests は peer-side decode と session routing も確認する。
 
-ブラウザだけを手動確認する場合は `nix develop -c scripts/serve-moqtail.sh` を実行する。表示される URL と証明書 hash を使い、`WebTransport` の `protocols` に `moqt-18` を指定する。
+ブラウザだけを手動確認する場合は `nix develop -c scripts/serve-interop-relay.sh` を実行する。表示される URL と証明書 hash を使い、`WebTransport` の `protocols` に `moqt-18` を指定する。
 
 自己署名証明書を使った試験では、ブラウザの WebTransport `serverCertificateHashes` に表示された SHA-256 hash を `Uint8Array` として渡す。これはローカル試験用の明示的な証明書 pin であり、通常の信頼設定や Origin 検証を無効にしない。
 
@@ -71,14 +86,14 @@ Browser WebTransport の connect timeout、遅延した open/write、方向ご�
 
 ~~~js
 const hash = Uint8Array.from(atob("BASE64_HASH_FROM_SCRIPT"), c => c.charCodeAt(0))
-const transport = new WebTransport("https://127.0.0.1:4443/interop", {
+const transport = new WebTransport("https://127.0.0.1:4443/", {
   protocols: ["moqt-18"],
   serverCertificateHashes: [{ algorithm: "sha-256", value: hash }],
 })
 await transport.ready
 ~~~
 
-この relay では WebTransport Origin allowlist を設定していない。Origin 拒否は [#104](https://github.com/OJII3/moq-mbt/issues/104) の対象とする。証明書 pin の拒否は自動確認する。接続成功はリスナー起動や TLS 成立だけでは判断せず、WebTransport `ready` の後に MoQ Draft 18 SETUP を受信することまで確認する。
+Origin allowlist はこの repo の対象外とする。証明書 pin の拒否は自動確認する。接続成功はリスナー起動や TLS 成立だけでは判断せず、WebTransport `ready` の後に MoQ Draft 18 SETUP を受信することまで確認する。
 
 CLI の末尾には Group 数と各 Group の Object 数を指定する。probe は `group-<group id>-object-<object id>` 形式の payload を生成し、subscriber 側で各 Group の Object ID 順と payload を照合する。`--object-bytes=BYTES` を指定すると、同じ指定長の決定的な payload を incremental writer で送り、subscriber が長さと内容を照合する。SETUP はどちらのピアからも先に送れるため、probe は相手 SETUP の受信と、自分の SETUP の QUIC ACK の両方を待つ。続く PUBLISH_OK と SUBSCRIBE_OK も確認し、control request が relay を通ることを検証する。publisher は全 Subgroup stream の ACK 後に PUBLISH_DONE を送り、subscriber は各 Object stream の FIN、Object 数、Group 終了、PUBLISH_DONE の stream 数がそろった時点で成功する。
 
@@ -86,7 +101,7 @@ CLI の末尾には Group 数と各 Group の Object 数を指定する。probe 
 
 publisher は PUBLISH_OK 後に 1 秒待ってから有限 batch を送る。この間に別プロセスの subscriber が relay に接続し、PUBLISH_DONE を含む完了通知を受け取れる。
 
-`lifecycle`、Namespace、FETCH、Datagram probe は個別に実装されている。standalone FETCH と late join は既定の relay interop で確認し、joining FETCH と Namespace withdrawal は上記環境変数で追加確認できる。transport を介さない session state の検証には Sans-I/O tests を使う。
+`lifecycle`、Namespace、FETCH、Datagram probe は個別に実装されている。standalone FETCH、object offset FETCH、late join、Namespace withdrawal は既定の relay interop で確認する。transport を介さない session state の検証には Sans-I/O tests を使う。
 
 ## 接続先と参照実装
 
@@ -97,12 +112,14 @@ nix develop -c moon run --release --target native src/cmd/setup_probe -- \
 
 引数はホスト、ポート、MoQ URI の path と query。クライアントは ALPN moqt-18 だけを提示し、QUIC DATAGRAM の交渉を確認してから SETUP を送る。Native QUIC 用の PATH、AUTHORITY、MOQT_IMPLEMENTATION を含める。接続から相手の SETUP 受信までの期限は 10 秒。相手の SETUP 受信と自分の SETUP の ACK を待ってから接続を終了する。証明書検証は既定で有効。
 
-Relay は [moqtail/moqtail](https://github.com/moqtail/moqtail) の Draft 18 branch commit `4cdcb42de6a887754779d74a06c0bf4a8716e5cb` を Nix flake で固定してビルドする。Native QUIC と WebTransport は同じ UDP port で ALPN により振り分けられる。
+Relay は [aiomoqt](https://github.com/gmarzot/aiomoqt) の interop relay を Docker image digest で固定する。Native QUIC と WebTransport は同じ UDP port で ALPN により振り分けられる。
 
 ## API とリソースの範囲
 
 ClientHandshake は I/O、時計、スレッドを持たない。バージョンは生成時に明示する。受信 SETUP の保持は最大 65,546 bytes に制限し、完了時に保持領域を解放する。エラー後は呼び出し元が対応する close code で接続を終了し、ハンドシェイクを破棄する。
 
-MsQuic の callback は C のメモリだけを操作し、受信データをキューにコピーする。MoonBit の割り当ては呼び出し元がイベントを取り出す際に行う。stream 送信 buffer は `SEND_COMPLETE` まで保持し、そのイベントは QUIC ACK / cancel を示す。Datagram buffer は最終送信状態まで保持し、`DatagramSendStateChanged` は送信、喪失、ack、cancel を区別する。acknowledged は QUIC 層の確認であり、アプリケーションの配送確認ではない。受信イベントは 1 MiB / 256 件、stream 送信は 1 MiB / 256 件、Datagram 送信は 1 MiB / 64 件まで保持する。ストリーム上限は同時 16 本。上限超過を暗黙のデータ破棄として扱わない。
+MsQuic の callback は C のメモリだけを操作し、受信データをキューにコピーする。MoonBit の割り当ては呼び出し元がイベントを取り出す際に行う。stream 送信 buffer は `SEND_COMPLETE` まで保持し、そのイベントは QUIC ACK / cancel を示す。Datagram buffer は最終送信状態まで保持し、`DatagramSendStateChanged` は送信、喪失、ack、cancel を区別する。acknowledged は QUIC 層の確認であり、アプリケーションの配送確認ではない。
+
+受信イベントは 1 MiB / 256 件を目安に保持する。この上限に達すると adapter は該当 stream の受信 callback を停止し、アプリケーションが event を取り出して半分以下になった時点で再開する。接続全体は停止しない。単一の receive callback が上限を超える分は、その callback の範囲で一時的に保持する。stream 送信は 1 MiB / 256 件、Datagram 送信は 1 MiB / 64 件まで保持する。ストリーム上限は同時 16 本。上限超過を暗黙のデータ破棄として扱わない。
 
 track_probe は一度に一つの track を publish または subscribe し、各 Group に一つの Subgroup stream を開く。session API は複数の track request と複数の Object stream を管理する。transport.Client の操作は単一の呼び出し元から直列に行い、終了時には close() を呼ぶ。自動 finalizer はない。Native executable は -lmsquic -lpthread を link する。

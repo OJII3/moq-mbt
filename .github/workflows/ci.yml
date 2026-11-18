@@ -93,8 +93,8 @@ jobs:
       - name: Prove verified packages
         run: nix develop -c moon prove
 
-      - name: Run Native moqtail interoperability
+      - name: Run Native relay interoperability
         run: nix develop -c bash scripts/check-interop.sh
 
       - name: Run raw QUIC and WebTransport interoperability
-        run: nix develop -c bash scripts/check-moqtail-dual.sh
+        run: nix develop -c bash scripts/check-interop-dual.sh

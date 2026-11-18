@@ -19,7 +19,7 @@ Media over QUIC (MoQ) Transport implementation in [MoonBit](https://www.moonbitl
   - **Native**: Built with [`libmsquic`](https://github.com/microsoft/msquic) for raw QUIC networking.
   - **Browser**: Built for JavaScript / WebAssembly environments via the browser's WebTransport API.
 - **Sans-I/O Architecture**: The protocol encoding/decoding and session state machine are decoupled from network I/O, timers, and platform runtimes.
-- **Interoperability**: Native QUIC ↔ moqtail ↔ Browser WebTransport interoperability is covered by the pinned relay probes.
+- **Interoperability**: Native QUIC ↔ aiomoqt relay ↔ Browser WebTransport interoperability is covered by the pinned relay probes.
 
 ## Packages
 
@@ -60,6 +60,7 @@ Without Nix:
 - [MoonBit CLI](https://www.moonbitlang.com/download/) (`moon`)
 - `libmsquic` (for native target)
 - Node.js 20+ and Chromium (for browser target)
+- Docker (for the interop relay scripts)
 
 ### CLI Probes (Native)
 
@@ -90,16 +91,15 @@ moon run src/cmd/track_probe -- publish 127.0.0.1 4443 /interop my-namespace tra
 # Subscribe to tracks
 moon run src/cmd/track_probe -- subscribe 127.0.0.1 4443 /interop my-namespace track0 2 5 --insecure
 
-# Send a 512 KiB Object payload through the incremental writer on both sides
-moon run src/cmd/track_probe -- publish 127.0.0.1 4443 /interop my-namespace large 1 4 --object-bytes=524288 --insecure
-moon run src/cmd/track_probe -- subscribe 127.0.0.1 4443 /interop my-namespace large 1 4 --object-bytes=524288 --insecure
+# Send a 2 MiB Object payload through the incremental writer on both sides
+moon run src/cmd/track_probe -- publish 127.0.0.1 4443 /interop my-namespace large 1 4 --object-bytes=2097152 --insecure
+moon run src/cmd/track_probe -- subscribe 127.0.0.1 4443 /interop my-namespace large 1 4 --object-bytes=2097152 --insecure
 
 # Other commands
 moon run src/cmd/track_probe -- lifecycle 127.0.0.1 4443 /interop --insecure
 moon run src/cmd/track_probe -- namespace 127.0.0.1 4443 /interop --insecure
 moon run src/cmd/track_probe -- fetch 127.0.0.1 4443 /interop my-namespace track0 0 0 1 2 2 --insecure
 moon run src/cmd/track_probe -- late-join 127.0.0.1 4443 /interop my-namespace track0 --insecure
-moon run src/cmd/track_probe -- joining-fetch 127.0.0.1 4443 /interop --insecure
 moon run src/cmd/track_probe -- datagram-smoke 127.0.0.1 4443 /interop --insecure
 ```
 
@@ -116,7 +116,8 @@ supports `setup-only`, `announce-only`, `publish-namespace-done`,
 `subscribe-namespace-lifecycle`,
 `publish-namespace-multi-publisher-retention`, `subscribe-error`,
 `rendezvous-timeout`, `announce-subscribe`, `subscribe-before-announce`, and
-`data-subgroup-basic`. The media test cases are not implemented.
+`data-subgroup-basic`. The client reports the test points it implements with
+`--list`; the media fixtures are outside that set.
 
 ```sh
 moon run src/cmd/track_probe -- --list
@@ -127,9 +128,8 @@ RELAY_URL=moqt://127.0.0.1:4443/interop \
 
 The Runner may pass the same settings as `--relay`, `--test`, and
 `--tls-disable-verify`. Results are written to stdout in TAP version 14 format,
-with YAML diagnostics for duration, session roles, negotiated version and
-transport, and failure messages. The QUIC Initial Destination Connection ID is
-omitted because the transport layer does not expose it.
+with YAML diagnostics for duration, session roles, negotiated version,
+transport, the QUIC Initial Destination Connection ID, and failure messages.
 
 Build the Runner-compatible Docker image from the repository root:
 
@@ -150,10 +150,10 @@ The relay hostname must be reachable from the container's Docker network.
 
 ### Browser Sample
 
-Start the local `moqtail` relay in one terminal:
+Start the local interop relay in one terminal:
 
 ```sh
-nix develop -c scripts/serve-moqtail.sh
+nix develop -c scripts/serve-interop-relay.sh
 ```
 
 Keep it running. The script prints the relay URL and its base64 SHA-256
@@ -169,6 +169,7 @@ npm run dev
 
 Open the URL printed by Vite. In two tabs, enter the relay URL and certificate
 hash printed by the relay script, using the same namespace and track in both.
+The WebTransport URL is `https://127.0.0.1:4443/`.
 Choose **Publish** in one tab and **Subscribe** in the other, then select
 **Connect** in each. When the publisher shows `published` and the subscriber
 shows `ready`, select **Start transfer** in both tabs. The subscriber should
@@ -228,24 +229,25 @@ shows the API in a runnable publish/subscribe flow.
 # Unit tests
 moon test
 
-# Protocol and relay interoperability checks (requires Nix devShell)
+# Protocol and relay interoperability checks
+# (requires Nix devShell and Docker)
 bash scripts/check-interop.sh
 
 # Native ↔ Browser dual interop check
-bash scripts/check-moqtail-dual.sh
+bash scripts/check-interop-dual.sh
 ```
 
-The relay scripts cover multi-Group/Object transfer, 512 KiB Objects through
-the incremental writer, same-track fan-out to three Native subscribers,
-Native/Browser large payloads and Object Datagrams, standalone FETCH, and a
-late-join FETCH followed by live delivery. Object-offset FETCH and
-`publish-namespace-multi-publisher-retention` remain limited by the pinned
-relay; see [interop notes](docs/interop.md).
+The interop scripts run a pinned aiomoqt Draft 18 relay in Docker. They cover
+multi-Group/Object transfer, 2 MiB Objects through the incremental writer,
+same-track fan-out to three Native subscribers, Native/Browser large payloads
+and Object Datagrams, standalone FETCH with object offsets, late join, and all
+ten moq-interop-runner client scenarios. See
+[interop notes](docs/interop.md).
 
 ## Documentation
 
 - [Architecture notes](docs/architecture.md): Session state machine and transport boundary
-- [Interop notes](docs/interop.md): Relay compatibility, tested scenarios, and limits
+- [Interop notes](docs/interop.md): Pinned relay, tested scenarios, and scope
 - [JavaScript adapter](docs/js-adapter.md): WebTransport details, buffer ownership, and FFI policy
 - [Browser sample guide](src/examples/browser/README.md): Running the browser demo
 
@@ -253,5 +255,5 @@ relay; see [interop notes](docs/interop.md).
 
 - [MoQ Transport Draft 18](https://datatracker.ietf.org/doc/draft-ietf-moq-transport/18/)
 - [openmoq/moq5](https://github.com/openmoq/moq5)
-- [moqtail/moqtail](https://github.com/moqtail/moqtail)
+- [aiomoqt](https://github.com/gmarzot/aiomoqt)
 - [libmsquic](https://github.com/microsoft/msquic)
