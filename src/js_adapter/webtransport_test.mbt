@@ -515,6 +515,7 @@ async test "WebTransport connection and session lifecycle" {
   webtransport_session_driver_isolates_stream_errors_without_code()
   webtransport_session_driver_drops_only_overflowed_stream()
   webtransport_reports_event_byte_overflow()
+  webtransport_session_driver_cleans_up_timers_and_streams()
 }
 
 ///|
@@ -856,6 +857,140 @@ async fn webtransport_session_driver_drops_only_overflowed_stream() -> Unit {
 }
 
 ///|
+async fn drain_driver_notices(
+  driver : @js_adapter.WebTransportSessionDriver,
+) -> Unit {
+  while !(driver.next_notice().wait() is None) {
+    ()
+  }
+}
+
+///|
+async fn webtransport_session_driver_cleans_up_timers_and_streams() -> Unit {
+  ffi_install_timer_tracker()
+  errdefer ffi_uninstall_timer_tracker()
+  // 1. Clean local close clears clock_timer.
+  ffi_install_fake_webtransport("moqt-18", false, false)
+  let clean_conn = match
+    @js_adapter.WebTransportConnection::connect("moqt://example.test/clean") {
+    Ok(connection) => connection
+    Err(message) => fail(message)
+  }
+  let clean_session = match
+    @session.ClientSession::new(Draft18, { options: [], }) {
+    Ok(session) => session
+    Err(_) => fail("session creation failed")
+  }
+  let clean_driver = @js_adapter.WebTransportSessionDriver::new(
+    clean_conn, clean_session,
+  )
+  assert_true(clean_driver.start() is Ok(_))
+  assert_true(ffi_active_timer_count() > 0)
+  ignore(clean_conn.close(0L, "done"))
+  ignore(clean_conn.closed().wait())
+  drain_driver_notices(clean_driver)
+  assert_eq(ffi_active_timer_count(), 0)
+
+  // 2. PeerClose clears clock_timer.
+  ffi_install_fake_webtransport("moqt-18", false, false)
+  let peer_conn = match
+    @js_adapter.WebTransportConnection::connect(
+      "moqt://example.test/peer-close",
+    ) {
+    Ok(connection) => connection
+    Err(message) => fail(message)
+  }
+  let peer_session = match
+    @session.ClientSession::new(Draft18, { options: [], }) {
+    Ok(session) => session
+    Err(_) => fail("session creation failed")
+  }
+  let peer_driver = @js_adapter.WebTransportSessionDriver::new(
+    peer_conn, peer_session,
+  )
+  assert_true(peer_driver.start() is Ok(_))
+  assert_true(ffi_active_timer_count() > 0)
+  ffi_fake_peer_close(37, "peer done")
+  ignore(peer_conn.closed().wait())
+  drain_driver_notices(peer_driver)
+  assert_eq(ffi_active_timer_count(), 0)
+
+  // 3. Ready rejection clears clock_timer.
+  ffi_install_fake_webtransport("moqt-18", false, true)
+  let fail_conn = match
+    @js_adapter.WebTransportConnection::connect(
+      "moqt://example.test/ready-reject",
+    ) {
+    Ok(connection) => connection
+    Err(message) => fail(message)
+  }
+  let fail_session = match
+    @session.ClientSession::new(Draft18, { options: [], }) {
+    Ok(session) => session
+    Err(_) => fail("session creation failed")
+  }
+  let fail_driver = @js_adapter.WebTransportSessionDriver::new(
+    fail_conn, fail_session,
+  )
+  assert_true(fail_driver.start() is Ok(_))
+  drain_driver_notices(fail_driver)
+  ignore(fail_conn.closed().wait())
+  assert_eq(ffi_active_timer_count(), 0)
+  ffi_uninstall_timer_tracker()
+
+  // 4. Sequential outgoing and incoming unidirectional streams leave the stream table empty.
+  ffi_install_fake_webtransport("moqt-18", false, false)
+  let stream_conn = match
+    @js_adapter.WebTransportConnection::connect("moqt://example.test/stream-gc") {
+    Ok(connection) => connection
+    Err(message) => fail(message)
+  }
+  for _ in 0..<20 {
+    let stream = match stream_conn.open_unidirectional().wait() {
+      Ok(stream) => stream
+      Err(error) => fail(error.message)
+    }
+    match stream_conn.next_stream_event().wait() {
+      LocalStreamOpened(id, Unidirectional) => assert_eq(id, stream)
+      _ => fail("expected LocalStreamOpened for unidirectional stream")
+    }
+    assert_true(
+      stream_conn.write_stream(stream, b"out", fin=true).wait() is Ok(_),
+    )
+    match stream_conn.next_stream_event().wait() {
+      StreamDataCommitted(id) => assert_eq(id, stream)
+      _ => fail("expected StreamDataCommitted for unidirectional stream")
+    }
+  }
+  for _ in 0..<20 {
+    ffi_fake_push_peer_unidirectional(@js_adapter.bytes_to_uint8array(b"in"))
+    let peer_stream = match stream_conn.next_stream_event().wait() {
+      StreamStarted(id, Unidirectional) => id
+      _ => fail("expected StreamStarted for peer unidirectional stream")
+    }
+    match stream_conn.next_stream_event().wait() {
+      Data(id, bytes) => {
+        assert_eq(id, peer_stream)
+        assert_eq(bytes, b"in")
+      }
+      _ => fail("expected Data for peer unidirectional stream")
+    }
+    match stream_conn.next_stream_event().wait() {
+      StreamFinished(id) => assert_eq(id, peer_stream)
+      _ => fail("expected StreamFinished for peer unidirectional stream")
+    }
+  }
+  let stats = stream_conn.stream_statistics()
+  assert_eq(stats.active_incoming, 0)
+  assert_eq(stats.active_outgoing, 0)
+  assert_eq(stats.event_queue_count_overflows, 0)
+  assert_eq(stats.event_queue_byte_overflows, 0)
+  assert_eq(stats.active_stream_limit_overflows, 0)
+  ignore(stream_conn.close(0L, "done"))
+  ignore(stream_conn.closed().wait())
+}
+
+///|
 extern "js" fn ffi_install_fake_webtransport(
   protocol : String,
   pending_ready : Bool,
@@ -1125,5 +1260,54 @@ extern "js" fn ffi_fake_reject_next_bidi_write() -> Unit =
 ///|
 extern "js" fn ffi_remove_fake_webtransport() -> Unit =
   #| () => { delete globalThis.WebTransport; }
+
+///|
+extern "js" fn ffi_install_timer_tracker() -> Unit =
+  #| () => {
+  #|   if (globalThis.__moqTimerTracker) {
+  #|     globalThis.__moqTimerTracker.uninstall();
+  #|   }
+  #|   const origSetTimeout = globalThis.setTimeout;
+  #|   const origClearTimeout = globalThis.clearTimeout;
+  #|   const active = new Map();
+  #|   let nextId = 1;
+  #|   globalThis.setTimeout = (fn, delay, ...args) => {
+  #|     const id = nextId++;
+  #|     const handle = origSetTimeout((...cbArgs) => {
+  #|       active.delete(id);
+  #|       return fn(...cbArgs);
+  #|     }, delay, ...args);
+  #|     active.set(id, handle);
+  #|     return id;
+  #|   };
+  #|   globalThis.clearTimeout = (id) => {
+  #|     const handle = active.get(id);
+  #|     if (handle !== undefined) {
+  #|       active.delete(id);
+  #|       return origClearTimeout(handle);
+  #|     }
+  #|     return origClearTimeout(id);
+  #|   };
+  #|   globalThis.__moqTimerTracker = {
+  #|     activeCount: () => active.size,
+  #|     uninstall: () => {
+  #|       for (const handle of active.values()) {
+  #|         origClearTimeout(handle);
+  #|       }
+  #|       active.clear();
+  #|       globalThis.setTimeout = origSetTimeout;
+  #|       globalThis.clearTimeout = origClearTimeout;
+  #|       delete globalThis.__moqTimerTracker;
+  #|     },
+  #|   };
+  #| }
+
+///|
+extern "js" fn ffi_uninstall_timer_tracker() -> Unit =
+  #| () => { globalThis.__moqTimerTracker?.uninstall(); }
+
+///|
+extern "js" fn ffi_active_timer_count() -> Int32 =
+  #| () => globalThis.__moqTimerTracker ? globalThis.__moqTimerTracker.activeCount() : -1
 
 ///|

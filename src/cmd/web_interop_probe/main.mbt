@@ -70,6 +70,10 @@ extern "js" fn ffi_set_status(value : String) -> Unit =
 
 ///|
 fn main {
+  if ffi_mode() == "leak-runner" {
+    register_leak_runner()
+    return
+  }
   ignore(
     @js.from_async(async fn() {
       ffi_set_status("connecting")
