@@ -212,6 +212,9 @@ bash scripts/check-interop.sh
 
 # Native ↔ Browser dual interop check
 bash scripts/check-interop-dual.sh
+
+# Native memory leak check with Valgrind (Linux)
+bash scripts/check-native-leaks.sh
 ```
 
 The interop scripts run a pinned aiomoqt Draft 18 relay in Docker. They cover

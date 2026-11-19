@@ -98,3 +98,6 @@ jobs:
 
       - name: Run raw QUIC and WebTransport interoperability
         run: nix develop -c bash scripts/check-interop-dual.sh
+
+      - name: Check native memory leaks
+        run: nix develop -c bash scripts/check-native-leaks.sh

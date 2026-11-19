@@ -39,7 +39,7 @@
             pkgs.playwright-driver
             playwrightBrowsers
             pkgs.openssl
-          ];
+          ] ++ pkgs.lib.optional pkgs.stdenv.hostPlatform.isLinux pkgs.valgrind;
           shellHook = ''
             export PLAYWRIGHT_CORE_PATH="${pkgs.playwright-driver}"
             export PLAYWRIGHT_BROWSERS_PATH="${playwrightBrowsers}"
