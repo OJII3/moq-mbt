@@ -51,6 +51,7 @@ nix develop -c bash scripts/check-interop.sh
 nix develop -c npm ci
 nix develop -c bash scripts/check-interop-dual.sh
 nix develop -c bash scripts/check-native-leaks.sh
+nix develop -c bash scripts/check-browser-leaks.sh
 ~~~
 
 interop script は Docker daemon と `docker` CLI を必要とする。relay image は初回に pull する。`MOQ_INTEROP_PORT` で host の UDP port を変更でき、`MOQ_INTEROP_RELAY_IMAGE` で image を差し替えられる。実行中の relay がある場合は終了してから実行する。Native QUIC の証明書検証失敗を確認したあと、自己署名証明書の検証を loopback probe に限って無効にする。
@@ -76,6 +77,10 @@ nix develop -c moon run --release --target native src/cmd/track_probe -- \
 ### ネイティブ client のメモリリーク検査
 
 `scripts/check-native-leaks.sh` は固定 relay に対して probe を Valgrind で実行し、definite または possible のリークを検出すると失敗する。Valgrind は Linux でだけ動作する。`MOQ_LEAK_CHECK_PORT` で host の UDP port を変更できる。
+
+### ブラウザ client のメモリリーク検査
+
+`scripts/check-browser-leaks.sh` は固定 relay に対して Playwright Chromium 上で繰り返し接続と送受信を行い、GC 後に `WeakRef` が残る場合やヒープ増加が許容範囲を超える場合に失敗する。`MOQ_BROWSER_LEAK_CHECK_PORT` で host の UDP port を変更できる。
 
 ### Browser WebTransport 検証
 

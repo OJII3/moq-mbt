@@ -215,6 +215,9 @@ bash scripts/check-interop-dual.sh
 
 # Native memory leak check with Valgrind (Linux)
 bash scripts/check-native-leaks.sh
+
+# Browser WebTransport memory leak check with Playwright Chromium
+bash scripts/check-browser-leaks.sh
 ```
 
 The interop scripts run a pinned aiomoqt Draft 18 relay in Docker. They cover

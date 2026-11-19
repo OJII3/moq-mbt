@@ -101,3 +101,6 @@ jobs:
 
       - name: Check native memory leaks
         run: nix develop -c bash scripts/check-native-leaks.sh
+
+      - name: Check browser memory leaks
+        run: nix develop -c bash scripts/check-browser-leaks.sh
