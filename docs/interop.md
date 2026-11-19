@@ -75,7 +75,7 @@ nix develop -c moon run --release --target native src/cmd/track_probe -- \
 
 ### ネイティブ client のメモリリーク検査
 
-`scripts/check-native-leaks.sh` は固定 relay に対して `setup_probe` と `track_probe` の lifecycle、datagram-smoke、namespace を Valgrind で実行し、definite または possible のリークを検出した時点で失敗する。接続の確立と終了、request stream の開閉と取消、送信 buffer を保持したままの datagram 送信と close を含む経路を確認する。Valgrind は Linux でだけ動作するため、Nix devShell の Linux 環境で実行する。relay の起動には Docker が必要であり、`MOQ_LEAK_CHECK_PORT` で host の UDP port を変更できる。
+`scripts/check-native-leaks.sh` は固定 relay に対して probe を Valgrind で実行し、definite または possible のリークを検出すると失敗する。Valgrind は Linux でだけ動作する。`MOQ_LEAK_CHECK_PORT` で host の UDP port を変更できる。
 
 ### Browser WebTransport 検証
 

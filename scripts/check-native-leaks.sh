@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Run the native probes under Valgrind and fail on leaked heap blocks.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
