@@ -50,6 +50,7 @@ nix develop -c moon test --target js src/protocol src/session src/js_adapter
 nix develop -c bash scripts/check-interop.sh
 nix develop -c npm ci
 nix develop -c bash scripts/check-interop-dual.sh
+nix develop -c bash scripts/check-native-leaks.sh
 ~~~
 
 interop script は Docker daemon と `docker` CLI を必要とする。relay image は初回に pull する。`MOQ_INTEROP_PORT` で host の UDP port を変更でき、`MOQ_INTEROP_RELAY_IMAGE` で image を差し替えられる。実行中の relay がある場合は終了してから実行する。Native QUIC の証明書検証失敗を確認したあと、自己署名証明書の検証を loopback probe に限って無効にする。
@@ -71,6 +72,10 @@ nix develop -c moon run --release --target native src/cmd/track_probe -- \
 ~~~
 
 `check-interop.sh` は一時証明書を生成し、relay を `MOQ_INTEROP_PORT`（既定値 `4443`）の UDP port に loopback で公開する。自己署名証明書が既定の Native 証明書検証で拒否されることを確認した後、loopback probe に限って `--insecure` を使う。終了時に publisher、relay container、一時ファイルを削除する。publisher は Forward State が 1 になるまで Object stream を開かないため、subscriber を先に起動するか、`--wait-for-start` で開始を待つ。
+
+### ネイティブ client のメモリリーク検査
+
+`scripts/check-native-leaks.sh` は固定 relay に対して `setup_probe` と `track_probe` の lifecycle、datagram-smoke、namespace を Valgrind で実行し、definite または possible のリークを検出した時点で失敗する。接続の確立と終了、request stream の開閉と取消、送信 buffer を保持したままの datagram 送信と close を含む経路を確認する。Valgrind は Linux でだけ動作するため、Nix devShell の Linux 環境で実行する。relay の起動には Docker が必要であり、`MOQ_LEAK_CHECK_PORT` で host の UDP port を変更できる。
 
 ### Browser WebTransport 検証
 
