@@ -1,3 +1,37 @@
+#proof_import("moonbit_builtin_prelude.UInt64")
+fn track_alias_value(value : UInt64) -> Int = "model"
+
+predicate track_alias_scan_inv(
+  start : UInt64,
+  used : FixedArray[UInt64],
+  step : Int,
+  chosen : UInt64,
+) {
+  0 <= step &&
+  step <= used.length() + 1 &&
+  track_alias_value(start) <= track_alias_value(chosen) &&
+  track_alias_value(chosen) <= track_alias_value(start) + step
+}
+
+predicate track_alias_scan_prefix(
+  chosen : UInt64,
+  used : FixedArray[UInt64],
+  i : Int,
+  found : Bool,
+) {
+  (found → (∃ k : Int, 0 <= k && k < i && used[k] == chosen)) &&
+  ((∃ k : Int, 0 <= k && k < i && used[k] == chosen) → found)
+}
+
+predicate track_alias_scan_post(
+  start : UInt64,
+  used : FixedArray[UInt64],
+  result : TrackAliasAllocation,
+) {
+  track_alias_value(result.track_alias()) <=
+  track_alias_value(start) + used.length() + 1
+}
+
 predicate track_alias_allocation_post(
   start : UInt64,
   result : TrackAliasAllocation,
